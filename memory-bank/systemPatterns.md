@@ -129,6 +129,36 @@ NHƯNG local dev vẫn cần chạy được SQLite không phụ thuộc Postgre
   này từ Postgres), KHÔNG cần sửa câu SQL — nhưng đã audit riêng cả 7 điểm dùng trong
   codebase để xác nhận từng UNIQUE constraint/index TARGET đều tồn tại đúng trong
   `supabase/schema.sql` (cú pháp giống nhau không tự động đảm bảo target tồn tại).
+- **BUG THẬT phát hiện sau khi deploy thử lên Vercel (2026-09-11, sau lần verify đầu)**:
+  `config.py::Config.ensure_directories()` (gọi TRỰC TIẾP trong `app.py::create_app()`, chạy
+  ngay lúc MODULE IMPORT vì `app = create_app()` ở cuối `app.py` — nghĩa là chạy lại ở MỌI
+  cold start trên Vercel) gọi `DATABASE_PATH.parent.mkdir()`/`UPLOAD_FOLDER.mkdir()`
+  KHÔNG ĐIỀU KIỆN — thư mục code deploy trên Vercel là READ-ONLY (trừ `/tmp`), nên lệnh
+  `mkdir()` này crash NGAY (`PermissionError: Read-only file system`) TRƯỚC KHI kịp chạm tới
+  Postgres/SQLite gì cả — biểu hiện ra ngoài là "Serverless Function has crashed /
+  FUNCTION_INVOCATION_FAILED" không kèm traceback rõ ràng. Đã sửa: `ensure_directories()`
+  return sớm nếu `DATABASE_URL` có set (coi đó là tín hiệu "đang chạy môi trường
+  managed/serverless, không cần tạo thư mục cục bộ") — xác nhận qua grep:
+  **`UPLOAD_FOLDER` chưa từng được ghi file thực sự ở đâu trong codebase cả** (chỉ khai báo ở
+  `config.py`, Excel Import dùng `tempfile.NamedTemporaryFile` — thư mục temp hệ thống, ghi
+  được cả trên `/tmp` của Vercel — KHÔNG dùng `UPLOAD_FOLDER`), nên bỏ qua an toàn 100%.
+  **Bài học quy trình**: khi 1 file chạy code ở MODULE IMPORT TIME (không phải trong route
+  handler), MỌI side-effect ở đó (mkdir, connect DB, ...) chạy lại ở MỌI cold start của
+  serverless — phải tự hỏi "dòng này có giả định filesystem ghi được không" trước khi coi
+  scaffold Vercel là xong, không chỉ kiểm tra riêng tầng DB.
+- **Row Level Security (RLS) — bật cho cả 15 bảng, KHÔNG kèm policy nào** (Supabase SQL
+  Editor tự cảnh báo khi thiếu, đúng lúc áp `supabase/schema.sql` lần đầu). App KHÔNG dùng
+  PostgREST/Supabase client SDK — kết nối THẲNG Postgres qua `DATABASE_URL`/psycopg2
+  (`core/database.py`), role đó (thường là `postgres`, chủ sở hữu bảng vì tạo qua SQL
+  Editor) KHÔNG bị RLS chặn (owner/BYPASSRLS luôn bypass mặc định) — bật RLS KHÔNG ảnh
+  hưởng gì tới app thật. Lý do vẫn phải bật: MỌI project Supabase tự động có REST API công
+  khai (`https://<project>.supabase.co/rest/v1/...`) gọi được bằng `anon` key ngay khi
+  project tồn tại — không bật RLS thì bất kỳ ai có `anon` key (rò rỉ, dùng nhầm...) đọc/ghi
+  được THẲNG mọi bảng, bỏ qua hoàn toàn hệ thống đăng nhập/phân quyền của `core/auth.py`.
+  Bật RLS không kèm policy = "deny all" mặc định cho mọi role không phải owner — đúng ý vì
+  app này không có nhu cầu cho ai truy cập trực tiếp qua PostgREST cả. Nếu SAU NÀY thật sự
+  cần (vd 1 tính năng client-side gọi thẳng Supabase), phải thêm `CREATE POLICY` rõ ràng lúc
+  đó — không mở sẵn "phòng khi cần".
 - **Verify đã làm** (không có Postgres thật/Docker trong môi trường phát triển, nhưng verify
   được nhiều hơn dự kiến ban đầu nhờ cài được `psycopg2-binary` qua pip mà KHÔNG cần server
   thật): (1) toàn bộ 5 test suite (`tests/test_postgres_shim_translation.py` MỚI +

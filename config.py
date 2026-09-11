@@ -56,7 +56,16 @@ class Config:
 
     @classmethod
     def ensure_directories(cls) -> None:
-        """Đảm bảo các thư mục cần thiết (data, uploads) tồn tại trước khi chạy."""
+        """Đảm bảo các thư mục cần thiết (data, uploads) tồn tại trước khi chạy — CHỈ khi
+        chạy SQLite cục bộ (`DATABASE_URL` rỗng). Trên môi trường serverless (Vercel + Postgres/
+        Supabase), thư mục code deploy là READ-ONLY (trừ `/tmp`) — gọi `mkdir()` ở đây sẽ
+        crash ngay lúc khởi động (`PermissionError: Read-only file system`) TRƯỚC KHI kịp
+        dùng tới Postgres. `DATABASE_PATH`/`UPLOAD_FOLDER` đều không cần thiết khi có
+        `DATABASE_URL`: SQLite không được dùng, và Excel Import ghi file tạm qua
+        `tempfile.NamedTemporaryFile` (thư mục temp hệ thống, luôn ghi được kể cả trên
+        Vercel) chứ không ghi vào `UPLOAD_FOLDER`."""
+        if cls.DATABASE_URL:
+            return
         cls.DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
         cls.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 

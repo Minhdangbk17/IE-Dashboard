@@ -481,6 +481,26 @@
       (thư mục temp hệ thống, `/tmp` ghi được trên Vercel) chứ KHÔNG dùng
       `UPLOAD_FOLDER` lưu lâu dài — đã sẵn sàng cho filesystem ephemeral, độc
       lập với phần migrate DB.
+- [x] **Bug thật phát hiện sau khi người dùng deploy thử lên Vercel** (function
+      crash, `FUNCTION_INVOCATION_FAILED`) — `config.py::Config.
+      ensure_directories()` gọi `mkdir()` KHÔNG điều kiện lên `data/`/`uploads/`
+      ngay lúc MODULE IMPORT (`app = create_app()` cuối `app.py`, chạy lại ở
+      MỌI cold start) — thư mục code deploy Vercel READ-ONLY nên crash trước
+      cả khi chạm tới DB. Đã sửa: return sớm nếu có `DATABASE_URL` (đã verify
+      `UPLOAD_FOLDER` chưa từng được ghi file thật ở đâu — an toàn bỏ qua).
+      Đồng thời xác nhận với người dùng: **CHƯA set `DATABASE_URL` trên
+      Vercel** — nghĩa là kể cả sau fix này, app vẫn sẽ crash cho tới khi có
+      Supabase project thật + set biến môi trường, vì SQLite không thể chạy
+      trên Vercel dù có sửa mkdir hay không (không có nơi nào ghi được file DB
+      lâu dài). Đã tạo thêm `seed_supabase_users.py` (script gốc, chạy 1 lần
+      từ máy local SAU khi áp `supabase/schema.sql`) — `supabase/schema.sql`
+      CHỈ tạo bảng (DDL), KHÔNG seed dữ liệu như `init_db.py` làm cho SQLite,
+      nên bảng `users` trên Supabase mới sẽ RỖNG nếu không chạy script này —
+      không ai đăng nhập được. Script dùng lại ĐÚNG công thức hash
+      (SHA-256 + SECRET_KEY) của `core/auth.py::hash_password()` — đã verify
+      bằng thực nghiệm cho ra CÙNG hash byte-for-byte — PHẢI chạy với đúng
+      `SECRET_KEY` sẽ dùng trên Vercel, không thì mật khẩu tạo ra không khớp
+      lúc app thật verify đăng nhập.
 
 ## Backlog (Phase 2+)
 - [ ] **Verify dual-mode Postgres/Supabase với server THẬT** — chờ người dùng

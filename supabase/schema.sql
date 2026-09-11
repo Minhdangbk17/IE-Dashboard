@@ -359,3 +359,44 @@ create table if not exists import_log_rows (
     foreign key (import_log_id) references import_logs (id)
 );
 create index if not exists idx_import_log_rows_log_id on import_log_rows (import_log_id);
+
+-- =============================================================================
+-- Row Level Security — lock every table out of Supabase's public PostgREST API
+-- (the anon/authenticated roles used by the auto-generated REST API and any
+-- client-side Supabase SDK), even though this app never uses that API.
+--
+-- This Flask app talks to Postgres directly via DATABASE_URL/psycopg2 (see
+-- core/database.py), using the connection role from that string (typically
+-- the `postgres` role when the string comes straight from the Supabase
+-- dashboard, or the role that owns these tables since they were created
+-- through the SQL Editor as that role). Postgres RLS does NOT apply to a
+-- table's owner (or any role with BYPASSRLS) by default, so enabling RLS
+-- here does not affect the app's own queries at all.
+--
+-- What it DOES do: every Supabase project exposes a public REST endpoint
+-- (https://<project>.supabase.co/rest/v1/...) the moment it exists, callable
+-- with the project's `anon` key. Without RLS, anyone who ever obtains that
+-- key (client-side leak, shared by mistake, etc.) could read/write ANY row
+-- in ANY of these tables directly — completely bypassing the app's own
+-- login/session/permission system in core/auth.py. Enabling RLS with ZERO
+-- policies defined means "deny all" for every role except the owner — the
+-- correct default here, since nothing should ever reach this data except
+-- through the Flask app. If a legitimate need for direct PostgREST/client
+-- access ever comes up, add explicit `CREATE POLICY ...` statements then —
+-- don't leave tables open by default in the meantime.
+-- =============================================================================
+alter table users enable row level security;
+alter table user_permissions enable row level security;
+alter table machines enable row level security;
+alter table import_logs enable row level security;
+alter table machine_telemetry enable row level security;
+alter table downtime_logs enable row level security;
+alter table availability_logs enable row level security;
+alter table batch_details enable row level security;
+alter table performance_logs enable row level security;
+alter table downtime_daily_summary enable row level security;
+alter table downtime_case_notes enable row level security;
+alter table batch_matrix_daily_summary enable row level security;
+alter table batch_matrix_targets enable row level security;
+alter table cleaning_mc_daily_summary enable row level security;
+alter table import_log_rows enable row level security;
