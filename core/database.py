@@ -67,6 +67,11 @@ else:
     DatabaseIntegrityError = (sqlite3.IntegrityError,)
 
 _PRAGMA_TABLE_INFO_RE = re.compile(r"^\s*PRAGMA\s+table_info\(\s*([A-Za-z0-9_]+)\s*\)\s*;?\s*$", re.IGNORECASE)
+# Khớp cụm "VALUES (%s, %s, ..., %s)" — hình dạng CHUẨN mà mọi câu INSERT dùng với
+# `conn.executemany()` trong dự án đang có (1 tuple placeholder lặp lại cho từng dòng qua
+# executemany, có thể có `ON CONFLICT ... DO UPDATE` theo sau hoặc không). Dùng để phát hiện
+# và gộp thành `execute_values()` — xem lý do ở `_PostgresConnCompat.executemany()`.
+_EXECUTEMANY_VALUES_RE = re.compile(r"VALUES\s*\(\s*%s(?:\s*,\s*%s)*\s*\)", re.IGNORECASE)
 
 
 def get_dialect() -> str:
@@ -92,6 +97,19 @@ def sql_datetime(expr: str) -> str:
     if get_dialect() == "postgres":
         return f"({expr})::timestamp"
     return f"datetime({expr})"
+
+
+class _StaticRowCountCursor:
+    """Bọc 1 cursor thật của psycopg2 sau khi chạy `execute_values()`, override `.rowcount`
+    bằng giá trị tự tính (xem lý do trong `_PostgresConnCompat.executemany()`) — mọi thuộc
+    tính/phương thức khác (`.close()`, `.fetchone()`, ...) forward nguyên sang cursor gốc."""
+
+    def __init__(self, cur: Any, rowcount: int) -> None:
+        self._cur = cur
+        self.rowcount = rowcount
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cur, name)
 
 
 class _PostgresConnCompat:
@@ -126,8 +144,27 @@ class _PostgresConnCompat:
         return cur
 
     def executemany(self, sql: str, seq_of_params: Iterable[Sequence[Any]]) -> Any:
+        """`cursor.executemany()` mặc định của psycopg2 KHÔNG tự gộp batch — nó gửi 1
+        round-trip mạng RIÊNG cho MỖI dòng (khác hẳn SQLite, chạy cục bộ nên chậm không đáng
+        kể). Khi app chạy trên Vercel nói chuyện với Supabase qua Internet, mỗi round-trip tốn
+        hàng chục/hàng trăm ms — import vài trăm/nghìn dòng kiểu 1-dòng-1-round-trip có thể mất
+        hàng chục giây, thậm chí vượt timeout của Serverless Function. Nếu câu SQL đúng hình
+        dạng chuẩn `INSERT ... VALUES (%s, %s, ...) [ON CONFLICT ...]` (mọi call site hiện tại
+        đều vậy), gộp toàn bộ dòng vào 1 câu lệnh duy nhất bằng `execute_values()` — vài trăm/
+        nghìn dòng chỉ còn vài round-trip thay vì hàng nghìn."""
+        translated = self._translate(sql)
+        seq = [tuple(p) for p in seq_of_params]
         cur = self._conn.cursor()
-        cur.executemany(self._translate(sql), [tuple(p) for p in seq_of_params])
+        values_sql, matched = _EXECUTEMANY_VALUES_RE.subn("VALUES %s", translated, count=1)
+        if matched and seq:
+            psycopg2.extras.execute_values(cur, values_sql, seq, page_size=1000)
+            # `cur.rowcount` sau `execute_values()` chỉ phản ánh trang (page) CUỐI, không phải
+            # tổng số dòng — không dùng được để báo "đã import N dòng". Mọi câu INSERT dùng
+            # executemany() trong dự án hoặc có `ON CONFLICT ... DO UPDATE` (dòng nào cũng tính
+            # là affected) hoặc là INSERT thường không thể âm thầm bỏ dòng (lỗi ràng buộc ném
+            # exception, rollback cả batch) — nên số dòng THẬT luôn bằng đúng `len(seq)`.
+            return _StaticRowCountCursor(cur, len(seq))
+        cur.executemany(translated, seq)
         return cur
 
     def cursor(self) -> Any:
