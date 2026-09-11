@@ -1,0 +1,42 @@
+"""
+modules/dyeing/engines/batch_matrix/__init__.py
+-----------------------------------------------------
+Điểm vào của Engine "batch_matrix" — Ma trận Số mẻ/Máy theo Ngày (Fabric Type x
+Color Group x Ngày sản xuất), dữ liệu từ `batch_details`.
+"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Any
+
+from flask import Blueprint
+
+from core.engine_base import BaseEngine, EngineMetadata
+
+from . import service
+from .routes import build_blueprint
+
+
+class BatchMatrixEngine(BaseEngine):
+    name = "batch_matrix"
+    domain = "dyeing"
+
+    @property
+    def metadata(self) -> EngineMetadata:
+        return EngineMetadata(
+            name=self.name,
+            domain=self.domain,
+            description="Batch/Machine Daily Matrix (Fabric Type x Color Group), value = SUM(batches)/SUM(operating hours for that cell's machines)/24.",
+            data_sources=["availability_logs", "batch_details"],
+            data_sinks=["batch_matrix_targets", "batch_matrix_daily_summary"],
+            depends_on=["excel_import"],
+        )
+
+    def create_blueprint(self) -> Blueprint:
+        return build_blueprint(self)
+
+    def recompute_daily(self, production_date: date, conn: Any) -> None:
+        service.recompute_daily(production_date, conn)
+
+
+engine = BatchMatrixEngine()

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-center flex-items-center" style="min-height:80vh;">
+    <div class="Box" style="width:360px;">
+        <div class="Box-header">
+            <h3 class="Box-title">Login</h3>
+        </div>
+        <div class="Box-body">
+            {% if error %}
+            <div class="flash flash-error mb-3">{{ error }}</div>
+            {% endif %}
+            <form method="post">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input class="form-control input-block" type="text" id="username" name="username" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input class="form-control input-block" type="password" id="password" name="password" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block mt-2">Login</button>
+            </form>
+            <p class="f6 color-fg-muted mt-3">Demo: admin/admin123 or operator/operator123</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

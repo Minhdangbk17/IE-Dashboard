@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Permissions — {{ target.username }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3">
+    <h2 class="mt-0">Permissions — {{ target.username }} ({{ target.full_name }})</h2>
+    <a class="btn btn-sm" href="{{ url_for('admin.list_accounts') }}">&larr; Accounts</a>
+</div>
+
+{% if target.role == 'admin' %}
+<div class="Box p-3">
+    <p class="f6 color-fg-muted mb-0">Admin has full access to every Engine and is not managed here.</p>
+</div>
+{% else %}
+<div class="Box p-3" style="overflow-x:auto;">
+<form method="POST">
+<table class="preview-table">
+    <thead><tr><th>Domain</th><th>Engine</th><th>View</th><th>Edit</th><th>Delete</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+        <td>{{ row.domain }}</td>
+        <td>{{ row.engine_name }}</td>
+        <td><input type="checkbox" name="view__{{ row.key }}" {% if row.can_view %}checked{% endif %}></td>
+        <td><input type="checkbox" name="edit__{{ row.key }}" {% if row.can_edit %}checked{% endif %}></td>
+        <td><input type="checkbox" name="delete__{{ row.key }}" {% if row.can_delete %}checked{% endif %}></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="color-fg-muted">No Engine registered in the system yet.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+<button class="btn btn-primary mt-3" type="submit">Save Permissions</button>
+</form>
+</div>
+{% endif %}
+{% endblock %}

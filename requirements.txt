@@ -1,0 +1,8 @@
+Flask>=3.0,<4.0
+openpyxl>=3.1,<4.0
+pandas>=2.0,<3.0
+SQLAlchemy>=2.0,<3.0
+click>=8.1
+# Chỉ thực sự cần khi deploy với DATABASE_URL trỏ Postgres/Supabase (xem core/database.py).
+# Local dev không set DATABASE_URL vẫn chạy SQLite bình thường, không cần cài psycopg2.
+psycopg2-binary>=2.9,<3.0

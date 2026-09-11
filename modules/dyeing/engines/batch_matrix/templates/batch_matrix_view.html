@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Batch/Machine Daily Matrix - Dyeing{% endblock %}
+{% block extra_head %}<style>
+    .matrix-filter-dropdown { position: relative; min-width: 210px; }
+    .matrix-filter-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--color-canvas-overlay, #161b22); border: 1px solid var(--color-border-default, #30363d); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); max-height: 260px; overflow-y: auto; }
+    .matrix-filter-menu[hidden] { display: none; }
+    .matrix-filter-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+    .matrix-filter-option:hover { background: var(--color-neutral-muted, rgba(110, 118, 129, .15)); }
+    table.batch-matrix-table { font-size: 12px; }
+    table.batch-matrix-table th, table.batch-matrix-table td { text-align: center; white-space: nowrap; }
+    table.batch-matrix-table td.col-fabric, table.batch-matrix-table td.col-color { text-align: left; font-weight: 600; }
+    table.batch-matrix-table tr.row-fabric-total td { background: var(--color-canvas-subtle, #161b22); font-weight: 700; }
+    table.batch-matrix-table tr.row-grand-total td { background: var(--color-accent-subtle, rgba(47, 129, 247, .15)); font-weight: 700; }
+    .cell-above-target { background: rgba(63, 185, 80, .28) !important; color: #3fb950; font-weight: 600; }
+    .cell-below-target { background: rgba(248, 81, 73, .22) !important; color: #f85149; font-weight: 600; }
+    .cell-empty { color: var(--color-fg-muted, #8b949e); }
+    .color-group-unclassified { font-style: italic; color: var(--color-fg-muted, #8b949e); }
+    .cell-clickable { cursor: pointer; text-decoration: underline dotted; }
+    .cell-clickable:hover { background: var(--color-accent-subtle, rgba(47, 129, 247, .2)) !important; }
+    .day-batches-overlay { position: fixed; inset: 0; background: rgba(1, 4, 9, .6); z-index: 50; display: flex; align-items: center; justify-content: center; }
+    .day-batches-overlay[hidden] { display: none; }
+    .day-batches-panel { background: var(--color-canvas-default, #0d1117); border: 1px solid var(--color-border-default, #30363d); border-radius: 8px; width: min(92vw, 900px); max-height: 82vh; display: flex; flex-direction: column; }
+    .day-batches-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--color-border-default, #30363d); }
+    .day-batches-body { overflow: auto; padding: 8px 16px 16px; }
+    .day-batches-body table th, .day-batches-body table td { white-space: nowrap; }
+</style>{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
+    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Batch</p><h2 class="mt-0">Batch/Machine Daily Matrix</h2></div>
+    <a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a>
+</div>
+
+<section class="Box p-3 mb-3" aria-label="Report filters">
+    <div class="d-flex flex-wrap flex-items-end gap-2">
+        <div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div>
+        <div class="form-group mb-0"><label for="matrix-to">To Date</label><input id="matrix-to" class="form-control" type="date"></div>
+        <div class="form-group mb-0 matrix-filter-dropdown">
+            <label for="capacity-toggle">Capacity (Kg)</label>
+            <button id="capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All</button>
+            <div id="capacity-menu" class="matrix-filter-menu" hidden></div>
+        </div>
+        <button id="matrix-load" class="btn btn-primary">View Report</button>
+    </div>
+</section>
+
+<div id="matrix-summary" class="d-flex flex-wrap mb-3" style="gap:12px"></div>
+
+<div class="Box p-3" style="overflow-x:auto;">
+<table class="preview-table batch-matrix-table" id="matrix-table">
+    <thead><tr id="matrix-head"></tr></thead>
+    <tbody></tbody>
+</table>
+<p class="f6 color-fg-muted mt-2 mb-0">Click a cell to see the batches behind that number.</p>
+</div>
+
+<div id="day-batches-overlay" class="day-batches-overlay" hidden>
+    <div class="day-batches-panel">
+        <div class="day-batches-header">
+            <h3 id="day-batches-title" class="mt-0 mb-0"></h3>
+            <button id="day-batches-close" class="btn btn-sm" type="button">Close</button>
+        </div>
+        <div id="day-batches-body" class="day-batches-body"></div>
+    </div>
+</div>
+
+<script>
+(function () { "use strict"; const matrixUrl = "{{ url_for('dyeing.batch_matrix.api_matrix') }}";
+    const dayBatchesUrl = "{{ url_for('dyeing.batch_matrix.api_day_batches') }}";
+    const capacityToggle = document.getElementById("capacity-toggle");
+    const capacityMenu = document.getElementById("capacity-menu");
+    let availableCapacities = [];
+    let selectedCapacities = new Set();
+
+    function fmtValue(value) {
+        return value === null || value === undefined ? "-" : Number(value).toFixed(2);
+    }
+
+    function escAttr(value) {
+        return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    }
+
+    function escHtml(value) {
+        return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    const dayBatchesOverlay = document.getElementById("day-batches-overlay");
+    const dayBatchesTitle = document.getElementById("day-batches-title");
+    const dayBatchesBody = document.getElementById("day-batches-body");
+    function closeDayBatches() { dayBatchesOverlay.hidden = true; }
+    document.getElementById("day-batches-close").addEventListener("click", closeDayBatches);
+    dayBatchesOverlay.addEventListener("click", (event) => { if (event.target === dayBatchesOverlay) closeDayBatches(); });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !dayBatchesOverlay.hidden) closeDayBatches(); });
+
+    function openDayBatches(day, fabricType, colorGroup) {
+        dayBatchesTitle.textContent = `${fabricType} / ${colorGroup} — ${day}`;
+        dayBatchesBody.innerHTML = `<p class="color-fg-muted">Loading...</p>`;
+        dayBatchesOverlay.hidden = false;
+        const params = new URLSearchParams({ date: day, fabric_type: fabricType, color_group: colorGroup });
+        selectedCapacities.forEach((value) => params.append("capacity", value));
+        fetch(`${dayBatchesUrl}?${params}`).then((response) => response.json()).then((batches) => {
+            if (!Array.isArray(batches) || !batches.length) {
+                dayBatchesBody.innerHTML = `<p class="color-fg-muted">No batches match the current filters.</p>`;
+                return;
+            }
+            dayBatchesBody.innerHTML = `<p class="f6 color-fg-muted">${batches.length} batches (cross-checked directly against raw data).</p>` +
+                `<table class="preview-table"><thead><tr><th>Machine</th><th>Batch No</th><th>Dyelot</th><th>Shade</th><th>ColourNo</th><th>Capacity (Kg)</th><th>Start</th><th>End</th></tr></thead><tbody>` +
+                batches.map((batch) => `<tr><td>${escHtml(batch.machine) || "-"}</td><td>${escHtml(batch.batch_no) || "-"}</td><td>${escHtml(batch.dyelot) || "-"}</td><td>${escHtml(batch.shade) || "-"}</td><td>${escHtml(batch.colour_no) || "-"}</td><td>${batch.capacity_kg ?? "-"}</td><td>${escHtml(batch.start_time) || "-"}</td><td>${escHtml(batch.end_time) || "-"}</td></tr>`).join("") +
+                `</tbody></table>`;
+        }).catch(() => { dayBatchesBody.innerHTML = `<p class="color-fg-muted">Failed to load batches.</p>`; });
+    }
+
+    document.querySelector("#matrix-table tbody").addEventListener("click", (event) => {
+        const cell = event.target.closest("td.cell-clickable");
+        if (!cell) return;
+        openDayBatches(cell.dataset.date, cell.dataset.fabricType, cell.dataset.colorGroup);
+    });
+
+    function renderCapacityMenu() {
+        capacityMenu.innerHTML = availableCapacities.length
+            ? availableCapacities.map((value) => `<label class="matrix-filter-option"><input type="checkbox" class="capacity-checkbox" value="${value}" ${selectedCapacities.has(value) ? "checked" : ""}> ${value} Kg</label>`).join("")
+            : `<span class="f6 color-fg-muted">No capacity data</span>`;
+        capacityMenu.querySelectorAll(".capacity-checkbox").forEach((box) => box.addEventListener("change", () => {
+            if (box.checked) selectedCapacities.add(box.value); else selectedCapacities.delete(box.value);
+            updateCapacityLabel();
+            load();
+        }));
+        updateCapacityLabel();
+    }
+
+    function updateCapacityLabel() {
+        capacityToggle.textContent = selectedCapacities.size ? `${selectedCapacities.size} selected` : "All";
+    }
+
+    capacityToggle.addEventListener("click", (event) => { event.stopPropagation(); capacityMenu.hidden = !capacityMenu.hidden; capacityToggle.setAttribute("aria-expanded", String(!capacityMenu.hidden)); });
+    document.addEventListener("click", (event) => { if (!event.target.closest(".matrix-filter-dropdown")) { capacityMenu.hidden = true; capacityToggle.setAttribute("aria-expanded", "false"); } });
+
+    function renderSummary(data) {
+        const dateRange = data.days.length ? `${data.days[0]} → ${data.days[data.days.length - 1]}` : "-";
+        document.getElementById("matrix-summary").innerHTML = [
+            ["Date Range", dateRange],
+            ["Grand Total (batches/machine)", fmtValue(data.grand_total)],
+            ["Days", data.days.length],
+        ].map(([label, value]) => `<div class="Box p-3" style="min-width:200px"><span class="f6 color-fg-muted">${label}</span><strong class="h2 d-block">${value}</strong></div>`).join("");
+    }
+
+    function renderTable(data) {
+        const head = document.getElementById("matrix-head");
+        head.innerHTML = `<th>Fabric Type</th><th>Color Group</th><th>Target</th><th>Total</th>` + data.day_labels.map((label) => `<th>${label}</th>`).join("");
+
+        if (!data.rows.length) {
+            document.querySelector("#matrix-table tbody").innerHTML = `<tr><td colspan="4" class="color-fg-muted">No data yet.</td></tr>`;
+            return;
+        }
+
+        // Đếm số dòng Color Group của từng Fabric Type để set rowspan cho cột Fabric Type gộp nhóm.
+        const fabricRowCount = {};
+        data.rows.forEach((row) => {
+            if (row.row_type === "data") fabricRowCount[row.fabric_type] = (fabricRowCount[row.fabric_type] || 0) + 1;
+        });
+        const fabricSpanWritten = new Set();
+
+        const bodyRows = data.rows.map((row) => {
+            const dayCells = data.days.map((day) => {
+                const value = row.days[day];
+                let cls = value === null ? "cell-empty" : "";
+                if (row.row_type === "data" && row.target !== null && row.target !== undefined && value !== null) {
+                    cls = value >= row.target ? "cell-above-target" : "cell-below-target";
+                }
+                if (row.row_type === "data" && value !== null) {
+                    return `<td class="${cls} cell-clickable" data-date="${escAttr(day)}" data-fabric-type="${escAttr(row.fabric_type)}" data-color-group="${escAttr(row.color_group)}">${fmtValue(value)}</td>`;
+                }
+                return `<td class="${cls}">${fmtValue(value)}</td>`;
+            }).join("");
+
+            if (row.row_type === "data") {
+                const isFirstOfGroup = !fabricSpanWritten.has(row.fabric_type);
+                fabricSpanWritten.add(row.fabric_type);
+                const fabricCell = isFirstOfGroup ? `<td class="col-fabric" rowspan="${fabricRowCount[row.fabric_type] + 1}">${row.fabric_type}</td>` : "";
+                const colorGroupClass = row.color_group === "Unclassified" ? "col-color color-group-unclassified" : "col-color";
+                return `<tr>${fabricCell}<td class="${colorGroupClass}">${row.color_group}</td><td>${row.target === null || row.target === undefined ? "-" : fmtValue(row.target)}</td><td><strong>${fmtValue(row.total)}</strong></td>${dayCells}</tr>`;
+            }
+            if (row.row_type === "fabric_total") {
+                return `<tr class="row-fabric-total"><td class="col-color" colspan="2">Total (${row.fabric_type})</td><td>-</td><td><strong>${fmtValue(row.total)}</strong></td>${dayCells}</tr>`;
+            }
+            return `<tr class="row-grand-total"><td class="col-color" colspan="2">Grand Total</td><td>-</td><td><strong>${fmtValue(row.total)}</strong></td>${dayCells}</tr>`;
+        }).join("");
+        document.querySelector("#matrix-table tbody").innerHTML = bodyRows;
+    }
+
+    function load() {
+        const params = new URLSearchParams({
+            date_from: document.getElementById("matrix-from").value,
+            date_to: document.getElementById("matrix-to").value,
+        });
+        selectedCapacities.forEach((value) => params.append("capacity", value));
+        fetch(`${matrixUrl}?${params}`).then((response) => response.json()).then((data) => {
+            if (!availableCapacities.length && data.available_capacities) {
+                availableCapacities = data.available_capacities;
+                renderCapacityMenu();
+            }
+            renderSummary(data);
+            renderTable(data);
+        });
+    }
+
+    document.getElementById("matrix-load").addEventListener("click", load);
+    load();
+}());
+</script>
+{% endblock %}

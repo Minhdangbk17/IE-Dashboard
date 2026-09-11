@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="vi" data-color-mode="dark" data-dark-theme="dark" data-light-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}MES Dashboard{% endblock %} · CETVN</title>
+
+    <!-- GitHub Primer CSS (chuẩn UI) -->
+    <link rel="stylesheet" href="https://unpkg.com/@primer/css@21/dist/primer.css">
+    <!-- Octicons (dùng qua <svg> path tối giản, không cần font riêng) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+<div class="d-flex" style="min-height:100vh;">
+
+    <!-- ============ SIDEBAR ============ -->
+    <nav class="app-sidebar color-bg-inset border-right" aria-label="Main navigation">
+        <div class="sidebar-header">IE Dashboard</div>
+
+        {% if CURRENT_USER %}
+        <div class="sidebar-body">
+        <ul class="sidebar-menu">
+            <li class="sidebar-link {% if request.endpoint == 'dashboard.index' %}is-active{% endif %}">
+                <a href="{{ url_for('dashboard.index') }}">
+                    <span>Overview</span>
+                </a>
+            </li>
+
+            {% for item in NAV_MENU %}
+            <li class="sidebar-section">
+                <span>{{ item.label }}</span>
+            </li>
+            <li class="sidebar-link sidebar-link-parent {% if request.endpoint == item.endpoint %}is-active{% endif %}">
+                <a href="{{ url_for(item.endpoint) }}">
+                    <span>{{ item.label }}</span>
+                </a>
+            </li>
+            {% for child in item.children %}
+            <li class="sidebar-link sidebar-link-child {% if request.endpoint == child.endpoint %}is-active{% endif %}">
+                <a href="{{ url_for(child.endpoint) }}">
+                    <span>{{ child.label }}</span>
+                </a>
+            </li>
+            {% endfor %}
+            {% endfor %}
+        </ul>
+
+        <div class="sidebar-user">
+            <div class="sidebar-user-name">{{ CURRENT_USER.full_name }}</div>
+            <div class="sidebar-user-role">{{ CURRENT_USER.role }}</div>
+            <a class="sidebar-logout" href="{{ url_for('auth.logout') }}">Logout</a>
+        </div>
+        </div>
+        {% endif %}
+    </nav>
+
+    <!-- ============ MAIN CONTENT ============ -->
+    <main class="flex-1 p-4" style="min-width:0;">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                <div class="flash {% if category == 'danger' %}flash-error{% elif category == 'warning' %}flash-warn{% else %}flash-success{% endif %} mb-3">
+                    {{ message }}
+                </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+</div>
+
+<script src="{{ url_for('static', filename='js/theme_toggle.js') }}"></script>
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>

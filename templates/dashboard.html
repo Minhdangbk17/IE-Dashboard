@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<h2>Welcome, {{ user.full_name }} 👋</h2>
+<p class="color-fg-muted">MES Dashboard — Phase 1 Foundation Skeleton.</p>
+
+<div class="d-flex flex-wrap" style="gap:16px;">
+    {% for item in NAV_MENU %}
+    <div class="widget-card" style="flex:1; min-width:240px;">
+        <h3>{{ item.label }}</h3>
+        <a class="btn btn-sm" href="{{ url_for(item.endpoint) }}">Open &rarr;</a>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

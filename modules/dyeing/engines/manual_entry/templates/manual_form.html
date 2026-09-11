@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Manual Availability Entry{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Availability</p><h2 class="mt-0">Manual Entry</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
+<form id="manual-form" class="Box p-3" data-api-url="{{ url_for('dyeing.manual_entry.save_manual') }}">
+    <h3>Identification</h3>
+    <div class="form-group"><label for="machine">Machine</label><select class="form-select" id="machine" name="machine" required><option value="">Select machine</option>{% for machine in machines %}<option value="{{ machine.machine_id }}">{{ machine.machine_id }} - {{ machine.machine_name }}</option>{% endfor %}</select></div>
+    <div class="form-group"><label for="batch_ref_no">Batch Ref No</label><input class="form-control" id="batch_ref_no" name="batch_ref_no" required></div>
+    <div class="form-group"><label for="fabric_type">Fabric Type</label><select class="form-select" id="fabric_type" name="fabric_type"><option value="">Select fabric type</option><option>Cotton</option><option>CVC</option><option>Polyester</option><option>Other</option></select></div>
+    <div class="form-group"><label for="brand_name">Brand Name</label><input class="form-control" id="brand_name" name="brand_name"></div>
+    <div class="form-group"><label for="capacity_kg">Capacity (Kg)</label><input class="form-control" id="capacity_kg" name="capacity_kg" type="number" min="0" step="0.01"></div>
+    <h3 class="mt-4">Operating Time</h3>
+    <div class="d-flex flex-wrap" style="gap:12px"><div class="form-group flex-1"><label for="start_time">Start Time</label><input class="form-control" id="start_time" name="start_time" type="datetime-local" required></div><div class="form-group flex-1"><label for="end_time">End Time</label><input class="form-control" id="end_time" name="end_time" type="datetime-local" required></div></div>
+    <h3 class="mt-4">Downtime Hours</h3>
+    <div class="manual-grid">{% for field, label in [("rework_hour","Rework"),("adjust_color_hour","Adjust color"),("bleaching_hour","Bleaching"),("load_hour","Load"),("unload_hour","Unload"),("sample_checking_hour","Sample checking"),("ph_checking_hour","PH checking"),("wait_chemical_load_hour","Wait chemical"),("wait_color_load_hour","Wait color"),("wait_fabric_hour","Wait fabric"),("wait_water_hour","Wait water"),("wait_steam_hour","Wait steam"),("cleaning_hour","Cleaning"),("maintenance_hour","Maintenance"),("others_hour","Others")] %}<div class="form-group"><label for="{{ field }}">{{ label }}</label><input class="form-control downtime-input" id="{{ field }}" name="{{ field }}" type="number" min="0" step="0.01" value="0"></div>{% endfor %}</div>
+    <div class="flash flash-warn mb-3">Planned PRD: <strong id="planned-preview">0.00</strong> hours | Total Downtime: <strong id="downtime-preview">0.00</strong> hours</div>
+    <div id="manual-result" class="mb-3"></div><button class="btn btn-primary" type="submit">Save Availability</button>
+</form>
+{% block extra_head %}<style>.manual-grid{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:8px}@media(max-width:700px){.manual-grid{grid-template-columns:repeat(2,minmax(140px,1fr))}}</style>{% endblock %}
+<script src="{{ url_for('dyeing.manual_entry.static', filename='manual_form.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,78 @@
+"""
+modules/dyeing/engines/batch_matrix/routes.py
+--------------------------------------------------
+Blueprint & Route (API + View) của Engine "batch_matrix".
+
+- `GET /dyeing/batch_matrix/`               -> View trang Ma trận Số mẻ/Máy theo Ngày.
+- `GET /dyeing/batch_matrix/api/matrix?date_from=&date_to=&capacity=...&capacity=...`
+  -> API JSON dựng ma trận (dùng bởi View + widget tóm tắt trên Hub). `date_from`/
+  `date_to` tuỳ chọn — không truyền thì cột ngày tự lấy MIN..MAX production_date thật
+  có trong `availability_logs`.
+- `GET  /dyeing/batch_matrix/api/targets`   -> API JSON danh sách Target đã cấu hình.
+- `POST /dyeing/batch_matrix/api/targets`   -> Set/update 1 Target (fabric_type, color_group).
+- `GET  /dyeing/batch_matrix/api/day-batches?date=&fabric_type=&color_group=&capacity=...`
+  -> API JSON danh sách mẻ THẬT của 1 ô ma trận (drill-down double-check, bấm vào ô ngày trên UI).
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from flask import Blueprint, jsonify, render_template, request
+
+from core.auth import permission_required
+
+from . import service
+
+if TYPE_CHECKING:
+    from core.engine_base import BaseEngine
+
+
+def build_blueprint(_engine: "BaseEngine") -> Blueprint:
+    bp = Blueprint("batch_matrix", __name__, template_folder="templates")
+
+    @bp.route("/")
+    @permission_required("dyeing", "batch_matrix", "view")
+    def view() -> Any:
+        return render_template("batch_matrix_view.html")
+
+    @bp.route("/api/matrix")
+    @permission_required("dyeing", "batch_matrix", "view")
+    def api_matrix() -> Any:
+        date_from = request.args.get("date_from") or None
+        date_to = request.args.get("date_to") or None
+        capacities = request.args.getlist("capacity") or None
+        data = service.build_matrix(date_from, date_to, capacities)
+        return jsonify(data)
+
+    @bp.route("/api/day-batches")
+    @permission_required("dyeing", "batch_matrix", "view")
+    def api_day_batches() -> Any:
+        production_date = request.args.get("date") or ""
+        fabric_type = request.args.get("fabric_type") or ""
+        color_group = request.args.get("color_group") or ""
+        if not production_date or not fabric_type or not color_group:
+            return jsonify({"error": "Missing date/fabric_type/color_group."}), 400
+        capacities = request.args.getlist("capacity") or None
+        return jsonify(service.get_day_batches(production_date, fabric_type, color_group, capacities))
+
+    @bp.route("/api/targets")
+    @permission_required("dyeing", "batch_matrix", "view")
+    def api_get_targets() -> Any:
+        return jsonify(service.get_targets())
+
+    @bp.route("/api/targets", methods=["POST"])
+    @permission_required("dyeing", "batch_matrix", "edit")
+    def api_set_target() -> Any:
+        payload = request.get_json(silent=True) or {}
+        fabric_type = str(payload.get("fabric_type", "")).strip()
+        color_group = str(payload.get("color_group", "")).strip()
+        if not fabric_type or not color_group:
+            return jsonify({"error": "Missing fabric_type/color_group."}), 400
+        try:
+            target_value = float(payload.get("target_value"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "target_value must be a number."}), 400
+        service.set_target(fabric_type, color_group, target_value)
+        return jsonify({"status": "success"})
+
+    return bp

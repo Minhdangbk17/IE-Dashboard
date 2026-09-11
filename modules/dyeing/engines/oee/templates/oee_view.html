@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}OEE - Dyeing{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3">
+    <h2>OEE — Dyeing</h2>
+    <a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a>
+</div>
+
+<div class="form-group">
+    <label for="days-select">Time Range</label>
+    <select id="days-select" class="form-select">
+        <option value="1">Last 24 hours</option>
+        <option value="7" selected>Last 7 days</option>
+        <option value="30">Last 30 days</option>
+    </select>
+</div>
+
+<div class="widget-card">
+    <h3>Average OEE</h3>
+    <div class="stat-value" id="overall-oee">--%</div>
+    <p class="f6 color-fg-muted" id="quality-note"></p>
+</div>
+
+<div style="overflow-x:auto;">
+<table class="preview-table mt-3" id="oee-detail-table">
+    <thead>
+        <tr><th>Machine</th><th>Availability</th><th>Performance</th><th>Quality</th><th>OEE</th><th>Output (m)</th><th>Samples</th></tr>
+    </thead>
+    <tbody></tbody>
+</table>
+</div>
+
+<script>
+(function () {
+    "use strict";
+    const apiUrl = "{{ url_for('dyeing.oee.api_calculate') }}";
+    const daysSelect = document.getElementById("days-select");
+
+    async function load() {
+        const days = daysSelect.value;
+        const res = await fetch(`${apiUrl}?days=${encodeURIComponent(days)}`);
+        const data = await res.json();
+
+        document.getElementById("overall-oee").textContent = `${data.overall_oee_pct}%`;
+        document.getElementById("quality-note").textContent = data.quality_note || "";
+
+        const tbody = document.querySelector("#oee-detail-table tbody");
+        tbody.innerHTML = "";
+        data.machines.forEach((m) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td>${m.machine_id}</td>
+                <td>${m.availability_pct}%</td>
+                <td>${m.performance_pct}%</td>
+                <td>${m.quality_pct}%</td>
+                <td><strong>${m.oee_pct}%</strong></td>
+                <td>${m.output_meters}</td>
+                <td>${m.sample_count}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    daysSelect.addEventListener("change", load);
+    load();
+})();
+</script>
+{% endblock %}

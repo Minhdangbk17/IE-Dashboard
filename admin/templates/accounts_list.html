@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Account Management{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3">
+    <h2 class="mt-0">Account Management</h2>
+    <a class="btn btn-primary" href="{{ url_for('admin.new_account') }}">+ New Account</a>
+</div>
+<div class="Box p-3" style="overflow-x:auto;">
+<table class="preview-table">
+    <thead><tr><th>Username</th><th>Full Name</th><th>Role</th><th>Created</th><th>Permissions</th></tr></thead>
+    <tbody>
+    {% for user in users %}
+    <tr>
+        <td>{{ user.username }}</td>
+        <td>{{ user.full_name }}</td>
+        <td><span class="Label {% if user.role == 'admin' %}Label--danger{% else %}Label--secondary{% endif %}">{{ user.role }}</span></td>
+        <td>{{ user.created_at }}</td>
+        <td>
+            {% if user.role == 'admin' %}
+                <span class="f6 color-fg-muted">Full system access</span>
+            {% else %}
+                <a class="btn btn-sm" href="{{ url_for('admin.account_permissions', user_id=user.id) }}">Manage Permissions</a>
+            {% endif %}
+        </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="color-fg-muted">No accounts yet.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endblock %}

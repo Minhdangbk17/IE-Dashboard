@@ -1,0 +1,50 @@
+# --- Python virtual environment (this project's venv root is the repo root itself) ---
+Include/
+Lib/
+Scripts/
+share/
+pyvenv.cfg
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# --- Environment / secrets ---
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# --- Local SQLite database + backups (never commit real production/demo data) ---
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/backups/
+
+# --- Uploads (user-supplied Excel files, not source) ---
+uploads/*
+!uploads/.gitkeep
+
+# --- Node / frontend build artifacts (none in use yet, kept for forward-compat) ---
+node_modules/
+.next/
+dist/
+build/
+
+# --- Vercel ---
+.vercel
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Misc project scratch (not part of source) ---
+Claude outputs/
+my_dashboard_phase1.zip
+mes.db

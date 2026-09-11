@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Knitting Hub{% endblock %}
+{% block content %}
+<h2>Knitting Hub</h2>
+<p class="color-fg-muted">
+    Minimal Phase 1 scaffold — full Engines will be added in a later phase.
+</p>
+<div class="d-flex flex-wrap" style="gap:16px;">
+    {% for e in engines %}
+    <div class="widget-card" style="flex:1; min-width:240px;">
+        <h3>{{ e.name }}</h3>
+        <p class="f6 color-fg-muted">{{ e.description }}</p>
+        <a class="btn btn-sm" href="{{ url_for('knitting.' + e.name + '.view') }}">Open &rarr;</a>
+    </div>
+    {% else %}
+    <p class="color-fg-muted">No Engine loaded for this Domain yet.</p>
+    {% endfor %}
+</div>
+{% endblock %}
