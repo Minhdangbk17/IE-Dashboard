@@ -128,7 +128,14 @@ STANDARD_HOURS = {
     "wait_color_load_hour": 0.50,
 }
 ACH_FIELDS = ("ach_load", "ach_unload", "ach_sample_check", "ach_ph", "ach_chemical", "ach_color")
-AVAILABILITY_DB_FIELDS = tuple(AVAILABILITY_COLUMNS.values()) + (
+# dict.fromkeys(...) khử trùng lặp NHƯNG giữ thứ tự xuất hiện đầu tiên — cần thiết vì
+# AVAILABILITY_COLUMNS có nhiều header (key) khác nhau cùng map vào 1 field DB (value) — VD
+# "Testing Sample order (Kg-H)" (tự sinh) và "Test Production - Sample order (Kg-H)" (alias
+# thủ công dòng trên) đều map vào field "testing_sample_order_kgh". Nếu không khử trùng lặp,
+# field đó xuất hiện 2 lần trong danh sách cột INSERT ở save_to_db() — SQLite bỏ qua lỗi này
+# (cột trùng, giá trị sau ghi đè) nhưng Postgres từ chối thẳng: "column ... specified more
+# than once" (phát hiện khi deploy Vercel/Supabase, đã pass SQLite regression trước đó).
+AVAILABILITY_DB_FIELDS = tuple(dict.fromkeys(AVAILABILITY_COLUMNS.values())) + (
     "production_date", "week_label", "month_label", *ACH_FIELDS,
     "ach_evaluated", "ach_passed", "ach_all_items",
 )
