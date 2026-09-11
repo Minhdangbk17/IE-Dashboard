@@ -501,17 +501,71 @@
       bằng thực nghiệm cho ra CÙNG hash byte-for-byte — PHẢI chạy với đúng
       `SECRET_KEY` sẽ dùng trên Vercel, không thì mật khẩu tạo ra không khớp
       lúc app thật verify đăng nhập.
+- [x] **Deploy thật lên Vercel + Supabase (Pooler) — đã verify với server
+      THẬT** (không còn là backlog "chờ dữ liệu thật" nữa). Chuỗi lỗi thật đã
+      gặp và fix theo thứ tự: (1) Direct connection
+      `db.<ref>.supabase.co:5432` chỉ có IPv6, Vercel Functions không có
+      outbound IPv6 → `Cannot assign requested address` — chuyển sang
+      connection string qua **Pooler** (`aws-0-<region>.pooler.supabase.com:
+      6543`, username dạng `postgres.<project-ref>` — KHÁC Direct connection,
+      dễ gõ sai/sót phần `.<project-ref>`); (2) `AVAILABILITY_COLUMNS`
+      (`core/excel_importer.py`) có 2 header khác nhau cùng map vào 1 field DB
+      (`testing_sample_order_kgh`, `testing_bulk_order_kgh` — alias thủ công
+      trùng field tự sinh từ vòng lặp) → field bị liệt kê 2 lần trong cột
+      INSERT của `save_to_db()`; SQLite bỏ qua lỗi này (cột trùng, giá trị sau
+      ghi đè) nhưng Postgres từ chối thẳng (`DuplicateColumn`) — sửa bằng
+      `dict.fromkeys()` khử trùng lặp khi build `AVAILABILITY_DB_FIELDS`,
+      giữ thứ tự xuất hiện đầu; (3) Excel Import qua UI rất chậm/timeout khi
+      file nhiều dòng — nguyên nhân: `psycopg2.Cursor.executemany()` KHÔNG tự
+      batch, gửi 1 round-trip mạng RIÊNG cho MỖI DÒNG (khác SQLite chạy cục
+      bộ) — sửa `_PostgresConnCompat.executemany()`
+      (`core/database.py`) tự nhận diện hình dạng `INSERT ... VALUES (%s,
+      %s, ...) [ON CONFLICT ...]` chuẩn (mọi call site executemany hiện có
+      đều vậy) và gộp thành `psycopg2.extras.execute_values()` (1000
+      dòng/round-trip) — `cursor.rowcount` sau đó không đáng tin (chỉ phản
+      ánh page cuối) nên bọc qua `_StaticRowCountCursor` gán cứng
+      `len(seq)` (an toàn vì mọi INSERT executemany trong dự án hoặc có
+      `ON CONFLICT DO UPDATE` — mọi dòng đều tính affected — hoặc là INSERT
+      thường không thể âm thầm bỏ dòng). Đã verify bằng mock cursor (không
+      cần Postgres thật): `?`→`%s`, gộp `VALUES` đúng, `execute_values` được
+      gọi đúng tham số, `.rowcount`/`.close()` forward đúng.
+- [x] **`migrate_sqlite_to_supabase.py`** (script gốc, chạy 1 lần từ máy
+      local, KHÔNG qua UI/Vercel vì Serverless Function giới hạn 300s không
+      đủ cho khối lượng dữ liệu lịch sử lớn) — copy toàn bộ dữ liệu THẬT đang
+      có trong `data/mes_dashboard.db` (9302 `availability_logs`, 6804
+      `batch_details`, 9302 `cleaning_mc_daily_summary`, 6686
+      `downtime_daily_summary`, 2720 `batch_matrix_daily_summary`, 43
+      `import_logs`, 17901 `import_log_rows`, 31 `downtime_case_notes`) sang
+      Supabase. Điểm mấu chốt: KHÔNG giữ nguyên `id` gốc từ SQLite khi insert
+      (Postgres tự sinh `id` mới — tránh đụng độ với id do chính app đã tạo
+      qua lần test-upload file nhỏ trước đó), thay vào đó đọc lại
+      {khoá tự nhiên: id mới} từ Postgres sau mỗi bảng cha để tự tra đúng id
+      cho bảng con (vd `cleaning_mc_daily_summary`/`downtime_case_notes`
+      remap `availability_log_id` qua bộ ba `batch_ref_no+machine+
+      start_time`, KHÔNG qua id); `user_permissions`/`downtime_case_notes.
+      updated_by` remap theo **username** (không theo id) vì bảng `users` cố
+      tình KHÔNG được copy (Supabase đã seed sẵn qua `seed_supabase_users.py`
+      với hash theo `SECRET_KEY` của Vercel — copy đè sẽ hỏng đăng nhập). Bảng
+      không có khoá tự nhiên (`import_logs`, `import_log_rows`) dùng guard
+      theo số dòng đã có (bỏ qua nếu đích đã có dữ liệu, trừ khi `--force`) để
+      chạy lại nhiều lần không bị nhân đôi; các bảng còn lại dùng
+      `ON CONFLICT ... DO UPDATE` (idempotent thật sự). Toàn bộ chạy trong 1
+      transaction (`--dry-run` để xem trước rồi rollback).
+      **Phát hiện thật khi xây bộ test bằng mock** (dựng "shadow Postgres"
+      bằng 1 SQLite phụ + monkeypatch `psycopg2`, chạy full script với dữ
+      liệu thật 53k+ dòng, cố tình cho id lệch giữa 2 "DB" để bắt lỗi giả
+      định id trùng): `supabase/schema.sql` THIẾU cột `import_logs.created_at`
+      so với schema thật của SQLite local (sót khi dịch ban đầu) — sửa
+      `bulk_upsert()` tự dò cột thật qua `information_schema.columns` và chỉ
+      insert phần giao (tự chịu được lệch schema thay vì phải sửa tay + chạy
+      `ALTER TABLE` thủ công trên Supabase trước); đã bổ sung lại cột này vào
+      `supabase/schema.sql` cho khớp (không bắt buộc phải `ALTER TABLE` trên
+      Supabase thật vì script đã tự chịu được, cột này dư thừa với
+      `imported_at` sẵn có). Test PASS toàn bộ: remap đúng, dòng "giả lập
+      user đã test-upload trước đó" không bị đụng, chạy lại lần 2 không nhân
+      đôi dữ liệu.
 
 ## Backlog (Phase 2+)
-- [ ] **Verify dual-mode Postgres/Supabase với server THẬT** — chờ người dùng
-      tạo project Supabase + cung cấp `DATABASE_URL` thật (`postgresql://...`).
-      Việc cần làm: áp `supabase/schema.sql` qua Supabase SQL editor, set
-      `DATABASE_URL` tạm thời trỏ vào đó, chạy lại full page regression + vài
-      query đại diện mỗi Engine (downtime pivot, batch_matrix, cleaning
-      matrix), đối chiếu số liệu khớp với cùng bộ dữ liệu chạy trên SQLite. Đã
-      verify được toàn bộ phần "wiring" (kết nối, dịch SQL, dialect-switch)
-      bằng `DATABASE_URL` giả — chỉ còn thiếu bước xác nhận SỐ LIỆU đúng khi
-      có Postgres sống thật trả dữ liệu.
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn
       trong yêu cầu gốc của Permission Model, chưa triển khai để tập trung
       đúng phạm vi bắt buộc.

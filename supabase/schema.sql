@@ -79,7 +79,8 @@ create table if not exists import_logs (
     error_detail    text,
     imported_at     text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
     imported_rows   integer not null default 0,
-    file_type       text
+    file_type       text,
+    created_at      text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
 
 create table if not exists machine_telemetry (
