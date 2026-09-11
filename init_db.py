@@ -567,7 +567,7 @@ def main(reset: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Khởi tạo Database cho MES Dashboard")
+    parser = argparse.ArgumentParser(description="Khởi tạo Database cho CETVN IE DASHBOARD")
     parser.add_argument("--reset", action="store_true", help="Xóa Database cũ và tạo lại từ đầu")
     args = parser.parse_args()
     main(reset=args.reset)

@@ -27,6 +27,7 @@
         } catch (err) {
             console.warn("Không thể lưu chế độ màu:", err);
         }
+        document.dispatchEvent(new CustomEvent("colormodechange", { detail: { mode: next } }));
     };
 
     applyStoredMode();

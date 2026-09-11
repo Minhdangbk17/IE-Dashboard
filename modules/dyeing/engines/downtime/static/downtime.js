@@ -304,7 +304,7 @@
 
     function updateChart(selected) {
         if (!chartData || typeof Chart === "undefined") return;
-        const colors = { "Total Rate": "#f0883e", "Rework": "#2f81f7", "Color Adjustment": "#a371f7", "Sample checking": "#3fb950", "Fabric loading": "#d29922", "Fabric unloading": "#db61a2", "Bleaching/Washing": "#58a6ff", "PH checking": "#f778ba", "Chemical load": "#79c0ff", "Others": "#8b949e" };
+        const colors = { "Total Rate": "#ff7dda", "Rework": "#2862d7", "Color Adjustment": "#625fff", "Sample checking": "#3fb950", "Fabric loading": "#d29922", "Fabric unloading": "#db61a2", "Bleaching/Washing": "#85a6e9", "PH checking": "#f778ba", "Chemical load": "#79c0ff", "Others": "#abaebb" };
         const datasets = selected.map((name) => ({
             label: name === "Total Rate" ? "Total Downtime Rate" : name,
             data: (unitMode === "hour" ? chartData.datasets_hours : chartData.datasets)[name] || [],
@@ -316,6 +316,9 @@
             yAxisID: "y",
         }));
         if (chart) chart.destroy();
+        const isLight = document.documentElement.getAttribute("data-color-mode") === "light";
+        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#abaebb";
+        const gridColor = isLight ? "rgba(11, 12, 14, 0.08)" : "rgba(255, 255, 255, 0.08)";
         chart = new Chart(document.getElementById("downtimeChart"), {
             type: "bar",
             data: { labels: chartData.labels, datasets },
@@ -324,10 +327,10 @@
                 maintainAspectRatio: false,
                 interaction: { mode: "index", intersect: false },
                 scales: {
-                    x: { stacked: true, ticks: { color: "#a1a1aa" }, grid: { color: "rgba(255, 255, 255, 0.1)" } },
-                            y: { stacked: true, beginAtZero: true, ticks: { color: "#a1a1aa" }, grid: { color: "rgba(255, 255, 255, 0.1)" }, title: { display: true, text: unitMode === "hour" ? "Downtime hours / batch" : "Downtime rate (%)", color: "#a1a1aa" } },
+                    x: { stacked: true, ticks: { color: textColor }, grid: { color: gridColor } },
+                            y: { stacked: true, beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: unitMode === "hour" ? "Downtime hours / batch" : "Downtime rate (%)", color: textColor } },
                 },
-                plugins: { legend: { position: "bottom", labels: { color: "#a1a1aa", usePointStyle: true } } },
+                plugins: { legend: { position: "bottom", labels: { color: textColor, usePointStyle: true } } },
             },
         });
     }
@@ -407,6 +410,7 @@
         }
     });
     ["from-date", "to-date", "group-by"].forEach((id) => document.getElementById(id).addEventListener("change", load));
+    document.addEventListener("colormodechange", () => updateChart(selectedCategories()));
     updateCapacityLabel();
     updateCategoryLabel();
     load();

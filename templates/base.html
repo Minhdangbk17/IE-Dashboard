@@ -3,20 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}MES Dashboard{% endblock %} · CETVN</title>
+    <title>{% block title %}Overview{% endblock %} · CETVN IE DASHBOARD</title>
 
-    <!-- GitHub Primer CSS (chuẩn UI) -->
-    <link rel="stylesheet" href="https://unpkg.com/@primer/css@21/dist/primer.css">
-    <!-- Octicons (dùng qua <svg> path tối giản, không cần font riêng) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@500;600&family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-<div class="d-flex" style="min-height:100vh;">
+<div class="app-shell">
 
     <!-- ============ SIDEBAR ============ -->
-    <nav class="app-sidebar color-bg-inset border-right" aria-label="Main navigation">
-        <div class="sidebar-header">IE Dashboard</div>
+    <nav class="app-sidebar" aria-label="Main navigation">
+        <div class="sidebar-brand">
+            <span class="sidebar-brand-mark">IE</span>
+            <span class="sidebar-brand-text">CETVN IE DASHBOARD<small>Industrial Engineering</small></span>
+        </div>
 
         {% if CURRENT_USER %}
         <div class="sidebar-body">
@@ -47,8 +50,16 @@
         </ul>
 
         <div class="sidebar-user">
-            <div class="sidebar-user-name">{{ CURRENT_USER.full_name }}</div>
-            <div class="sidebar-user-role">{{ CURRENT_USER.role }}</div>
+            <div class="sidebar-user-row">
+                <div style="min-width:0;">
+                    <div class="sidebar-user-name">{{ CURRENT_USER.full_name }}</div>
+                    <div class="sidebar-user-role">{{ CURRENT_USER.role }}</div>
+                </div>
+                <button type="button" class="theme-toggle-btn" onclick="toggleColorMode()" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">
+                    <svg class="icon-moon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.598 1.591a.75.75 0 0 1 .785-.175 7 7 0 1 1-8.967 8.967.75.75 0 0 1 .961-.96 5.5 5.5 0 0 0 7.046-7.046.75.75 0 0 1 .175-.786Z"></path></svg>
+                    <svg class="icon-sun" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM8 0a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0ZM8 13.5a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 8 13.5ZM2.343 2.343a.75.75 0 0 1 1.061 0l1.06 1.061a.75.75 0 1 1-1.06 1.06l-1.06-1.06a.75.75 0 0 1 0-1.06ZM11.536 11.536a.75.75 0 0 1 1.06 0l1.061 1.06a.75.75 0 0 1-1.06 1.061l-1.061-1.06a.75.75 0 0 1 0-1.061ZM16 8a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 16 8ZM2.5 8a.75.75 0 0 1-.75.75H.25a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 2.5 8ZM12.596 3.404a.75.75 0 0 1 0 1.06l-1.06 1.061a.75.75 0 1 1-1.061-1.06l1.06-1.061a.75.75 0 0 1 1.061 0ZM4.464 11.536a.75.75 0 0 1 0 1.06l-1.06 1.061a.75.75 0 1 1-1.061-1.06l1.06-1.061a.75.75 0 0 1 1.061 0Z"></path></svg>
+                </button>
+            </div>
             <a class="sidebar-logout" href="{{ url_for('auth.logout') }}">Logout</a>
         </div>
         </div>
@@ -56,7 +67,7 @@
     </nav>
 
     <!-- ============ MAIN CONTENT ============ -->
-    <main class="flex-1 p-4" style="min-width:0;">
+    <main class="app-main">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}

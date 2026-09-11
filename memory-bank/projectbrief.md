@@ -1,4 +1,4 @@
-# Project Brief — MES Dashboard (Manufacturing Execution System)
+# Project Brief — CETVN IE DASHBOARD (tên cũ: MES Dashboard)
 
 ## Tổng quan
 Xây dựng một Web Dashboard phân tích dữ liệu sản xuất (MES) nội bộ cho các

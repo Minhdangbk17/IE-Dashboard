@@ -565,6 +565,17 @@
       user đã test-upload trước đó" không bị đụng, chạy lại lần 2 không nhân
       đôi dữ liệu.
 
+- [x] **Redesign toàn bộ giao diện web + đổi thương hiệu "MES Dashboard" ->
+      "CETVN IE DASHBOARD"** (2026-09-11) — bỏ hẳn GitHub Primer CSS, viết
+      design system riêng (`static/css/app.css`) theo `design/DESIGN.md`
+      ("AgentQL: Aurora glow over a midnight terminal"), hỗ trợ cả Dark
+      (mặc định) và Light Mode (tự suy diễn thêm, có nút toggle trong
+      sidebar). Chi tiết đầy đủ + lý do quyết định ở `activeContext.md`
+      mục -7 và `techContext.md` mục Frontend. Verify bằng Flask dev server
+      thật + Playwright chụp ảnh 10 trang ở cả 2 theme — không lỗi
+      layout/CSS. Phát hiện phụ 2 lỗi JS console tiền-tồn (không phải do
+      redesign) khi dataset rỗng — xem Known Issues bên dưới.
+
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn
       trong yêu cầu gốc của Permission Model, chưa triển khai để tập trung
@@ -593,6 +604,13 @@
       (`graph_view.html`) chỉ phù hợp quy mô nhỏ/vừa.
 
 ## Known Issues
+- `downtime_view.html`/`batch_matrix_view.html` (JS): khi dataset hoàn toàn
+  rỗng (VD DB mới seed chưa có `availability_logs`), một vài hàm render gọi
+  `.map()` trên field mà backend không trả về khi không có dữ liệu ->
+  `Cannot read properties of undefined (reading 'map')` ở console (phát
+  hiện 2026-09-11 lúc verify redesign UI trên DB dev mới seed, KHÔNG phải
+  bug do redesign gây ra, KHÔNG xảy ra với dữ liệu thật vì luôn có hàng
+  nghìn dòng — chưa sửa vì ngoài phạm vi công việc lúc phát hiện).
 - Sơ đồ Graphify dùng thuật toán xếp tầng (leveling) đơn giản — có thể chồng
   chéo cạnh (edge) nếu đồ thị nhiều nhánh phức tạp; chấp nhận được ở quy mô
   Phase 1 (dưới ~10 Engine).

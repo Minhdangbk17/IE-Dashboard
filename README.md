@@ -1,4 +1,4 @@
-# MES Dashboard — Phase 1: Foundation Skeleton
+# CETVN IE DASHBOARD — Phase 1: Foundation Skeleton
 
 Web Dashboard phân tích dữ liệu sản xuất (MES) cho xưởng Nhuộm (Dyeing) và
 Dệt (Knitting), xây dựng trên Flask + SQLite (WAL mode), theo kiến trúc

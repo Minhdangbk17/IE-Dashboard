@@ -8,7 +8,7 @@
 </p>
 
 <div class="d-flex mb-3" style="gap:16px;">
-    <div class="d-flex flex-items-center" style="gap:6px;"><span class="legend-dot" style="background:#2f81f7;"></span> Data Source (File)</div>
+    <div class="d-flex flex-items-center" style="gap:6px;"><span class="legend-dot" style="background:#2862d7;"></span> Data Source (File)</div>
     <div class="d-flex flex-items-center" style="gap:6px;"><span class="legend-dot" style="background:#3fb950;"></span> Engine</div>
     <div class="d-flex flex-items-center" style="gap:6px;"><span class="legend-dot" style="background:#d29922;"></span> SQLite Table</div>
 </div>
@@ -19,15 +19,15 @@
 
 <style>
 .legend-dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
-.graph-node-label { font-size: 11px; fill: #c9d1d9; font-family: -apple-system, sans-serif; }
-.graph-edge-label { font-size: 9px; fill: #8b949e; font-family: -apple-system, sans-serif; }
+.graph-node-label { font-size: 11px; fill: var(--text-primary); font-family: var(--font-body); }
+.graph-edge-label { font-size: 9px; fill: var(--text-tertiary); font-family: var(--font-body); }
 </style>
 
 <script>
 (function () {
     "use strict";
 
-    const KIND_COLORS = { source: "#2f81f7", engine: "#3fb950", table: "#d29922" };
+    const KIND_COLORS = { source: "#2862d7", engine: "#3fb950", table: "#d29922" };
     const svg = document.getElementById("graph-svg");
 
     function svgEl(tag, attrs) {
@@ -100,7 +100,7 @@
             id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5",
             markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
         });
-        marker.appendChild(svgEl("path", { d: "M0,0 L10,5 L0,10 z", fill: "#8b949e" }));
+        marker.appendChild(svgEl("path", { d: "M0,0 L10,5 L0,10 z", fill: "#abaebb" }));
         defs.appendChild(marker);
         svg.appendChild(defs);
 

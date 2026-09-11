@@ -11,13 +11,40 @@
 - Module `csv` built-in — hỗ trợ import file `.csv`.
 
 ## Frontend
-- **GitHub Primer CSS** (qua CDN `unpkg.com/@primer/css`) — design system
-  chuẩn GitHub, hỗ trợ `data-color-mode="dark"`.
+- **Design system riêng** (`static/css/app.css`, 2026-09-11 — thay thế hoàn
+  toàn GitHub Primer CSS trước đây, xem `activeContext.md` mục redesign UI
+  để biết lý do/quyết định) — không còn phụ thuộc CDN `unpkg.com/@primer/css`.
+  Token màu/font/spacing/radius/shadow lấy từ `design/DESIGN.md`
+  ("AgentQL — Aurora glow over a midnight terminal": nền tối Void/Abyss/Deep
+  Sea/Cobalt Panel, accent Signal Blue/Aurora Purple, font Figtree (heading)
+  + Inter (UI) + IBM Plex Mono (mono), bo góc pill cho nút/badge, card 12px).
+  Hỗ trợ CẢ Dark (mặc định, đúng bản gốc) VÀ Light (tự suy diễn thêm, không
+  có trong tài liệu gốc) qua `[data-color-mode]` + `theme_toggle.js`
+  (đã thêm nút bấm toggle trong sidebar — trước đây có sẵn cơ chế JS nhưng
+  chưa có UI trigger).
+  **Kỹ thuật quan trọng** để tránh phải sửa lại từng template/JS-build-DOM
+  đang dùng tên class kiểu Primer (`Box`, `Label`, `BtnGroup`, `blankslate`,
+  `d-flex`, `f6`, `color-fg-muted`...): giữ NGUYÊN các tên class đó làm hook
+  trong markup, nhưng định nghĩa lại 100% từ đầu trong `app.css` theo design
+  system mới (không import/phụ thuộc gì vào Primer CSS thật). Đồng thời alias
+  lại đúng tên biến CSS của Primer hay dùng trong `style="var(--color-x,
+  #hex-fallback)"` rải rác nhiều template (`--color-canvas-default`,
+  `--color-border-default`, `--color-fg-muted`, `--color-accent-emphasis`...)
+  sang token mới trong `:root` — nhờ vậy các `style=` inline cũ tự động lên
+  đúng theme mới mà không cần sửa từng chỗ.
 - JavaScript thuần (Vanilla JS, ES2017+) — `fetch()` cho gọi API song song,
   `XMLHttpRequest` cho upload có Progress Bar (fetch chưa hỗ trợ tốt upload
   progress ở thời điểm viết Phase 1).
 - SVG thuần (không dùng thư viện đồ thị ngoài) cho Graphify — giảm phụ thuộc
-  external, dễ tuỳ biến layout.
+  external, dễ tuỳ biến layout. Màu node/edge đồng bộ theo token mới.
+- Chart.js (CDN `cdn.jsdelivr.net`) cho biểu đồ Downtime — màu trục/lưới/chú
+  giải đọc động từ CSS variable `--text-secondary` lúc vẽ (không hardcode),
+  tự vẽ lại khi đổi Dark/Light qua custom event `colormodechange` (bắn từ
+  `theme_toggle.js` mỗi lần `toggleColorMode()`).
+- Google Fonts CDN (`fonts.googleapis.com`) nạp Figtree/Inter/IBM Plex Mono —
+  cùng kiểu phụ thuộc CDN như Primer trước đây (chấp nhận theo yêu cầu người
+  dùng), có `font-family` fallback về `system-ui`/`monospace` nếu mạng xưởng
+  chặn CDN.
 
 ## Cấu trúc dữ liệu (SQLite Schema chính)
 - `users` — tài khoản đăng nhập (role: admin/operator).

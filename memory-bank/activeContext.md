@@ -1,9 +1,10 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-10 — Thêm **Permission Model** (phân quyền Xem/
-Sửa/Xoá RIÊNG CHO TỪNG ENGINE, bảng `user_permissions`, blueprint `admin/`
-quản lý tài khoản). Xem chi tiết đầy đủ ở `systemPatterns.md` mục 10 — file
-này chỉ ghi tóm tắt quyết định + rủi ro/việc cần làm tiếp.
+**Cập nhật lần cuối:** 2026-09-11 — **Redesign toàn bộ giao diện web** sang
+design system riêng (bỏ hẳn Primer CSS) + đổi tên thương hiệu ứng dụng từ
+"MES Dashboard" sang **"CETVN IE DASHBOARD"**. Xem chi tiết đầy đủ ở
+`techContext.md` mục Frontend — file này chỉ ghi tóm tắt quyết định + rủi
+ro/việc cần làm tiếp.
 
 ## Đang làm
 - Khung Phase 1 (Application Factory, Auto-loader 2 cấp, SQLite WAL, Graphify,
@@ -68,6 +69,54 @@ này chỉ ghi tóm tắt quyết định + rủi ro/việc cần làm tiếp.
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-7. **Redesign toàn bộ giao diện web + đổi thương hiệu "MES Dashboard" ->
+   "CETVN IE DASHBOARD"** (2026-09-11, theo yêu cầu người dùng, dựa trên bộ
+   style reference `design/DESIGN.md`/`theme.css`/`variables.css`/`tokens.json`
+   — theme "AgentQL: Aurora glow over a midnight terminal"). Đã hỏi người
+   dùng 3 quyết định trước khi code (không tự suy đoán): (1) bỏ hẳn Primer CSS
+   viết design system riêng (thay vì chỉ override token), (2) load font
+   Figtree/Inter/IBM Plex Mono qua Google Fonts CDN (giống cách Primer đang
+   load), (3) vẫn giữ Light Mode dù bản gốc chỉ định nghĩa Dark — tự suy diễn
+   thêm bảng màu Light theo đúng vai trò từng lớp bề mặt của bản Dark.
+   Chi tiết kỹ thuật đầy đủ (bao gồm mẹo giữ tên class Primer cũ làm hook +
+   alias biến CSS `--color-canvas-default`... để không phải sửa lại từng
+   template/JS) đã ghi ở `techContext.md` mục Frontend — không lặp lại ở đây.
+   **Phạm vi đã sửa**: `static/css/app.css` (viết lại hoàn toàn), `templates/
+   base.html` (bỏ CDN Primer, thêm Google Fonts, sidebar mới có nút toggle
+   Dark/Light), `static/js/theme_toggle.js` (bắn thêm custom event
+   `colormodechange` để Chart.js vẽ lại đúng màu khi đổi theme),
+   `modules/dyeing/engines/downtime/static/downtime.js` (màu biểu đồ Chart.js
+   đọc động từ CSS variable thay vì hardcode, tự vẽ lại khi đổi theme),
+   `modules/dyeing/engines/reports/templates/cleaning_matrix_view.html` (2
+   chỗ màu cảnh báo/ratio hardcode kiểu nền sáng, không hợp Dark Mode — đổi
+   sang token `--warning`/`--success`/`--danger`), `graphify/templates/
+   graph_view.html` (màu node/edge/legend đồng bộ theo token mới). Đổi tên
+   thương hiệu ở: `templates/base.html` (title, sidebar brand), `templates/
+   dashboard.html` (dòng giới thiệu), `README.md`, `.env.example`,
+   `init_db.py` (mô tả CLI), `CLAUDE.md`, `memory-bank/projectbrief.md` (chỉ
+   đổi dòng tiêu đề, giữ "tên cũ: MES Dashboard" để không mất ngữ cảnh lịch
+   sử) — **KHÔNG đổi** identifier kỹ thuật nội bộ (đường dẫn file DB
+   `data/mes_dashboard.db`, tên bảng/cột, tên biến/hàm Python, key
+   `localStorage`) vì đổi những thứ này có rủi ro phá vỡ dữ liệu/triển khai
+   thật đang chạy mà không nằm trong yêu cầu "redesign giao diện".
+   **Verify đã làm**: dựng Flask dev server thật (không chỉ đọc code), dùng
+   Playwright (cài mới qua pip vì `chromium-cli` không có sẵn trong môi
+   trường này) chụp ảnh 10 trang chính ở CẢ Dark lẫn Light Mode (Overview,
+   Dyeing Hub, Downtime, Batch Matrix, Manual Entry, Cleaning MC, Graphify,
+   Account Management) — toàn bộ render đúng, không lỗi CSS/layout vỡ.
+   **Phát hiện phụ (không phải do redesign gây ra, đã xác nhận qua Flask
+   log không có lỗi 500)**: `data/mes_dashboard.db` cục bộ trên máy dev lúc
+   bắt đầu verify KHÔNG có bảng `users` (chưa từng chạy `init_db.py` trên máy
+   này) — đã chạy `python init_db.py` (KHÔNG `--reset`, an toàn/idempotent
+   theo đúng mô tả trong CLAUDE.md) để có tài khoản demo test đăng nhập. Khi
+   test với dữ liệu Batch Matrix/Downtime rỗng (đúng vì DB mới seed chỉ có
+   dữ liệu demo Telemetry cũ, không có `availability_logs` thật), phát hiện
+   2 lỗi JS console `Cannot read properties of undefined (reading 'map')`
+   khi trang render dataset hoàn toàn rỗng — đây là edge case CÓ SẴN TỪ TRƯỚC
+   ở `downtime_view.html`/`batch_matrix_view.html` (không phải do các file
+   CSS/branding vừa sửa), CHƯA sửa vì ngoài phạm vi "redesign giao diện" và
+   không xảy ra với dữ liệu thật (luôn có hàng nghìn dòng `availability_logs`
+   trên Supabase) — ghi lại ở đây để không quên nếu sau này cần dọn.
 -6. **Thêm Permission Model — phân quyền Xem/Sửa/Xoá RIÊNG CHO TỪNG ENGINE**
    (bảng `user_permissions`, decorator `permission_required()`, blueprint
    `admin/` quản lý tài khoản, lọc `NAV_MENU` theo quyền cho operator). admin

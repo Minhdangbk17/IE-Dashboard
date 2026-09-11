@@ -1,6 +1,6 @@
-# CLAUDE.md — Chỉ dẫn cho Claude Code trong dự án MES Dashboard
+# CLAUDE.md — Chỉ dẫn cho Claude Code trong dự án CETVN IE DASHBOARD
 
-Đây là dự án **MES Dashboard** (Flask + SQLite, kiến trúc Modular/Engine-Plugin).
+Đây là dự án **CETVN IE DASHBOARD** (tên cũ: MES Dashboard; Flask + SQLite, kiến trúc Modular/Engine-Plugin).
 File này được Claude Code tự động đọc khi mở dự án — nó thay thế cho trí nhớ
 mà Claude KHÔNG giữ được giữa các phiên làm việc.
 
