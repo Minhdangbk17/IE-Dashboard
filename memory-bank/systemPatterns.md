@@ -359,6 +359,47 @@ từ bảng đã tổng hợp sẵn.
   TẠM (copy từ DB thật) — tạo note qua context "Data Quality", xác nhận note đó cũng đọc
   được y hệt qua `get_top_batches_for_category()` (chứng minh dùng chung 1 bảng, không
   phải 2 bảng đồng bộ ngầm).
+- **BUG THẬT phát hiện + sửa (2026-09-12): note bị "dùng chung nhầm" giữa các category/
+  field khác nhau của CÙNG 1 mẻ.** Thiết kế ban đầu ở trên (`UNIQUE(availability_log_id)`)
+  có lỗ hổng: 1 mẻ (`availability_log_id`) thường xuất hiện ở NHIỀU category khác nhau
+  trong "Downtime by Category" (vd 1 mẻ vừa có giờ Rework vừa có giờ Color Adjustment)
+  hoặc cả 2 field của "Data Quality" (loading/unloading) — vì chỉ khoá theo
+  `availability_log_id`, sửa Reason/Detail ở 1 category làm lộ/đổi luôn note đó ở MỌI
+  category/field khác của cùng mẻ (người dùng report: "bấm vào category này lại xuất
+  hiện reason/detail của category kia"). Đã sửa bằng cách thêm cột `context` (giá trị =
+  tên category trong `CATEGORIES` khi ghi từ "Downtime by Category", hoặc "loading"/
+  "unloading" khi ghi từ "Data Quality") và đổi khoá thành
+  `UNIQUE(availability_log_id, context)` — mỗi (mẻ, category/field) giờ có note ĐỘC LẬP.
+  - **Tương thích ngược với 27 note thật đã có trên Supabase production**: note CŨ (tạo
+    trước khi có `context`) được gán `context=''` và dùng làm FALLBACK hiển thị cho MỌI
+    category/field CHƯA có note riêng của đúng mẻ đó (`_attach_case_notes()` query
+    `WHERE context IN (?, '')` rồi ưu tiên đúng context nếu có) — KHÔNG mất dữ liệu, chỉ
+    "tách dần" khi người dùng sửa lại theo từng category cụ thể (lần sửa đó ghi thành 1
+    dòng MỚI với context riêng, KHÔNG ghi đè dòng context='').
+  - **SQLite** (`_migrate_case_notes_context_column()`, gọi lazy trong
+    `_ensure_case_notes_table()`): không thể ALTER đổi UNIQUE constraint tại chỗ -> dựng
+    lại bảng (RENAME bảng cũ, CREATE bảng mới đúng schema, INSERT copy dữ liệu với
+    context='', DROP bảng cũ) — **BUG PHỤ đã bắt được lúc viết test**: thiếu
+    `conn.commit()` sau bước copy khiến transaction treo, dữ liệu cũ "biến mất" với mọi
+    connection khác cho tới khi có commit tình cờ khác — đã thêm `conn.commit()` tường
+    minh cuối hàm migrate.
+  - **Postgres (production)**: app KHÔNG có quyền tự ALTER TABLE theo quy ước dự án (mục
+    5.1) — đã viết `supabase/migrate_case_notes_context.sql` (idempotent, có `begin`/
+    `commit`) để người dùng tự chạy 1 lần qua Supabase SQL Editor trên DB thật (thêm cột
+    `context` default `''`, drop constraint `UNIQUE(availability_log_id)` cũ, tạo lại
+    `UNIQUE(availability_log_id, context)`) — **CHƯA CHẠY**, xem `activeContext.md` mục
+    "Việc tiếp theo". `supabase/schema.sql` đã cập nhật định nghĩa bảng cho lần cài mới
+    (không tự áp dụng ngược cho DB production đã tồn tại).
+  - Route `POST /api/case-notes/<id>` giờ BẮT BUỘC nhận thêm `context` trong JSON body
+    (400 nếu thiếu) — `upsert_case_note(availability_log_id, context, reason, detail,
+    user_id)`. Frontend (`downtime.js`): biến `activeCaseContext` set = category lúc mở
+    modal Top-10-by-category (`openTopBatches()`), hoặc = field lúc mở modal Data Quality
+    (`openAbnormalPointBatches()`), gửi kèm mỗi lần `saveCaseNote()`.
+  - Verify: `tests/test_downtime_case_notes_context.py` (DB tạm SQLite mô phỏng ĐÚNG
+    schema cũ có sẵn 1 note thật, để code tự lazy-migrate — không giả định) — 7 case PASS:
+    migrate giữ nguyên note cũ, fallback đúng, ghi note category A không đụng category B
+    (cả note cũ context='' lẫn note context khác đã ghi trước), tổng số dòng đúng (không
+    ghi đè nhầm qua sai `ON CONFLICT` target).
 - **Biến thể "cache chi tiết từng dòng" (`reports/cleaning_matrix.py`) — KHÁC
   downtime/batch_matrix**: Cleaning MC hiển thị CHI TIẾT TỪNG MẺ theo trình tự
   (chuỗi badge/máy/ngày + đầy đủ record từng mẻ), không phải số liệu đã gộp —

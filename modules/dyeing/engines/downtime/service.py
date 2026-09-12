@@ -139,13 +139,15 @@ def _valid_fabric_type(value: Any) -> bool:
 
 
 def _empty_result(group_by: str) -> dict[str, Any]:
-    rows = [{"category": category, "values": [], "total_pct": 0.0} for category in CATEGORIES]
+    rows = [{"category": category, "values": [], "values_hours": [], "total_pct": 0.0, "total_hours": 0.0} for category in CATEGORIES]
     datasets = {category: [] for category in CATEGORIES}
     datasets["Total Rate"] = []
+    datasets_hours = {category: [] for category in CATEGORIES}
+    datasets_hours["Total Rate"] = []
     return {
         "filters": {"capacity": None, "from_date": None, "to_date": None, "group_by": group_by},
         "periods": [], "period_keys": [], "time_labels": [], "rows": rows, "rows_hours": rows, "total_row": [], "total_row_hours": [], "chart": {"categories": [], "series": []},
-        "labels": [], "datasets": datasets,
+        "labels": [], "datasets": datasets, "datasets_hours": datasets_hours,
         "kpis": {"planned_hours": 0.0, "downtime_hours": 0.0, "downtime_rate_pct": 0.0, "valid_batches": 0, "achievement_rate_pct": 0.0},
         "achievement": {"periods": [], "breakdown": [], "overall_rate_pct": 0.0},
     }
@@ -517,41 +519,92 @@ def get_top_batches_for_category(
         }
         for row in rows
     ]
-    _attach_case_notes(result)
+    _attach_case_notes(result, context=category)
     return result
 
 
 # ---------------------------------------------------------------------------
 # Downtime Case Notes: annotation THỦ CÔNG riêng (Reason/Detail người dùng tự
-# nhập cho 1 mẻ trong danh sách drill-down "Downtime by Category") — KHÔNG
-# ghi đè `availability_logs` gốc, KHÔNG dùng chung cơ chế với Reason/Detail
-# của Abnormal Point (bảng/mục đích khác nhau, xem systemPatterns.md). Khoá
-# theo `availability_logs.id` — danh sách drill-down lấy từ bảng này, KHÔNG
-# phải `downtime_logs` (bảng đó chưa nối vào pipeline báo cáo thật).
+# nhập cho 1 mẻ trong danh sách drill-down "Downtime by Category" VÀ "Data
+# Quality") — KHÔNG ghi đè `availability_logs` gốc. Khoá theo `availability_logs.id`
+# — danh sách drill-down lấy từ bảng này, KHÔNG phải `downtime_logs` (bảng đó
+# chưa nối vào pipeline báo cáo thật).
+#
+# `context` (2026-09-12, thêm sau khi phát hiện bug thật): 1 mẻ (availability_log_id)
+# có thể xuất hiện ở NHIỀU category khác nhau trong "Downtime by Category" (vd vừa có
+# Rework vừa có Color Adjustment) HOẶC cả 2 field của "Data Quality" (loading/unloading)
+# — bản đầu chỉ khoá theo `availability_log_id` nên 1 note bị DÙNG CHUNG nhầm cho MỌI
+# category/field của mẻ đó (sửa note ở category này thì category khác của CÙNG mẻ cũng
+# đổi theo). Khoá UNIQUE đổi thành (availability_log_id, context): context = tên category
+# (`CATEGORIES`) khi ghi từ "Downtime by Category", hoặc "loading"/"unloading"
+# (`ABNORMAL_POINT_FIELDS`) khi ghi từ "Data Quality" — 2 note của CÙNG 1 mẻ ở 2 ngữ
+# cảnh khác nhau giờ độc lập hoàn toàn. Note CŨ (tạo trước khi có `context`) được giữ ở
+# context='' và dùng làm FALLBACK hiển thị cho MỌI category/field CHƯA có note riêng của
+# mẻ đó — không mất dữ liệu đã nhập, chỉ tách dần khi người dùng sửa lại theo từng
+# category cụ thể (xem `_attach_case_notes()`).
 # ---------------------------------------------------------------------------
 
 
 def _ensure_case_notes_table(conn: Any) -> None:
     """Tự tạo bảng nếu chưa có — CHỈ chạy DDL này ở SQLite (`AUTOINCREMENT`/`datetime('now')`
-    là cú pháp SQLite-only). Ở Postgres, bảng đã được tạo trước qua `supabase/schema.sql`."""
+    là cú pháp SQLite-only). Ở Postgres, bảng đã được tạo trước qua `supabase/schema.sql`
+    (cột `context` + constraint mới áp qua `supabase/migrate_case_notes_context.sql` —
+    KHÔNG lazy-migrate như SQLite vì app không có quyền ALTER TABLE trên Postgres theo
+    quy ước dự án)."""
     if get_dialect() == "sqlite":
         conn.execute("""
             CREATE TABLE IF NOT EXISTS downtime_case_notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 availability_log_id INTEGER NOT NULL REFERENCES availability_logs (id) ON DELETE CASCADE,
+                context TEXT NOT NULL DEFAULT '',
                 reason TEXT,
                 detail TEXT,
                 updated_by INTEGER NOT NULL REFERENCES users (id),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                UNIQUE (availability_log_id)
+                UNIQUE (availability_log_id, context)
             )
         """)
+        _migrate_case_notes_context_column(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_downtime_case_notes_log ON downtime_case_notes (availability_log_id)")
 
 
-def _attach_case_notes(batches: list[dict[str, Any]]) -> None:
+def _migrate_case_notes_context_column(conn: Any) -> None:
+    """Bổ sung cột `context` cho bảng SQLite ĐÃ TỒN TẠI TỪ TRƯỚC (tạo lúc `context` chưa
+    có, `UNIQUE(availability_log_id)` cũ). SQLite không cho ALTER đổi UNIQUE constraint tại
+    chỗ -> dựng lại bảng: đổi tên bảng cũ, tạo bảng mới đúng schema, copy dữ liệu cũ với
+    context='' (coi là note "chung", vẫn hiển thị lại đúng nội dung qua fallback ở
+    `_attach_case_notes()`), xoá bảng cũ. Idempotent: return ngay nếu bảng chưa tồn tại
+    (lần tạo mới hoàn toàn, không có gì để migrate) hoặc đã có cột `context` rồi."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(downtime_case_notes)").fetchall()}
+    if not columns or "context" in columns:
+        return
+    conn.execute("ALTER TABLE downtime_case_notes RENAME TO downtime_case_notes_pre_context")
+    conn.execute("""
+        CREATE TABLE downtime_case_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            availability_log_id INTEGER NOT NULL REFERENCES availability_logs (id) ON DELETE CASCADE,
+            context TEXT NOT NULL DEFAULT '',
+            reason TEXT,
+            detail TEXT,
+            updated_by INTEGER NOT NULL REFERENCES users (id),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (availability_log_id, context)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO downtime_case_notes (id, availability_log_id, context, reason, detail, updated_by, updated_at)
+        SELECT id, availability_log_id, '', reason, detail, updated_by, updated_at FROM downtime_case_notes_pre_context
+    """)
+    conn.execute("DROP TABLE downtime_case_notes_pre_context")
+    conn.commit()
+
+
+def _attach_case_notes(batches: list[dict[str, Any]], context: str) -> None:
     """Ghép note (Reason/Detail thủ công + ai/lúc nào sửa lần cuối) từ `downtime_case_notes`
-    vào TỪNG mẻ trong danh sách drill-down — 1 query cho CẢ danh sách (không N+1)."""
+    vào TỪNG mẻ trong danh sách drill-down — 1 query cho CẢ danh sách (không N+1).
+    `context` = category ("Downtime by Category") hoặc field ("Data Quality") ĐANG XEM —
+    ưu tiên note ghi ĐÚNG context này; nếu mẻ chưa có note riêng cho context, fallback về
+    note "chung" cũ (context='', tạo trước khi tách theo category) nếu có."""
     log_ids = [batch["availability_log_id"] for batch in batches if batch.get("availability_log_id") is not None]
     for batch in batches:
         batch["case_reason"] = None
@@ -564,16 +617,21 @@ def _attach_case_notes(batches: list[dict[str, Any]]) -> None:
     _ensure_case_notes_table(conn)
     placeholders = ", ".join("?" for _ in log_ids)
     sql = f"""
-        SELECT n.availability_log_id, n.reason, n.detail, n.updated_at, u.username AS updated_by_username
+        SELECT n.availability_log_id, n.context, n.reason, n.detail, n.updated_at, u.username AS updated_by_username
         FROM downtime_case_notes n
         LEFT JOIN users u ON u.id = n.updated_by
-        WHERE n.availability_log_id IN ({placeholders})
+        WHERE n.availability_log_id IN ({placeholders}) AND n.context IN (?, '')
     """
     try:
-        rows = execute_query(sql, log_ids)
+        rows = execute_query(sql, [*log_ids, context])
     except DatabaseError:
         return
-    notes_by_log = {row["availability_log_id"]: row for row in rows}
+    notes_by_log: dict[Any, Any] = {}
+    for row in rows:
+        log_id = row["availability_log_id"]
+        # Note đúng context LUÔN thắng note "chung" (context=''), bất kể thứ tự trả về.
+        if log_id not in notes_by_log or row["context"] == context:
+            notes_by_log[log_id] = row
     for batch in batches:
         note = notes_by_log.get(batch.get("availability_log_id"))
         if note is None:
@@ -584,11 +642,11 @@ def _attach_case_notes(batches: list[dict[str, Any]]) -> None:
         batch["case_updated_at"] = note["updated_at"]
 
 
-def upsert_case_note(availability_log_id: int, reason: str | None, detail: str | None, user_id: int) -> dict[str, Any]:
-    """Lưu (UPSERT) Reason/Detail thủ công cho 1 mẻ — tối đa 1 note/mẻ (`UNIQUE
-    availability_log_id`), sửa lại thì ghi đè CHÍNH dòng đó, KHÔNG lưu lịch sử nhiều phiên
-    bản. KHÔNG đụng `availability_logs` gốc — annotation hoàn toàn riêng, để còn đối chiếu
-    lại file Excel gốc khi cần."""
+def upsert_case_note(availability_log_id: int, context: str, reason: str | None, detail: str | None, user_id: int) -> dict[str, Any]:
+    """Lưu (UPSERT) Reason/Detail thủ công cho 1 mẻ TRONG ĐÚNG 1 context (category/field) —
+    tối đa 1 note/(mẻ, context) (`UNIQUE(availability_log_id, context)`), sửa lại thì ghi
+    đè CHÍNH dòng đó, KHÔNG lưu lịch sử nhiều phiên bản, KHÔNG ảnh hưởng note của context
+    khác cho CÙNG mẻ. KHÔNG đụng `availability_logs` gốc."""
     conn = get_db()
     _ensure_case_notes_table(conn)
     exists = conn.execute("SELECT 1 FROM availability_logs WHERE id = ?", (availability_log_id,)).fetchone()
@@ -597,25 +655,26 @@ def upsert_case_note(availability_log_id: int, reason: str | None, detail: str |
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         """
-        INSERT INTO downtime_case_notes (availability_log_id, reason, detail, updated_by, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(availability_log_id)
+        INSERT INTO downtime_case_notes (availability_log_id, context, reason, detail, updated_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(availability_log_id, context)
         DO UPDATE SET reason = excluded.reason, detail = excluded.detail,
                       updated_by = excluded.updated_by, updated_at = excluded.updated_at
         """,
-        (availability_log_id, reason, detail, user_id, now_str),
+        (availability_log_id, context, reason, detail, user_id, now_str),
     )
     conn.commit()
     row = conn.execute(
         """
         SELECT n.reason, n.detail, n.updated_at, u.username AS updated_by_username
         FROM downtime_case_notes n LEFT JOIN users u ON u.id = n.updated_by
-        WHERE n.availability_log_id = ?
+        WHERE n.availability_log_id = ? AND n.context = ?
         """,
-        (availability_log_id,),
+        (availability_log_id, context),
     ).fetchone()
     return {
         "availability_log_id": availability_log_id,
+        "context": context,
         "reason": row["reason"] if row else reason,
         "detail": row["detail"] if row else detail,
         "updated_by": row["updated_by_username"] if row else None,
@@ -803,5 +862,5 @@ def get_abnormal_point_batches(
         }
         for row in rows
     ]
-    _attach_case_notes(result)
+    _attach_case_notes(result, context=field)
     return result

@@ -80,11 +80,14 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
     @permission_required("dyeing", "downtime", "edit")
     def api_upsert_case_note(availability_log_id: int) -> Any:
         payload = request.get_json(silent=True) or {}
+        context = str(payload.get("context") or "").strip()
+        if not context:
+            return jsonify({"error": "Missing context (category/field)."}), 400
         reason = str(payload.get("reason") or "").strip() or None
         detail = str(payload.get("detail") or "").strip() or None
         user = get_current_user()
         try:
-            note = service.upsert_case_note(availability_log_id, reason, detail, user["id"])
+            note = service.upsert_case_note(availability_log_id, context, reason, detail, user["id"])
             return jsonify({"status": "success", "note": note})
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400

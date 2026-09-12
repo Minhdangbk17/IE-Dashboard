@@ -576,6 +576,30 @@
       layout/CSS. Phát hiện phụ 2 lỗi JS console tiền-tồn (không phải do
       redesign) khi dataset rỗng — xem Known Issues bên dưới.
 
+- [x] **UI/UX polish sau redesign + sửa 2 bug thật** (2026-09-12): Sidebar thu gọn được
+      (`static/js/sidebar_toggle.js`); đổi mặc định Light Mode (logic áp theme đã lưu
+      chuyển lên script đồng bộ đầu `<head>` để tránh FOUC); trang Downtime chia 3 tab
+      (Overview/Standard Achievement Breakdown/Data Quality, chuyển bằng click hoặc lăn
+      chuột), mỗi tab có biểu đồ riêng (Achievement dùng line chart), mặc định
+      Capacity=500/600/1200/2400, Group By=Week, khoảng ngày 6 tuần tính từ tuần hiện
+      tại; thêm View Transitions API (CSS thuần) cho crossfade mượt giữa các trang.
+      **Bug thật #1**: `_empty_result()` (`downtime/service.py`) thiếu
+      `values_hours`/`datasets_hours` gây crash JS toàn bộ khi dataset rỗng — đã sửa,
+      xem Known Issues bên dưới (đã gỡ mục cũ). **Bug thật #2** (người dùng report):
+      `downtime_case_notes` khoá `UNIQUE(availability_log_id)` khiến 1 mẻ xuất hiện ở
+      nhiều category/field khác nhau (Downtime by Category / Data Quality) bị DÙNG
+      CHUNG 1 note — thêm cột `context`, đổi khoá thành
+      `UNIQUE(availability_log_id, context)`, giữ tương thích ngược 27 note thật trên
+      Supabase qua fallback `context=''`. Chi tiết đầy đủ + lý do thiết kế ở
+      `systemPatterns.md` mục 6.2, `activeContext.md` mục -8. Verify: 6 test suite cũ
+      (`test_batch_matrix_formula`, `test_permission_model`, `test_postgres_shim_translation`,
+      `test_production_date`, `verify_rollup_parity`) vẫn PASS 100% (không regression) +
+      test mới `tests/test_downtime_case_notes_context.py` (7 case, dựng DB tạm mô phỏng
+      ĐÚNG schema cũ có sẵn note thật để code tự lazy-migrate) PASS 100%.
+      **CHỜ XÁC NHẬN**: `supabase/migrate_case_notes_context.sql` chưa chạy trên Supabase
+      production (app không có quyền tự ALTER TABLE Postgres) — xem `activeContext.md`
+      mục "Việc tiếp theo".
+
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn
       trong yêu cầu gốc của Permission Model, chưa triển khai để tập trung
@@ -604,13 +628,16 @@
       (`graph_view.html`) chỉ phù hợp quy mô nhỏ/vừa.
 
 ## Known Issues
-- `downtime_view.html`/`batch_matrix_view.html` (JS): khi dataset hoàn toàn
-  rỗng (VD DB mới seed chưa có `availability_logs`), một vài hàm render gọi
-  `.map()` trên field mà backend không trả về khi không có dữ liệu ->
-  `Cannot read properties of undefined (reading 'map')` ở console (phát
-  hiện 2026-09-11 lúc verify redesign UI trên DB dev mới seed, KHÔNG phải
-  bug do redesign gây ra, KHÔNG xảy ra với dữ liệu thật vì luôn có hàng
-  nghìn dòng — chưa sửa vì ngoài phạm vi công việc lúc phát hiện).
+- `batch_matrix_view.html` (JS): khi dataset hoàn toàn rỗng (VD DB mới seed
+  chưa có `availability_logs`), một vài hàm render gọi `.map()` trên field
+  mà backend không trả về khi không có dữ liệu -> `Cannot read properties of
+  undefined (reading 'map')` ở console (phát hiện 2026-09-11 lúc verify
+  redesign UI trên DB dev mới seed, KHÔNG phải bug do redesign gây ra, KHÔNG
+  xảy ra với dữ liệu thật vì luôn có hàng nghìn dòng — chưa sửa vì ngoài
+  phạm vi công việc lúc phát hiện). **`downtime_view.html` đã sửa dứt điểm
+  2026-09-12** (`_empty_result()` thiếu `values_hours`/`datasets_hours`,
+  xem mục "Đã hoàn thành" phía trên) — mục Known Issues này giờ CHỈ còn áp
+  dụng cho `batch_matrix_view.html`.
 - Sơ đồ Graphify dùng thuật toán xếp tầng (leveling) đơn giản — có thể chồng
   chéo cạnh (edge) nếu đồ thị nhiều nhánh phức tạp; chấp nhận được ở quy mô
   Phase 1 (dưới ~10 Engine).

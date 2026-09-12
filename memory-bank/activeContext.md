@@ -1,10 +1,13 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-11 — **Redesign toàn bộ giao diện web** sang
-design system riêng (bỏ hẳn Primer CSS) + đổi tên thương hiệu ứng dụng từ
-"MES Dashboard" sang **"CETVN IE DASHBOARD"**. Xem chi tiết đầy đủ ở
-`techContext.md` mục Frontend — file này chỉ ghi tóm tắt quyết định + rủi
-ro/việc cần làm tiếp.
+**Cập nhật lần cuối:** 2026-09-12 — Sidebar thu gọn được, Light Mode mặc định
+(sửa FOUC), trang Downtime chia 3 tab kèm biểu đồ riêng + View Transitions
+giữa các trang, và sửa bug thật "Downtime Case Notes" dùng chung nhầm note
+giữa các category/field của cùng 1 mẻ (thêm cột `context`). Xem mục -8 bên
+dưới + `systemPatterns.md` mục 6.2 để biết chi tiết đầy đủ. Bản ghi trước đó
+(2026-09-11 — Redesign toàn bộ giao diện web sang design system riêng, đổi
+tên thương hiệu "MES Dashboard" -> "CETVN IE DASHBOARD") vẫn giữ nguyên ở
+mục -7, chi tiết đầy đủ ở `techContext.md` mục Frontend.
 
 ## Đang làm
 - Khung Phase 1 (Application Factory, Auto-loader 2 cấp, SQLite WAL, Graphify,
@@ -69,6 +72,28 @@ ro/việc cần làm tiếp.
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-8. **UI/UX polish sau redesign + sửa bug thật "Downtime Case Notes" dùng chung nhầm
+   category** (2026-09-12): (1) Sidebar thu gọn được (`static/js/sidebar_toggle.js` mới,
+   nút mép sidebar, trạng thái lưu `localStorage`); (2) Đổi mặc định Light Mode (trước là
+   Dark) — logic áp `data-color-mode` đã lưu chuyển từ cuối `<body>` (`theme_toggle.js`)
+   lên script đồng bộ ĐẦU `<head>` trong `base.html` để tránh FOUC (chớp sai theme lúc
+   chuyển trang, lộ rõ ra sau khi thêm View Transitions bên dưới); (3) Trang Downtime
+   chia 3 tab (Overview/Standard Achievement Breakdown/Data Quality, chuyển bằng click
+   hoặc lăn chuột trên thanh tab), mỗi tab có biểu đồ riêng (biểu đồ Achievement đổi
+   sang line chart theo yêu cầu), mặc định Capacity=500/600/1200/2400, Group By=Week,
+   khoảng ngày mặc định 6 tuần tính từ tuần hiện tại; (4) Thêm View Transitions API
+   (CSS `@view-transition`, thuần CSS không JS) để chuyển trang giữa các báo cáo có
+   crossfade mượt thay vì reload cứng — khắc phục cảm giác "trôi" khi thuyết trình.
+   (5) **Bug thật phát hiện + sửa**: `_empty_result()` (`downtime/service.py`) thiếu
+   field `values_hours`/`datasets_hours` gây crash JS toàn bộ khi dataset rỗng (Known
+   Issue cũ trong `progress.md`, nay đã sửa dứt điểm). (6) **Bug thiết kế thật phát hiện
+   + sửa** (người dùng report trực tiếp): `downtime_case_notes` khoá
+   `UNIQUE(availability_log_id)` khiến 1 mẻ xuất hiện ở nhiều category/field khác nhau bị
+   DÙNG CHUNG 1 note — đã thêm cột `context`, đổi khoá thành
+   `UNIQUE(availability_log_id, context)`, giữ tương thích ngược 27 note thật trên
+   Supabase qua fallback `context=''` — chi tiết đầy đủ ở `systemPatterns.md` mục 6.2.
+   **CHƯA CHẠY trên Supabase production** — xem "Việc tiếp theo".
+
 -7. **Redesign toàn bộ giao diện web + đổi thương hiệu "MES Dashboard" ->
    "CETVN IE DASHBOARD"** (2026-09-11, theo yêu cầu người dùng, dựa trên bộ
    style reference `design/DESIGN.md`/`theme.css`/`variables.css`/`tokens.json`
@@ -283,6 +308,12 @@ ro/việc cần làm tiếp.
 8. Quality trong công thức OEE tạm giả định 100% (giữ nguyên, chưa đổi).
 
 ## Việc tiếp theo
+- **CHỜ XÁC NHẬN**: chạy `supabase/migrate_case_notes_context.sql` qua Supabase SQL
+  Editor trên DB production (thêm cột `context` + đổi UNIQUE constraint cho
+  `downtime_case_notes`) — CHƯA chạy, cần admin tự thực hiện vì app không có quyền
+  ALTER TABLE trên Postgres theo quy ước dự án (mục 5.1). Trước khi chạy, code vẫn
+  hoạt động đúng với schema CŨ (fallback context an toàn ở tầng ứng dụng), nhưng bug
+  "note dùng chung nhầm giữa category" CHỈ thực sự hết trên Postgres sau khi chạy script.
 - **CHỜ XÁC NHẬN**: chạy `flask sync-permissions --yes` để backfill quyền
   view=1 mọi Engine cho tài khoản `operator` demo (hiện đang bị khoá hoàn
   toàn — 0 dòng quyền) — hoặc admin tự gán tay qua `/admin/accounts`.

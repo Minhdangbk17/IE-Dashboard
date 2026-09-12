@@ -280,14 +280,21 @@ create index if not exists idx_downtime_daily_summary_date on downtime_daily_sum
 -- row in availability_logs. Keyed by availability_logs.id — NOT
 -- downtime_logs.id (downtime_logs is unpopulated/not wired into reporting).
 -- At most one note per case (UNIQUE); editing again UPSERTs the same row.
+-- context: category ("Downtime by Category", vd 'Rework') hoặc field ("Data Quality",
+-- 'loading'/'unloading') mà note này thuộc về — 1 mẻ (availability_log_id) có thể xuất
+-- hiện ở nhiều category/field khác nhau, mỗi nơi cần note ĐỘC LẬP (xem
+-- downtime/service.py mục "Downtime Case Notes" để biết lý do đổi UNIQUE constraint).
+-- DB ĐÃ CÓ DỮ LIỆU THẬT (production): áp thay đổi này qua
+-- supabase/migrate_case_notes_context.sql, KHÔNG chạy lại CREATE TABLE này.
 create table if not exists downtime_case_notes (
     id                   bigint generated always as identity primary key,
     availability_log_id  bigint not null references availability_logs (id) on delete cascade,
+    context              text not null default '',
     reason               text,
     detail               text,
     updated_by           bigint not null references users (id),
     updated_at           text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
-    unique (availability_log_id)
+    unique (availability_log_id, context)
 );
 create index if not exists idx_downtime_case_notes_log on downtime_case_notes (availability_log_id);
 

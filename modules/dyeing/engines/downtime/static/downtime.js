@@ -119,6 +119,10 @@
 
     let topBatchesCategory = "";
     let activeCaseRows = [];
+    // Category ("Downtime by Category") hoặc field ("loading"/"unloading" của Data
+    // Quality) đang xem trong modal — PHẢI gửi kèm khi lưu note để note lưu ĐÚNG
+    // context, không bị dùng chung cho mọi category của cùng 1 mẻ (bug đã sửa).
+    let activeCaseContext = "";
 
     function caseNoteUrl(logId) {
         return window.DOWNTIME_CASE_NOTE_URL_TEMPLATE.replace(/\/0$/, `/${logId}`);
@@ -150,6 +154,7 @@
         topBatchesTitle.textContent = `Top 10 — ${category} — ${label}`;
         topBatchesBody.innerHTML = `<p class="color-fg-muted">Loading...</p>`;
         topBatchesOverlay.hidden = false;
+        activeCaseContext = category;
         const params = new URLSearchParams({
             period: periodKey,
             group_by: document.getElementById("group-by").value,
@@ -224,7 +229,7 @@
         fetch(caseNoteUrl(row.availability_log_id), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ reason, detail }),
+            body: JSON.stringify({ context: activeCaseContext, reason, detail }),
         }).then((response) => {
             if (!response.ok) throw new Error("save failed");
             return response.json();
@@ -266,6 +271,7 @@
         topBatchesTitle.textContent = `Data Quality — ${label}`;
         topBatchesBody.innerHTML = `<p class="color-fg-muted">Loading...</p>`;
         topBatchesOverlay.hidden = false;
+        activeCaseContext = field;
         const params = new URLSearchParams({
             field,
             capacities: selectedCapacities().join(","),
@@ -377,14 +383,20 @@
         const datasets = breakdown.map((row, index) => ({
             label: row.stage,
             data: row.values,
-            backgroundColor: colors[index % colors.length],
             borderColor: colors[index % colors.length],
-            borderWidth: 1,
+            backgroundColor: colors[index % colors.length],
+            borderWidth: 2,
+            tension: 0.35,
+            fill: false,
+            spanGaps: true,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointBackgroundColor: colors[index % colors.length],
         }));
         if (achievementChart) achievementChart.destroy();
         const { textColor, gridColor } = chartTextColors();
         achievementChart = new Chart(canvas, {
-            type: "bar",
+            type: "line",
             data: { labels: periods, datasets },
             options: {
                 responsive: true,
