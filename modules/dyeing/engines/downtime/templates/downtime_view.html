@@ -33,6 +33,7 @@
     .case-note-editing { padding: 2px !important; }
     .case-note-input { width: 100%; min-width: 140px; font: inherit; background: var(--color-canvas-default, #0d1117); color: inherit; border: 1px solid var(--color-accent-fg, #58a6ff); border-radius: 4px; padding: 2px 4px; }
     textarea.case-note-input { min-width: 220px; min-height: 60px; resize: vertical; }
+    .downtime-page[hidden] { display: none; }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
@@ -49,49 +50,84 @@
                 <label class="capacity-option"><input id="capacity-all" type="checkbox" value="ALL"> Select All</label>
                 <div class="border-top my-1"></div>
                 {% for capacity in [25, 50, 300, 500, 600, 1200, 2400] %}
-                <label class="capacity-option"><input class="capacity-checkbox" type="checkbox" value="{{ capacity }}"> {{ capacity }} Kg</label>
+                <label class="capacity-option"><input class="capacity-checkbox" type="checkbox" value="{{ capacity }}" {% if capacity in [500, 600, 1200, 2400] %}checked{% endif %}> {{ capacity }} Kg</label>
                 {% endfor %}
             </div>
         </div>
         <div class="form-group mb-0 mr-3"><label for="from-date">From Date</label><input id="from-date" class="form-control" type="date"></div>
         <div class="form-group mb-0 mr-3"><label for="to-date">To Date</label><input id="to-date" class="form-control" type="date"></div>
-        <div class="form-group mb-0"><label for="group-by">Group By</label><select id="group-by" class="form-select"><option value="date">Day</option><option value="week">Week</option><option value="month" selected>Month</option></select></div>
+        <div class="form-group mb-0"><label for="group-by">Group By</label><select id="group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
         <div class="form-group mb-0 unit-filter"><label>Unit</label><div id="globalUnitFilter" class="btn-group" role="group" aria-label="Display unit"><button class="btn btn-sm selected" type="button" data-unit="hour" aria-pressed="true">Hours</button><button class="btn btn-sm" type="button" data-unit="percent" aria-pressed="false">Percentage (%)</button></div></div>
     </div>
 </section>
 
-<div class="downtime-kpis mb-4">
-    <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLANNED PRD HOURS</span><strong id="planned-hours">--</strong><span class="f6 color-fg-muted">hours</span></div>
-    <div class="widget-card"><span class="f6 color-fg-muted">TOTAL DOWNTIME HOURS</span><strong id="downtime-hours">--</strong><span class="f6 color-fg-muted">hours</span></div>
-    <div class="widget-card"><span class="f6 color-fg-muted">AVERAGE DOWNTIME RATE</span><strong id="downtime-rate">--%</strong><span class="f6 color-fg-muted">of planned time</span></div>
-    <div class="widget-card"><span class="f6 color-fg-muted">TOTAL VALID BATCHES</span><strong id="valid-batches">--</strong><span class="f6 color-fg-muted">distinct batches</span></div>
-    <div class="widget-card"><span class="f6 color-fg-muted">STANDARD ACHIEVEMENT</span><strong id="achievement-rate">--%</strong><span class="f6 color-fg-muted">evaluated steps achieved</span></div>
-</div>
+<nav class="page-tabs mb-3" id="downtime-tabs" aria-label="Downtime report pages">
+    <button class="page-tab is-active" type="button" data-page="overview">Overview</button>
+    <button class="page-tab" type="button" data-page="achievement">Standard Achievement Breakdown</button>
+    <button class="page-tab" type="button" data-page="quality">Data Quality</button>
+</nav>
 
-<div class="Box p-3 mb-4 chart-panel">
-    <div class="d-flex flex-justify-between flex-items-center mb-2">
-        <h3 class="mt-0 mb-0">Downtime by category</h3>
-        <div class="category-selector">
-            <button id="category-toggle" class="form-select" type="button" aria-haspopup="true" aria-expanded="false">All Categories</button>
-            <div id="category-menu" class="category-menu" hidden>
-                <label class="category-option"><input id="category-all" type="checkbox" checked> All Categories</label>
-                <div class="border-top my-1"></div>
-                <label class="category-option"><input class="category-checkbox" value="Total Rate" type="checkbox" checked> Total Rate (%)</label>
-                {% for category in ["Rework", "Color Adjustment", "Sample checking", "Fabric loading", "Fabric unloading", "Bleaching/Washing", "PH checking", "Chemical load", "Others"] %}
-                <label class="category-option"><input class="category-checkbox" value="{{ category }}" type="checkbox" checked> {{ category }}</label>
-                {% endfor %}
+<section class="downtime-page" id="page-overview" data-page="overview">
+    <div class="downtime-kpis mb-4">
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLANNED PRD HOURS</span><strong id="planned-hours">--</strong><span class="f6 color-fg-muted">hours</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL DOWNTIME HOURS</span><strong id="downtime-hours">--</strong><span class="f6 color-fg-muted">hours</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">AVERAGE DOWNTIME RATE</span><strong id="downtime-rate">--%</strong><span class="f6 color-fg-muted">of planned time</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL VALID BATCHES</span><strong id="valid-batches">--</strong><span class="f6 color-fg-muted">distinct batches</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">STANDARD ACHIEVEMENT</span><strong id="achievement-rate">--%</strong><span class="f6 color-fg-muted">evaluated steps achieved</span></div>
+    </div>
+
+    <div class="Box p-3 mb-4 chart-panel">
+        <div class="d-flex flex-justify-between flex-items-center mb-2">
+            <h3 class="mt-0 mb-0">Downtime by category</h3>
+            <div class="category-selector">
+                <button id="category-toggle" class="form-select" type="button" aria-haspopup="true" aria-expanded="false">All Categories</button>
+                <div id="category-menu" class="category-menu" hidden>
+                    <label class="category-option"><input id="category-all" type="checkbox" checked> All Categories</label>
+                    <div class="border-top my-1"></div>
+                    <label class="category-option"><input class="category-checkbox" value="Total Rate" type="checkbox" checked> Total Rate (%)</label>
+                    {% for category in ["Rework", "Color Adjustment", "Sample checking", "Fabric loading", "Fabric unloading", "Bleaching/Washing", "PH checking", "Chemical load", "Others"] %}
+                    <label class="category-option"><input class="category-checkbox" value="{{ category }}" type="checkbox" checked> {{ category }}</label>
+                    {% endfor %}
+                </div>
             </div>
         </div>
+        <canvas id="downtimeChart" aria-label="Downtime rate chart"></canvas>
     </div>
-    <canvas id="downtimeChart" aria-label="Downtime rate chart"></canvas>
-</div>
-<div class="Box p-3" style="overflow-x:auto;">
-<table class="preview-table downtime-table" id="pivot-table">
-    <thead><tr id="pivot-head"><th>Category</th><th>Total</th></tr></thead>
-    <tbody></tbody>
-</table>
-<p class="f6 color-fg-muted mt-2 mb-0"></p>
-</div>
+    <div class="Box p-3" style="overflow-x:auto;">
+    <table class="preview-table downtime-table" id="pivot-table">
+        <thead><tr id="pivot-head"><th>Category</th><th>Total</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="f6 color-fg-muted mt-2 mb-0"></p>
+    </div>
+</section>
+
+<section class="downtime-page" id="page-achievement" data-page="achievement" hidden>
+    <div class="Box p-3 mb-4 chart-panel">
+        <h3 class="mt-0 mb-2">Standard Achievement Breakdown</h3>
+        <canvas id="achievementChart" aria-label="Standard achievement chart"></canvas>
+    </div>
+    <div class="Box p-3" style="overflow-x:auto;">
+        <table class="preview-table" id="achievement-table">
+            <thead><tr id="achievement-head"><th>Stage</th><th>Total</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</section>
+
+<section class="downtime-page" id="page-quality" data-page="quality" hidden>
+    <div class="Box p-3 mb-4 chart-panel">
+        <h3 class="mt-0 mb-2">Data Quality</h3>
+        <canvas id="dataQualityChart" aria-label="Data quality chart"></canvas>
+    </div>
+    <div class="Box p-3" style="overflow-x:auto;">
+        <table class="preview-table downtime-table" id="abnormal-point-table">
+            <thead><tr id="abnormal-point-head"><th>Data Quality</th><th>Total</th></tr></thead>
+            <tbody></tbody>
+        </table>
+        <p class="f6 color-fg-muted mt-2 mb-0">Click a cell to see the batches behind that number. Excludes batches with Fabric Type = Unknow.</p>
+    </div>
+</section>
 
 <div id="top-batches-overlay" class="top-batches-overlay" hidden>
     <div class="top-batches-panel">
@@ -101,23 +137,6 @@
         </div>
         <div id="top-batches-body" class="top-batches-body"></div>
     </div>
-</div>
-
-<div class="Box p-3 mt-4" style="overflow-x:auto;">
-    <h3 class="mt-0">Standard Achievement Breakdown</h3>
-    <table class="preview-table" id="achievement-table">
-        <thead><tr id="achievement-head"><th>Stage</th><th>Total</th></tr></thead>
-        <tbody></tbody>
-    </table>
-</div>
-
-<div class="Box p-3 mt-4" style="overflow-x:auto;">
-    <h3 class="mt-0">Data Quality</h3>
-    <table class="preview-table downtime-table" id="abnormal-point-table">
-        <thead><tr id="abnormal-point-head"><th>Data Quality</th><th>Total</th></tr></thead>
-        <tbody></tbody>
-    </table>
-    <p class="f6 color-fg-muted mt-2 mb-0">Click a cell to see the batches behind that number. Excludes batches with Fabric Type = Unknow.</p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>

@@ -13,8 +13,30 @@
     const categoryAll = document.getElementById("category-all");
     const categoryCheckboxes = [...document.querySelectorAll(".category-checkbox")];
     let chartData = null;
+    let achievementChart = null;
+    let dataQualityChart = null;
+    let latestAbnormalData = null;
     let unitMode = "hour";
     const globalUnitFilter = document.getElementById("globalUnitFilter");
+
+    function pad2(value) { return String(value).padStart(2, "0"); }
+    function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+    function mondayOf(d) {
+        const date = new Date(d);
+        const isoDay = (date.getDay() + 6) % 7; // Monday=0 ... Sunday=6
+        date.setDate(date.getDate() - isoDay);
+        date.setHours(0, 0, 0, 0);
+        return date;
+    }
+    function defaultDateRange() {
+        // Mặc định 6 tuần tính từ tuần hiện tại (5 tuần trước + tuần hiện tại, Mon-Sun).
+        const currentWeekStart = mondayOf(new Date());
+        const from = new Date(currentWeekStart);
+        from.setDate(from.getDate() - 5 * 7);
+        const to = new Date(currentWeekStart);
+        to.setDate(to.getDate() + 6);
+        return { from: formatDate(from), to: formatDate(to) };
+    }
 
     function selectedCapacities() {
         return capacityCheckboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
@@ -283,7 +305,10 @@
     async function loadAbnormalPoint() {
         const response = await fetch(`${window.DOWNTIME_ABNORMAL_POINT_API_URL}?${filters()}`);
         if (!response.ok) return;
-        renderAbnormalPointTable(await response.json());
+        const data = await response.json();
+        latestAbnormalData = data;
+        renderAbnormalPointTable(data);
+        updateDataQualityChart(data);
     }
 
     document.querySelector("#abnormal-point-table tbody").addEventListener("click", (event) => {
@@ -335,6 +360,108 @@
         });
     }
 
+    function chartTextColors() {
+        const isLight = document.documentElement.getAttribute("data-color-mode") === "light";
+        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#abaebb";
+        const gridColor = isLight ? "rgba(11, 12, 14, 0.08)" : "rgba(255, 255, 255, 0.08)";
+        return { textColor, gridColor };
+    }
+
+    function updateAchievementChart(data) {
+        if (typeof Chart === "undefined") return;
+        const canvas = document.getElementById("achievementChart");
+        if (!canvas) return;
+        const periods = data.achievement.periods;
+        const breakdown = data.achievement.breakdown;
+        const colors = ["#2862d7", "#625fff", "#3fb950", "#d29922", "#db61a2", "#f778ba"];
+        const datasets = breakdown.map((row, index) => ({
+            label: row.stage,
+            data: row.values,
+            backgroundColor: colors[index % colors.length],
+            borderColor: colors[index % colors.length],
+            borderWidth: 1,
+        }));
+        if (achievementChart) achievementChart.destroy();
+        const { textColor, gridColor } = chartTextColors();
+        achievementChart = new Chart(canvas, {
+            type: "bar",
+            data: { labels: periods, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                scales: {
+                    x: { ticks: { color: textColor }, grid: { color: gridColor } },
+                    y: { beginAtZero: true, max: 100, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: "Achievement (%)", color: textColor } },
+                },
+                plugins: { legend: { position: "bottom", labels: { color: textColor, usePointStyle: true } } },
+            },
+        });
+    }
+
+    function updateDataQualityChart(data) {
+        if (typeof Chart === "undefined") return;
+        const canvas = document.getElementById("dataQualityChart");
+        if (!canvas) return;
+        const fieldColors = { loading: "#d29922", unloading: "#db61a2" };
+        const datasets = (data.rows || []).map((row) => ({
+            label: row.label,
+            data: row.values,
+            backgroundColor: fieldColors[row.field] || "#2862d7",
+            borderColor: fieldColors[row.field] || "#2862d7",
+            borderWidth: 1,
+        }));
+        if (dataQualityChart) dataQualityChart.destroy();
+        const { textColor, gridColor } = chartTextColors();
+        dataQualityChart = new Chart(canvas, {
+            type: "bar",
+            data: { labels: data.periods || [], datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                scales: {
+                    x: { ticks: { color: textColor }, grid: { color: gridColor } },
+                    y: { beginAtZero: true, ticks: { color: textColor, precision: 0 }, grid: { color: gridColor }, title: { display: true, text: "Number of batches", color: textColor } },
+                },
+                plugins: { legend: { position: "bottom", labels: { color: textColor, usePointStyle: true } } },
+            },
+        });
+    }
+
+    const pageTabsNav = document.getElementById("downtime-tabs");
+    const pageTabs = pageTabsNav ? [...pageTabsNav.querySelectorAll(".page-tab")] : [];
+    const downtimePages = [...document.querySelectorAll(".downtime-page")];
+    let activePageIndex = 0;
+
+    function activatePage(index) {
+        index = Math.max(0, Math.min(downtimePages.length - 1, index));
+        activePageIndex = index;
+        pageTabs.forEach((tab, i) => tab.classList.toggle("is-active", i === index));
+        downtimePages.forEach((page, i) => { page.hidden = i !== index; });
+        // Chart.js đo kích thước container lúc vẽ — canvas ở trang vừa hiện lại
+        // trước đó có thể 0x0 (bị "hidden"), phải resize lại sau khi hiện ra.
+        requestAnimationFrame(() => {
+            if (index === 0 && chart) chart.resize();
+            if (index === 1 && achievementChart) achievementChart.resize();
+            if (index === 2 && dataQualityChart) dataQualityChart.resize();
+        });
+    }
+
+    if (pageTabsNav) {
+        pageTabs.forEach((tab, index) => tab.addEventListener("click", () => activatePage(index)));
+
+        let wheelLocked = false;
+        pageTabsNav.addEventListener("wheel", (event) => {
+            if (Math.abs(event.deltaY) < 2) return;
+            event.preventDefault();
+            if (wheelLocked) return;
+            wheelLocked = true;
+            activatePage(activePageIndex + (event.deltaY > 0 ? 1 : -1));
+            window.setTimeout(() => { wheelLocked = false; }, 450);
+        }, { passive: false });
+    }
+
     function renderAchievement(data) {
         const head = document.getElementById("achievement-head");
         head.innerHTML = "<th>Stage</th>" + data.achievement.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
@@ -358,6 +485,7 @@
         renderAchievement(data);
         chartData = data;
         updateChart(selectedCategories());
+        updateAchievementChart(data);
         loadAbnormalPoint();
     }
 
@@ -410,8 +538,15 @@
         }
     });
     ["from-date", "to-date", "group-by"].forEach((id) => document.getElementById(id).addEventListener("change", load));
-    document.addEventListener("colormodechange", () => updateChart(selectedCategories()));
+    document.addEventListener("colormodechange", () => {
+        updateChart(selectedCategories());
+        if (chartData) updateAchievementChart(chartData);
+        if (latestAbnormalData) updateDataQualityChart(latestAbnormalData);
+    });
     updateCapacityLabel();
     updateCategoryLabel();
+    const defaultRange = defaultDateRange();
+    document.getElementById("from-date").value = defaultRange.from;
+    document.getElementById("to-date").value = defaultRange.to;
     load();
 }());

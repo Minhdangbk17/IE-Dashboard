@@ -7,6 +7,54 @@
    ========================================================================== */
 
 /* -------------------------------------------------------------------------
+   0. PAGE TRANSITIONS — chuyển trang mượt giữa các báo cáo (View Transitions
+   API, native trình duyệt). App này là Flask/Jinja render-per-request (MPA,
+   không phải SPA) — mỗi lần bấm menu là 1 lần tải trang mới hoàn toàn, trước
+   đây không có hiệu ứng gì nên khi thuyết trình cảm giác "giật/trôi". Khai
+   báo `@view-transition { navigation: auto }` bật crossfade tự động cho MỌI
+   điều hướng nội bộ cùng origin (link sidebar, "Back to Hub", breadcrumb...)
+   mà KHÔNG cần viết JS chặn click — an toàn tuyệt đối cho logout/form/link
+   ngoài vì cơ chế điều hướng thật sự không đổi, chỉ thêm 1 bước animate ở
+   tầng compositor trước khi trang cũ được thay bằng trang mới.
+   Trình duyệt CHƯA hỗ trợ (vd Firefox cũ) tự động bỏ qua rule này, quay về
+   chuyển trang tức thời như hiện tại — progressive enhancement, không cần
+   fallback JS riêng.
+   ------------------------------------------------------------------------- */
+@view-transition {
+    navigation: auto;
+}
+
+/* Tắt hiệu ứng crossfade mặc định ở tầng "root" (toàn trang, gồm cả sidebar/
+   header) — nếu không tắt, sidebar sẽ bị "chớp" nhẹ mỗi lần đổi trang vì
+   mục đang active thay đổi. Ta chỉ muốn phần NỘI DUNG chính (`.app-main`)
+   fade+slide, còn sidebar/header giữ cảm giác đứng yên (đúng thứ tạo ra
+   cảm giác "trôi" khi không có gì neo lại giữa 2 trang). */
+::view-transition-group(root) {
+    animation-duration: 1ms;
+}
+
+/* `.app-main` được tách thành 1 transition-group RIÊNG (`view-transition-name`
+   dưới mục 3. LAYOUT) — animate CHỈ `transform`/`opacity` (GPU compositing,
+   không đụng layout/paint) để mượt tuyệt đối kể cả với trang có bảng/biểu đồ
+   nặng. Cùng easing/thời lượng đã dùng cho tab switcher (Downtime: 200ms,
+   cubic-bezier(0.16, 1, 0.3, 1)) để cảm giác nhất quán toàn app. */
+::view-transition-old(app-main),
+::view-transition-new(app-main) {
+    animation-duration: 200ms;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+::view-transition-old(app-main) { animation-name: page-content-out; }
+::view-transition-new(app-main) { animation-name: page-content-in; }
+
+@keyframes page-content-out {
+    to { opacity: 0; transform: translateY(-6px); }
+}
+@keyframes page-content-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* -------------------------------------------------------------------------
    1. TOKENS — Dark (mặc định) + Light override
    ------------------------------------------------------------------------- */
 :root {
@@ -186,6 +234,7 @@ input, select, textarea, button { font-family: inherit; }
    3. LAYOUT — Sidebar + Main
    ------------------------------------------------------------------------- */
 .app-shell {
+    position: relative;
     display: flex;
     min-height: 100vh;
 }
@@ -199,7 +248,44 @@ input, select, textarea, button { font-family: inherit; }
     background: var(--bg-void);
     border-right: 1px solid var(--border-subtle);
     padding: 20px 12px 16px;
+    overflow: hidden;
+    transition: width .2s ease, padding .2s ease, opacity .15s ease;
 }
+
+/* Thu gọn thanh điều hướng: sidebar co về 0, nút bấm trượt theo mép để mở lại. */
+.app-shell.sidebar-collapsed .app-sidebar {
+    width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    opacity: 0;
+    border-right-color: transparent;
+    pointer-events: none;
+}
+
+.sidebar-edge-toggle {
+    position: absolute;
+    top: 18px;
+    left: 264px;
+    transform: translateX(-50%);
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: left .2s ease, border-color .15s ease, color .15s ease;
+}
+
+.sidebar-edge-toggle:hover { border-color: var(--accent-wash); color: var(--text-primary); }
+.sidebar-edge-toggle svg { width: 12px; height: 12px; transition: transform .2s ease; }
+.app-shell.sidebar-collapsed .sidebar-edge-toggle { left: 15px; transform: translateX(0); }
+.app-shell.sidebar-collapsed .sidebar-edge-toggle svg { transform: rotate(180deg); }
 
 .sidebar-brand {
     display: flex;
@@ -372,13 +458,53 @@ input, select, textarea, button { font-family: inherit; }
     flex: 1;
     min-width: 0;
     padding: 28px 32px 48px;
+    view-transition-name: app-main;
 }
 
 @media (max-width: 900px) {
     .app-shell { flex-direction: column; }
     .app-sidebar { width: 100%; min-height: auto; flex-direction: row; align-items: center; overflow-x: auto; }
+    .app-shell.sidebar-collapsed .app-sidebar { width: 100%; opacity: 1; padding: 20px 12px 16px; pointer-events: auto; border-right-color: var(--border-subtle); }
     .sidebar-body { flex-direction: row; }
+    .sidebar-edge-toggle { display: none; }
     .app-main { padding: 20px 16px 32px; }
+}
+
+/* -------------------------------------------------------------------------
+   3.1 PAGE TABS — điều hướng nhiều "trang" (section) trong cùng 1 view,
+   dùng cho các Engine chia nội dung thành nhiều tab (vd Downtime). Hỗ trợ
+   cả click lẫn lăn chuột (wheel) khi hover trên thanh tab để chuyển trang.
+   ------------------------------------------------------------------------- */
+.page-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+}
+
+.page-tab {
+    flex: 1 1 auto;
+    padding: 9px 14px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color .15s ease, color .15s ease;
+}
+
+.page-tab:hover { color: var(--text-primary); background: var(--bg-surface-raised); }
+
+.page-tab.is-active {
+    background: var(--gradient-primary);
+    color: #fff;
 }
 
 /* -------------------------------------------------------------------------

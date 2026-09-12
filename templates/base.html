@@ -1,8 +1,26 @@
 <!DOCTYPE html>
-<html lang="vi" data-color-mode="dark" data-dark-theme="dark" data-light-theme="light">
+<html lang="vi" data-color-mode="light" data-dark-theme="dark" data-light-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Chống "chớp" sai theme (FOUC): PHẢI là script đồng bộ ĐẦU TIÊN trong <head>,
+         chạy trước khi CSS/nội dung được vẽ khung hình đầu tiên. Nếu để ở cuối trang
+         (như trước đây) thì mỗi lần chuyển trang (MPA reload) trình duyệt vẽ tạm bằng
+         data-color-mode="light" mặc định rồi mới đổi lại dark — với View Transition
+         crossfade vừa thêm, khoảnh khắc "light" đó bị lộ ra thành hiệu ứng chớp sáng.
+         Không dùng defer/async — cố ý để script này BLOCK parsing tại đúng vị trí này. -->
+    <script>
+        (function () {
+            try {
+                var stored = localStorage.getItem("mes_dashboard_color_mode");
+                if (stored === "dark" || stored === "light") {
+                    document.documentElement.setAttribute("data-color-mode", stored);
+                }
+            } catch (err) {
+                // localStorage có thể bị chặn — giữ nguyên mặc định light, không lỗi.
+            }
+        }());
+    </script>
     <title>{% block title %}Overview{% endblock %} · CETVN IE DASHBOARD</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -13,6 +31,12 @@
 </head>
 <body>
 <div class="app-shell">
+    <button type="button" id="sidebar-toggle-btn" class="sidebar-edge-toggle" onclick="toggleSidebar()" aria-label="Collapse navigation" title="Collapse navigation">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9.5 3 4.5 8 9.5 13"></polyline>
+            <polyline points="13.5 3 8.5 8 13.5 13"></polyline>
+        </svg>
+    </button>
 
     <!-- ============ SIDEBAR ============ -->
     <nav class="app-sidebar" aria-label="Main navigation">
@@ -83,6 +107,7 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/theme_toggle.js') }}"></script>
+<script src="{{ url_for('static', filename='js/sidebar_toggle.js') }}"></script>
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

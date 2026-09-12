@@ -1,25 +1,16 @@
 // theme_toggle.js
-// Tiện ích tối giản: đọc/lưu chế độ màu (dark/light) vào localStorage.
-// Mặc định ứng dụng dùng Dark Mode (data-color-mode="dark") theo yêu cầu UI/UX.
+// Chỉ còn giữ hàm toggleColorMode() cho nút bấm trong sidebar. Việc ÁP DỤNG chế độ
+// màu đã lưu lúc tải trang đã chuyển lên script inline đầu <head> của base.html
+// (PHẢI chạy sớm, trước khi trang vẽ khung hình đầu tiên, để tránh chớp sai theme —
+// xem comment ở base.html). Mặc định ứng dụng dùng Light Mode
+// (data-color-mode="light", đặt trong base.html) khi chưa có lựa chọn nào lưu lại.
 (function () {
     "use strict";
 
     const STORAGE_KEY = "mes_dashboard_color_mode";
 
-    function applyStoredMode() {
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) {
-                document.documentElement.setAttribute("data-color-mode", stored);
-            }
-        } catch (err) {
-            // localStorage có thể bị chặn — bỏ qua, giữ mặc định dark.
-            console.warn("Không thể đọc chế độ màu đã lưu:", err);
-        }
-    }
-
     window.toggleColorMode = function toggleColorMode() {
-        const current = document.documentElement.getAttribute("data-color-mode") || "dark";
+        const current = document.documentElement.getAttribute("data-color-mode") || "light";
         const next = current === "dark" ? "light" : "dark";
         document.documentElement.setAttribute("data-color-mode", next);
         try {
@@ -29,6 +20,4 @@
         }
         document.dispatchEvent(new CustomEvent("colormodechange", { detail: { mode: next } }));
     };
-
-    applyStoredMode();
 })();
