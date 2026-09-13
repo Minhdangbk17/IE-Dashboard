@@ -600,7 +600,24 @@
       production (app không có quyền tự ALTER TABLE Postgres) — xem `activeContext.md`
       mục "Việc tiếp theo".
 
+- [x] **Engine `rft` (Right First Time) — khung sườn (scaffold), 2026-09-13**:
+      báo cáo 6 tab (Lab to Lab / Lab to Bulk / Bulk to Bulk / 2nd Batch /
+      Rework / Adjust Color) trên Dyeing Hub, điều hướng bằng `page-tabs`
+      giống Downtime, bộ lọc Capacity/Date range/Group By Day-Week-Month
+      giống Downtime. Mỗi tab: 3 KPI + 1 biểu đồ Chart.js + 1 bảng pivot theo
+      period. Nguồn dữ liệu `availability_logs` LEFT JOIN `batch_details`
+      (khoá `batch=dyelot`, cùng pattern `batch_matrix`). **Quy tắc phân loại
+      6 nhóm CHƯA có** — hàm `classify_rft_category()`
+      (`modules/dyeing/engines/rft/service.py`) luôn trả `None`, người dùng
+      sẽ cung cấp chi tiết business rule sau; toàn bộ pipeline lọc/JOIN/
+      production_date/period đã verify đúng bằng dữ liệu giả lập (mẻ qua đêm
+      gán đúng ngày, loại đúng FabricType không hợp lệ + Capacity ngoài bộ
+      lọc). Chi tiết đầy đủ ở `activeContext.md`.
+
 ## Backlog (Phase 2+)
+- [ ] **Quy tắc phân loại 6 nhóm của `rft`** (Lab to Lab/Lab to Bulk/Bulk to
+      Bulk/2nd Batch/Rework/Adjust Color) — CHỜ người dùng cung cấp chi tiết,
+      chỉ cần sửa `classify_rft_category()` khi có.
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn
       trong yêu cầu gốc của Permission Model, chưa triển khai để tập trung
       đúng phạm vi bắt buộc.

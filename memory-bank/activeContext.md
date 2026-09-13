@@ -12,9 +12,50 @@ mục -7, chi tiết đầy đủ ở `techContext.md` mục Frontend.
 ## Đang làm
 - Khung Phase 1 (Application Factory, Auto-loader 2 cấp, SQLite WAL, Graphify,
   Memory Bank) đã ổn định, không đổi.
-- Domain `dyeing` hiện có 6 Engine: `oee`, `downtime`, `excel_import`,
-  `manual_entry`, `reports`, `batch_matrix` (bản ghi cũ của file này từng chỉ
-  liệt kê 3/6 — lưu ý cập nhật lại mỗi khi thêm Engine mới, đừng để lệch).
+- Domain `dyeing` hiện có 7 Engine: `oee`, `downtime`, `excel_import`,
+  `manual_entry`, `reports`, `batch_matrix`, `rft` (bản ghi cũ của file này
+  từng chỉ liệt kê 3/6 — lưu ý cập nhật lại mỗi khi thêm Engine mới, đừng để
+  lệch).
+- **Engine `rft` (Right First Time) — MỚI THÊM 2026-09-13, mới ở dạng KHUNG
+  SƯỜN (scaffold), CHƯA có quy tắc phân loại thật**: báo cáo 6 bảng (tab)
+  phân loại mẻ nhuộm theo loại lần chạy — Lab to Lab, Lab to Bulk, Bulk to
+  Bulk, 2nd Batch, Rework, Adjust Color (đúng thứ tự người dùng yêu cầu).
+  Điều hướng bằng `page-tabs` ở đầu trang (click hoặc lăn chuột) — CÙNG cơ
+  chế UI đã có ở trang Downtime (`activatePage()`/wheel handler copy gần như
+  nguyên vẹn). Bộ lọc CÙNG Downtime: Capacity (Kg) multi-select (mặc định
+  500/600/1200/2400), From/To Date, Group By Day/Week/Month (mặc định Week,
+  khoảng ngày mặc định 6 tuần từ tuần hiện tại). Mỗi tab có 3 KPI (Total Valid
+  Batches / <Category> Batches / Rate %) + 1 biểu đồ cột (Chart.js) + 1 bảng
+  pivot 1-dòng theo period, route `GET /dyeing/rft/api/summary?category=<slug>&
+  capacities=&from_date=&to_date=&group_by=` (`modules/dyeing/engines/rft/
+  service.py::get_rft_pivot_data()`), gate bằng
+  `permission_required("dyeing","rft","view")` (đã tự động xuất hiện đúng
+  trong `/admin/accounts/<id>/permissions` nhờ `discover_engines()` động,
+  KHÔNG cần sửa gì thêm ở Permission Model).
+  **Nguồn dữ liệu**: `availability_logs` (capacity_kg/production_date/
+  fabric_type, lọc `INVALID_FABRIC_TYPES` giống Downtime/Batch Matrix) LEFT
+  JOIN `batch_details` (khoá `lower(trim(a.batch))=lower(trim(b.dyelot))`,
+  cùng khoá JOIN đã verify 99.7% khớp ở `batch_matrix`). CHƯA có Daily Rollup
+  (query trực tiếp mỗi request, chấp nhận được ở quy mô hiện tại) — cùng
+  quyết định "tạm hoãn rollup tới khi công thức ổn định" đã áp dụng cho `oee`.
+  **PHẦN CÒN THIẾU (người dùng sẽ hướng dẫn sau)**: hàm
+  `classify_rft_category(row)` (`rft/service.py`) — quy tắc phân loại 1 mẻ
+  vào ĐÚNG 1 trong 6 nhóm trên — hiện LUÔN trả về `None` nên mọi bảng/biểu đồ
+  hiển thị đúng cấu trúc/đúng pipeline lọc nhưng số liệu category = 0 (KPI
+  "Total Valid Batches" vẫn ra số thật, chứng minh pipeline lọc/JOIN/
+  production_date đúng). Các cột `batch_details` có khả năng liên quan tới
+  quy tắc phân loại sau này (CHƯA xác nhận ý nghĩa từng giá trị):
+  `batch_type`, `formula_type`, `process_type`, `redye`, `is_rework`,
+  `correction_cnt`. Khi có quy tắc cụ thể, CHỈ cần sửa hàm này (và có thể
+  thêm cột chi tiết vào bảng pivot nếu người dùng muốn nhiều hơn 1 dòng) —
+  routes/template/JS không cần đổi cấu trúc.
+  **Verify đã làm**: dựng Flask app + DB SQLite tạm (script scratch, không
+  lưu lại trong `tests/` vì logic phân loại thật chưa tồn tại để test có ý
+  nghĩa) — xác nhận mẻ qua đêm (StartTime 21:00 hôm trước/EndTime 02:00 hôm
+  sau) được gán đúng `production_date` hôm trước (cắt ca 7h sáng), mẻ
+  FabricType "Unknow" và Capacity ngoài bộ lọc bị loại đúng, JSON trả về đúng
+  cấu trúc JS cần. Full regression qua Flask test client: trang `/dyeing/rft/`
+  200, xuất hiện đúng trên Hub + Sidebar + ma trận quyền admin.
 - **Engine `batch_matrix`**: pivot Fabric Type x Color Group x Ngày sản xuất.
   **Nguồn dữ liệu (bản mới nhất, đã đổi so với bản đầu)**:
   - Tử số (số mẻ) đếm từ `availability_logs` — MỖI DÒNG = 1 MẺ (không còn
