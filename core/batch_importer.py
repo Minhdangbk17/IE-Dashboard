@@ -402,8 +402,15 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
             placeholders = ",".join("?" for _ in columns_with_log)
             updates = ",".join(f"{field}=excluded.{field}" for field in columns_with_log if field != "dyelot")
             sql = f"INSERT INTO batch_details ({','.join(columns_with_log)}) VALUES ({placeholders}) ON CONFLICT(dyelot) DO UPDATE SET {updates}"
+            # Postgres bó TOÀN BỘ dòng của executemany() vào 1 câu INSERT...VALUES duy nhất
+            # (xem `_PostgresConnCompat.executemany()`) — nếu file Excel có 2 dòng cùng dyelot,
+            # câu lệnh ON CONFLICT DO UPDATE đó sẽ update trùng 1 dyelot 2 lần trong CÙNG 1
+            # statement và Postgres từ chối thẳng (`CardinalityViolation`). SQLite không dính lỗi
+            # này vì executemany() ở đó chạy tuần tự từng dòng một. Khử trùng theo dyelot (giữ
+            # dòng CUỐI cùng xuất hiện trong file) để giữ đúng hành vi "ghi đè" trước đây.
+            deduped_by_dyelot = {row["dyelot"]: row for row in result["rows"]}
             conn.execute("BEGIN")
-            conn.executemany(sql, [tuple(row[field] for field in BATCH_DETAIL_FIELDS) + (log_id,) for row in result["rows"]])
+            conn.executemany(sql, [tuple(row[field] for field in BATCH_DETAIL_FIELDS) + (log_id,) for row in deduped_by_dyelot.values()])
             conn.commit()
             imported_rows = len(result["rows"])
         record_import_rows(conn, log_id, result["row_details"])

@@ -845,10 +845,16 @@ def save_to_db(df: Any, file_type: str, db_connection: Any, import_log_id: int |
     ]
     if invalid_rows:
         raise ValueError(f"Dữ liệu có khóa bắt buộc rỗng tại dòng: {invalid_rows[:10]}")
+    # Postgres bó TOÀN BỘ dòng của executemany() vào 1 câu INSERT...VALUES duy nhất (xem
+    # `_PostgresConnCompat.executemany()`) — nếu file Excel có 2 dòng trùng key_fields, câu
+    # ON CONFLICT DO UPDATE đó update trùng key 2 lần trong CÙNG 1 statement và Postgres từ
+    # chối thẳng (`CardinalityViolation`). Khử trùng theo key_fields (giữ dòng CUỐI cùng xuất
+    # hiện trong file) để giữ đúng hành vi "ghi đè" như khi executemany chạy tuần tự (SQLite).
+    deduped_rows = {tuple(row.get(field) for field in key_fields): row for row in rows}.values()
     values = [
         tuple(row.get(field, 0.0 if field in _NUMERIC_FIELDS else None) for field in fields)
         + (import_log_id,)
-        for row in rows
+        for row in deduped_rows
     ]
     try:
         db_connection.execute("BEGIN")
