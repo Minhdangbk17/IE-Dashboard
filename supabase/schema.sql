@@ -275,6 +275,18 @@ create table if not exists downtime_daily_summary (
 );
 create index if not exists idx_downtime_daily_summary_date on downtime_daily_summary (production_date);
 
+-- Admin-editable target for "Downtime by Category" — two independent targets
+-- per category (percent and hours) since the report itself toggles between
+-- those two units. Only admins may write (see modules/dyeing/engines/downtime/
+-- routes.py::api_set_target, gated by role_required("admin")); any viewer of
+-- the report can read it to highlight cells that exceed target.
+create table if not exists downtime_targets (
+    category text primary key,
+    target_pct double precision not null default 0,
+    target_hours double precision not null default 0,
+    updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+
 -- Manual annotation (Reason/Detail) for a single case in the "Downtime by
 -- Category" / "Data Quality" drill-down lists. Does NOT overwrite the source
 -- row in availability_logs. Keyed by availability_logs.id — NOT
@@ -403,6 +415,7 @@ alter table availability_logs enable row level security;
 alter table batch_details enable row level security;
 alter table performance_logs enable row level security;
 alter table downtime_daily_summary enable row level security;
+alter table downtime_targets enable row level security;
 alter table downtime_case_notes enable row level security;
 alter table batch_matrix_daily_summary enable row level security;
 alter table batch_matrix_targets enable row level security;

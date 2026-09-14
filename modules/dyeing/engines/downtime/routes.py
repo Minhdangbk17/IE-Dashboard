@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from flask import Blueprint, jsonify, render_template, request
 
-from core.auth import get_current_user, permission_required
+from core.auth import get_current_user, permission_required, role_required
 
 from . import service
 
@@ -75,6 +75,27 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             return jsonify(data)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+
+    @bp.route("/api/targets")
+    @permission_required("dyeing", "downtime", "view")
+    def api_get_targets() -> Any:
+        return jsonify(service.get_targets())
+
+    @bp.route("/api/targets", methods=["POST"])
+    @role_required("admin")
+    def api_set_target() -> Any:
+        payload = request.get_json(silent=True) or {}
+        category = str(payload.get("category", "")).strip()
+        try:
+            target_pct = float(payload.get("target_pct"))
+            target_hours = float(payload.get("target_hours"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "target_pct/target_hours phải là số."}), 400
+        try:
+            service.set_target(category, target_pct, target_hours)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"status": "success"})
 
     @bp.route("/api/case-notes/<int:availability_log_id>", methods=["POST"])
     @permission_required("dyeing", "downtime", "edit")

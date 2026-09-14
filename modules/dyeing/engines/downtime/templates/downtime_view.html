@@ -34,6 +34,10 @@
     .case-note-input { width: 100%; min-width: 140px; font: inherit; background: var(--color-canvas-default, #0d1117); color: inherit; border: 1px solid var(--color-accent-fg, #58a6ff); border-radius: 4px; padding: 2px 4px; }
     textarea.case-note-input { min-width: 220px; min-height: 60px; resize: vertical; }
     .downtime-page[hidden] { display: none; }
+    .cell-over-target { background-color: rgba(248, 81, 73, .15); }
+    .target-cell { display: inline-block; min-width: 40px; min-height: 1.2em; cursor: text; padding: 2px 4px; border-radius: 4px; }
+    .target-cell:hover { background: var(--color-accent-subtle, rgba(47, 129, 247, .15)); }
+    .target-input { width: 70px; font: inherit; background: var(--color-canvas-default, #0d1117); color: inherit; border: 1px solid var(--color-accent-fg, #58a6ff); border-radius: 4px; padding: 2px 4px; }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
@@ -147,6 +151,8 @@
     window.DOWNTIME_ABNORMAL_POINT_BATCHES_API_URL = "{{ url_for('dyeing.downtime.api_abnormal_point_batches') }}";
     window.DOWNTIME_CASE_NOTE_URL_TEMPLATE = "{{ url_for('dyeing.downtime.api_upsert_case_note', availability_log_id=0) }}";
     window.DOWNTIME_CAN_EDIT_NOTES = {{ "true" if current_user_can('dyeing', 'downtime', 'edit') else "false" }};
+    window.DOWNTIME_TARGETS_URL = "{{ url_for('dyeing.downtime.api_get_targets') }}";
+    window.DOWNTIME_IS_ADMIN = {{ "true" if CURRENT_USER and CURRENT_USER.role == 'admin' else "false" }};
 </script>
 <script src="{{ url_for('dyeing.downtime.static', filename='downtime.js') }}"></script>
 {% endblock %}

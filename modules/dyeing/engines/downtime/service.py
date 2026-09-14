@@ -46,6 +46,42 @@ ACHIEVEMENT_COLUMNS = {
 INVALID_FABRIC_TYPES = ("Unknow", "Unknown", "All", "")
 
 
+def _ensure_targets_table(conn: Any) -> None:
+    """CHỈ chạy CREATE TABLE ở SQLite — ở Postgres bảng đã có sẵn qua `supabase/schema.sql`
+    (cùng pattern `batch_matrix/service.py::_ensure_targets_table()`)."""
+    if get_dialect() == "sqlite":
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS downtime_targets (
+                category TEXT PRIMARY KEY,
+                target_pct REAL NOT NULL DEFAULT 0,
+                target_hours REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+    conn.commit()
+
+
+def get_targets() -> list[dict[str, Any]]:
+    conn = get_db()
+    _ensure_targets_table(conn)
+    rows = execute_query("SELECT category, target_pct, target_hours FROM downtime_targets ORDER BY category")
+    return [dict(row) for row in rows]
+
+
+def set_target(category: str, target_pct: float, target_hours: float) -> None:
+    if category not in CATEGORIES:
+        raise ValueError(f"Category không hợp lệ: {category!r}")
+    conn = get_db()
+    _ensure_targets_table(conn)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT INTO downtime_targets (category, target_pct, target_hours, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(category) DO UPDATE SET target_pct=excluded.target_pct, target_hours=excluded.target_hours, updated_at=excluded.updated_at",
+        (category, target_pct, target_hours, now_str),
+    )
+    conn.commit()
+
+
 def _quote(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
@@ -384,7 +420,17 @@ def get_downtime_pivot_data(
     datasets["Total Rate"] = total_rates
     datasets_hours = {category: category_hours[category] for category in CATEGORIES}
     datasets_hours["Total Rate"] = total_hours
-    rows = [{"category": category, "values": percentages[category], "values_hours": category_hours[category], "total_pct": round(totals[category] / planned_total * 100, 1) if planned_total else 0.0, "total_hours": sum(category_hours[category][index] or 0 for index in range(len(category_hours[category]))) if category_hours[category] else 0.0} for category in CATEGORIES]
+    targets_by_category = {row["category"]: row for row in get_targets()}
+    rows = [
+        {
+            "category": category, "values": percentages[category], "values_hours": category_hours[category],
+            "total_pct": round(totals[category] / planned_total * 100, 1) if planned_total else 0.0,
+            "total_hours": sum(category_hours[category][index] or 0 for index in range(len(category_hours[category]))) if category_hours[category] else 0.0,
+            "target_pct": targets_by_category.get(category, {}).get("target_pct"),
+            "target_hours": targets_by_category.get(category, {}).get("target_hours"),
+        }
+        for category in CATEGORIES
+    ]
     achievement_breakdown = []
     achievement_periods = [value["label"] for _, value in ordered]
     for name in ACHIEVEMENT_COLUMNS:

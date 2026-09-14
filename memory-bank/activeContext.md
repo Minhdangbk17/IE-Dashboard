@@ -1,13 +1,19 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-12 — Sidebar thu gọn được, Light Mode mặc định
-(sửa FOUC), trang Downtime chia 3 tab kèm biểu đồ riêng + View Transitions
-giữa các trang, và sửa bug thật "Downtime Case Notes" dùng chung nhầm note
-giữa các category/field của cùng 1 mẻ (thêm cột `context`). Xem mục -8 bên
-dưới + `systemPatterns.md` mục 6.2 để biết chi tiết đầy đủ. Bản ghi trước đó
-(2026-09-11 — Redesign toàn bộ giao diện web sang design system riêng, đổi
-tên thương hiệu "MES Dashboard" -> "CETVN IE DASHBOARD") vẫn giữ nguyên ở
-mục -7, chi tiết đầy đủ ở `techContext.md` mục Frontend.
+**Cập nhật lần cuối:** 2026-09-14 — Thêm cột Target (admin-only) vào báo cáo
+"Downtime by Category": bảng `downtime_targets` (khoá `category`, 2 giá trị
+`target_pct`/`target_hours` độc lập), API `GET/POST /dyeing/downtime/api/
+targets`, và UI inline-edit đầu tiên trong dự án cho kiểu Target (trước đó
+`batch_matrix_targets` mới chỉ có API, chưa có UI — xem mục -9 bên dưới để
+biết chi tiết đầy đủ. Cùng ngày, đã sửa 3 bug thật phát sinh khi test import
+Batch Detail trên Postgres/Vercel: (1) `CardinalityViolation` khi
+`executemany()` bị gộp thành 1 câu `INSERT...ON CONFLICT` duy nhất trên
+Postgres mà file Excel có dòng trùng khoá UPSERT, và (2) `TypeError` vì
+`production_date_sql_expr()` trả về `datetime.date` (Postgres) thay vì `str`
+(SQLite) cho CÙNG 1 biểu thức SQL — xem `core/production_time.py::
+normalize_production_date()`. Bản ghi trước đó (2026-09-12 — Sidebar thu gọn
+được, Light Mode mặc định, trang Downtime chia 3 tab, sửa bug Case Notes)
+vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md` mục 6.2.
 
 ## Đang làm
 - Khung Phase 1 (Application Factory, Auto-loader 2 cấp, SQLite WAL, Graphify,
@@ -113,6 +119,50 @@ mục -7, chi tiết đầy đủ ở `techContext.md` mục Frontend.
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-9. **Thêm cột Target (admin-only) vào báo cáo "Downtime by Category" + 2 bug
+   thật phát hiện khi test import trên Postgres/Vercel** (2026-09-14, theo
+   yêu cầu người dùng). **Target**: bảng `downtime_targets` mới (khoá
+   `category`, 2 cột giá trị `target_pct`/`target_hours` — độc lập vì báo cáo
+   có nút chuyển đổi đơn vị Hours/Percentage sẵn); API `GET /dyeing/downtime/
+   api/targets` (`permission_required(..., "view")` — ai xem báo cáo cũng
+   xem được target để tô màu đúng) và `POST` cùng URL (`role_required("admin")`
+   — chặn CỨNG theo role, KHÔNG dùng `permission_required(..., "edit")` như
+   `batch_matrix_targets` đang làm, vì yêu cầu là "chỉ admin", không phải
+   "ai có quyền edit engine downtime"). `get_downtime_pivot_data()` gắn thêm
+   `target_pct`/`target_hours` vào từng dòng `rows` (frontend không cần gọi
+   API target riêng để vẽ bảng — chỉ dùng route GET khi cần, ví dụ debug).
+   Cột Target đặt ngay sau Category, đổi giá trị hiển thị theo đúng nút
+   Hours/Percentage đang chọn (theo yêu cầu người dùng, không tách 2 cột cố
+   định). Ô giá trị theo kỳ VÀ ô Total vượt target của category đó được tô
+   `background-color: rgba(248, 81, 73, .15)` (hồng nhạt). UI inline-edit
+   (`target-cell`/`target-input` trong `downtime.js`) là LẦN ĐẦU implement
+   UI sửa Target thật trong dự án — copy nguyên khuôn `case-note-cell` đã có
+   sẵn cho Downtime Case Notes; `batch_matrix_targets` (tiền lệ Target đầu
+   tiên trong dự án, xem mục "Đang làm" phía trên) tới nay vẫn CHƯA có UI
+   sửa, chỉ có API. Schema Postgres tương ứng đã thêm vào
+   `supabase/schema.sql` (kèm `enable row level security`) — **CHƯA CHẠY
+   trên Supabase production**, cần áp DDL này thủ công trước khi tính năng
+   hoạt động trên Vercel.
+   **2 bug thật phát hiện cùng ngày** (test import Batch Detail thật trên
+   Vercel/Supabase, KHÔNG liên quan tính năng Target): (1)
+   `psycopg2.errors.CardinalityViolation` — `_PostgresConnCompat.executemany()`
+   gộp toàn bộ dòng thành 1 câu `INSERT...ON CONFLICT DO UPDATE` duy nhất
+   (tối ưu hiệu năng thêm hôm trước), Postgres từ chối nếu file Excel có 2
+   dòng trùng khoá UPSERT trong CÙNG 1 lần import — sửa bằng cách khử trùng
+   theo khoá UPSERT (giữ dòng CUỐI) trước khi gọi `executemany()`, ở cả
+   `core/batch_importer.py::sync_batch_details()` và
+   `core/excel_importer.py::save_to_db()`. (2) `TypeError:
+   strptime() argument 1 must be str, not datetime.date` — CÙNG 1 biểu thức
+   `production_date_sql_expr()` nhưng SQLite trả `str`, Postgres (`::date`
+   cast) trả `datetime.date` qua psycopg2; không chỉ crash ở
+   `core/batch_importer.py`/`core/rollup.py`, còn làm MẤT DỮ LIỆU ÂM THẦM
+   (không exception) ở `batch_matrix/service.py`/`downtime/service.py` vì
+   giá trị `date` object không khớp key `str` khi dùng làm dict key — đã
+   thêm `core/production_time.py::normalize_production_date()` và áp dụng ở
+   mọi nơi đọc production_date từ kết quả SQL computed expression (không áp
+   dụng cho cột TEXT đã lưu sẵn trong bảng summary — những cột đó luôn `str`
+   ở cả 2 dialect).
+
 -8. **UI/UX polish sau redesign + sửa bug thật "Downtime Case Notes" dùng chung nhầm
    category** (2026-09-12): (1) Sidebar thu gọn được (`static/js/sidebar_toggle.js` mới,
    nút mép sidebar, trạng thái lưu `localStorage`); (2) Đổi mặc định Light Mode (trước là

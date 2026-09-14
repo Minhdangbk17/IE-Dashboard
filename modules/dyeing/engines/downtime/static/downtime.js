@@ -73,22 +73,111 @@
         return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
     }
 
+    function targetValueOf(row, useHours) {
+        const value = useHours ? row.target_hours : row.target_pct;
+        return value === null || value === undefined ? null : Number(value);
+    }
+
+    function formatTargetText(target, useHours) {
+        return target === null ? "-" : (useHours ? target.toFixed(2) : `${target.toFixed(1)}%`);
+    }
+
+    function renderTargetCell(row, useHours) {
+        const target = targetValueOf(row, useHours);
+        const text = formatTargetText(target, useHours);
+        if (!window.DOWNTIME_IS_ADMIN) return `<td>${text}</td>`;
+        return `<td><span class="target-cell" data-category="${escAttr(row.category)}">${text}</span></td>`;
+    }
+
     function renderTable(data) {
         const head = document.getElementById("pivot-head");
-        head.innerHTML = "<th>Category</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
+        head.innerHTML = "<th>Category</th><th>Target</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
         const useHours = unitMode === "hour";
         const periodKeys = data.period_keys || [];
         document.querySelector("#pivot-table tbody").innerHTML = data.rows.map((row) => {
+            const target = targetValueOf(row, useHours);
             const values = useHours ? row.values_hours : row.values;
             const cells = values.map((value, index) => {
                 if (value === null) return `<td>-</td>`;
+                const over = target !== null && Number(value) > target;
                 const text = useHours ? Number(value).toFixed(2) : `${Number(value).toFixed(1)}%`;
                 const periodKey = periodKeys[index];
-                if (!periodKey) return `<td>${text}</td>`;
-                return `<td class="cell-clickable" data-period="${escAttr(periodKey)}" data-category="${escAttr(row.category)}">${text}</td>`;
+                const cls = ["cell-clickable", over ? "cell-over-target" : ""].filter(Boolean).join(" ");
+                if (!periodKey) return `<td class="${over ? "cell-over-target" : ""}">${text}</td>`;
+                return `<td class="${cls}" data-period="${escAttr(periodKey)}" data-category="${escAttr(row.category)}">${text}</td>`;
             }).join("");
-            return `<tr><th>${row.category}</th>${cells}<td><strong>${useHours ? Number(row.total_hours).toFixed(2) : `${Number(row.total_pct).toFixed(1)}%`}</strong></td></tr>`;
-        }).join("") + `<tr class="total-row"><th>Total</th>${(useHours ? data.total_row_hours : data.total_row).map((value) => `<td><strong>${useHours ? (value === null ? "-" : Number(value).toFixed(2)) : `${Number(value).toFixed(1)}%`}</strong></td>`).join("")}<td><strong>${useHours ? Number(data.total_row_hours.reduce((sum, value) => sum + (value || 0), 0)).toFixed(2) : `${data.kpis.downtime_rate_pct.toFixed(1)}%`}</strong></td></tr>`;
+            const totalValue = useHours ? row.total_hours : row.total_pct;
+            const totalOver = target !== null && Number(totalValue) > target;
+            return `<tr><th>${row.category}</th>${renderTargetCell(row, useHours)}${cells}<td class="${totalOver ? "cell-over-target" : ""}"><strong>${useHours ? Number(row.total_hours).toFixed(2) : `${Number(row.total_pct).toFixed(1)}%`}</strong></td></tr>`;
+        }).join("") + `<tr class="total-row"><th>Total</th><td>-</td>${(useHours ? data.total_row_hours : data.total_row).map((value) => `<td><strong>${useHours ? (value === null ? "-" : Number(value).toFixed(2)) : `${Number(value).toFixed(1)}%`}</strong></td>`).join("")}<td><strong>${useHours ? Number(data.total_row_hours.reduce((sum, value) => sum + (value || 0), 0)).toFixed(2) : `${data.kpis.downtime_rate_pct.toFixed(1)}%`}</strong></td></tr>`;
+    }
+
+    function startEditingTarget(cell) {
+        const category = cell.dataset.category;
+        const row = (chartData && chartData.rows || []).find((item) => item.category === category);
+        if (!row) return;
+        const useHours = unitMode === "hour";
+        const currentValue = targetValueOf(row, useHours);
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.1";
+        input.className = "target-input";
+        input.value = currentValue === null ? "" : currentValue;
+        cell.replaceWith(input);
+        input.focus();
+        input.select();
+
+        let settled = false;
+        function commit() {
+            if (settled) return;
+            settled = true;
+            saveTarget(input, row, useHours, input.value.trim());
+        }
+        function cancel() {
+            if (settled) return;
+            settled = true;
+            input.replaceWith(buildTargetCellSpan(row, useHours));
+        }
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+        });
+    }
+
+    function buildTargetCellSpan(row, useHours) {
+        const span = document.createElement("span");
+        span.className = "target-cell";
+        span.dataset.category = row.category;
+        span.textContent = formatTargetText(targetValueOf(row, useHours), useHours);
+        return span;
+    }
+
+    function saveTarget(inputEl, row, useHours, newValueText) {
+        const parsed = newValueText === "" ? 0 : Number(newValueText);
+        if (Number.isNaN(parsed)) {
+            inputEl.replaceWith(buildTargetCellSpan(row, useHours));
+            showToast("Target must be a number.", "error");
+            return;
+        }
+        const targetPct = useHours ? (row.target_pct ?? 0) : parsed;
+        const targetHours = useHours ? parsed : (row.target_hours ?? 0);
+        fetch(window.DOWNTIME_TARGETS_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ category: row.category, target_pct: targetPct, target_hours: targetHours }),
+        }).then((response) => {
+            if (!response.ok) throw new Error("save failed");
+            return response.json();
+        }).then(() => {
+            row.target_pct = targetPct;
+            row.target_hours = targetHours;
+            renderTable(chartData);
+            showToast("Target saved.", "success");
+        }).catch(() => {
+            inputEl.replaceWith(buildTargetCellSpan(row, useHours));
+            showToast("Failed to save target.", "error");
+        });
     }
 
     const topBatchesOverlay = document.getElementById("top-batches-overlay");
@@ -255,6 +344,8 @@
     });
 
     document.querySelector("#pivot-table tbody").addEventListener("click", (event) => {
+        const targetCell = event.target.closest(".target-cell");
+        if (targetCell) { startEditingTarget(targetCell); return; }
         const cell = event.target.closest("td.cell-clickable");
         if (!cell) return;
         openTopBatches(cell.dataset.period, cell.dataset.category);

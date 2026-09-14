@@ -614,6 +614,43 @@
       gán đúng ngày, loại đúng FabricType không hợp lệ + Capacity ngoài bộ
       lọc). Chi tiết đầy đủ ở `activeContext.md`.
 
+- [x] **Cột Target (admin-only) cho báo cáo "Downtime by Category", 2026-09-14**:
+      bảng `downtime_targets` (khoá `category`, `target_pct`/`target_hours`
+      độc lập — báo cáo có nút chuyển Hours/Percentage sẵn), API `GET/POST
+      /dyeing/downtime/api/targets` (`GET` = `permission_required(...,
+      "view")`, `POST` = `role_required("admin")` — chặn CỨNG theo role, sao
+      chép có chủ đích khác `batch_matrix_targets` đang dùng
+      `permission_required(..., "edit")` vì yêu cầu lần này là "chỉ admin").
+      Cột Target đặt ngay sau Category, đổi giá trị theo đúng đơn vị đang
+      chọn; ô kỳ/Total vượt target được tô hồng nhạt
+      (`rgba(248, 81, 73, .15)`). UI inline-edit copy khuôn `case-note-cell`
+      có sẵn — LẦN ĐẦU dự án có UI sửa Target thật (`batch_matrix_targets` từ
+      trước tới nay vẫn chỉ có API, xem Backlog bên dưới). Đã verify thủ công
+      qua `curl` (đăng nhập admin set target thành công + đọc lại đúng giá
+      trị; đăng nhập operator bị chặn cả GET lẫn POST đúng như kỳ vọng
+      permission model; category không hợp lệ / giá trị không phải số trả
+      400) + chạy lại `tests/test_downtime_case_notes_context.py` PASS,
+      không regression. **CHƯA CHẠY** DDL `downtime_targets` trên Supabase
+      production (mới thêm vào `supabase/schema.sql`, chưa áp dụng qua SQL
+      Editor).
+- [x] **2 bug thật trên Postgres/Vercel phát hiện khi test import Batch
+      Detail, 2026-09-14**: (1) `CardinalityViolation` — tối ưu
+      `_PostgresConnCompat.executemany()` gộp cả batch thành 1 câu
+      `INSERT...ON CONFLICT DO UPDATE`, Postgres từ chối nếu file Excel có 2+
+      dòng trùng khoá UPSERT trong CÙNG 1 lần import (SQLite không dính vì
+      executemany() ở đó chạy tuần tự từng dòng) — sửa bằng khử trùng theo
+      khoá UPSERT (giữ dòng CUỐI) trước khi gọi `executemany()`, ở
+      `core/batch_importer.py::sync_batch_details()` và
+      `core/excel_importer.py::save_to_db()`. (2) `TypeError: strptime()
+      argument 1 must be str, not datetime.date` — `production_date_sql_expr()`
+      cùng 1 SQL nhưng SQLite trả `str`, Postgres (`::date` cast) trả
+      `datetime.date` — không chỉ crash mà còn làm MẤT DỮ LIỆU ÂM THẦM (dict
+      key `date` không khớp key `str` từ bảng summary TEXT) ở
+      `batch_matrix/service.py`/`downtime/service.py`, không throw Exception
+      nên rất khó phát hiện — sửa bằng `core/production_time.py::
+      normalize_production_date()`, áp dụng ở mọi nơi đọc production_date từ
+      kết quả SQL computed expression.
+
 ## Backlog (Phase 2+)
 - [ ] **Quy tắc phân loại 6 nhóm của `rft`** (Lab to Lab/Lab to Bulk/Bulk to
       Bulk/2nd Batch/Rework/Adjust Color) — CHỜ người dùng cung cấp chi tiết,
