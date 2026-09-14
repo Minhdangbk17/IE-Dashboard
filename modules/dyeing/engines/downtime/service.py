@@ -421,11 +421,19 @@ def get_downtime_pivot_data(
     datasets_hours = {category: category_hours[category] for category in CATEGORIES}
     datasets_hours["Total Rate"] = total_hours
     targets_by_category = {row["category"]: row for row in get_targets()}
+    # Total (hours) của 1 category KHÔNG được cộng dồn các ô "giờ/mẻ" đã hiển thị theo
+    # từng kỳ (mỗi kỳ chia cho SỐ MẺ KHÁC NHAU của riêng kỳ đó — cộng các thương số này
+    # lại không cho ra "giờ/mẻ" đúng nghĩa cho CẢ khoảng thời gian, y hệt lỗi đã tránh ở
+    # `total_pct` bên trên). Phải tính lại: tổng giờ THÔ của category trên toàn khoảng
+    # (`totals[category]`) chia cho SỐ MẺ HỢP LỆ DUY NHẤT của CẢ khoảng (`valid_batches`,
+    # cùng nguồn `get_daily_batch_count()` đã dùng cho KPI — COUNT DISTINCT thật sự, không
+    # tính trùng batch xuất hiện ở nhiều kỳ).
+    valid_batches = get_daily_batch_count(capacity, from_date, to_date, capacities=selected_capacities)
     rows = [
         {
             "category": category, "values": percentages[category], "values_hours": category_hours[category],
             "total_pct": round(totals[category] / planned_total * 100, 1) if planned_total else 0.0,
-            "total_hours": sum(category_hours[category][index] or 0 for index in range(len(category_hours[category]))) if category_hours[category] else 0.0,
+            "total_hours": round(totals[category] / valid_batches, 2) if valid_batches else 0.0,
             "target_pct": targets_by_category.get(category, {}).get("target_pct"),
             "target_hours": targets_by_category.get(category, {}).get("target_hours"),
         }
@@ -440,13 +448,17 @@ def get_downtime_pivot_data(
     all_evaluated = sum(value["achievement"][name][0] for _, value in ordered for name in ACHIEVEMENT_COLUMNS)
     all_passed = sum(value["achievement"][name][1] for _, value in ordered for name in ACHIEVEMENT_COLUMNS)
     achievement_rate = round(all_passed / all_evaluated * 100, 1) if all_evaluated else 0.0
-    valid_batches = get_daily_batch_count(capacity, from_date, to_date, capacities=selected_capacities)
     return {
         "filters": {"capacities": selected_capacities or "all", "from_date": from_date, "to_date": to_date, "group_by": group_by},
         "periods": labels, "period_keys": period_keys, "time_labels": labels, "rows": rows, "rows_hours": [{"category": category, "values": category_hours[category]} for category in CATEGORIES], "total_row": total_rates, "total_row_hours": total_hours,
         "chart": {"categories": labels, "series": [{"name": category, "data": percentages[category]} for category in CATEGORIES]},
         "labels": labels, "datasets": datasets, "datasets_hours": datasets_hours,
-        "kpis": {"planned_hours": round(planned_total, 1), "downtime_hours": round(downtime_total, 1), "downtime_rate_pct": round(downtime_total / planned_total * 100, 1) if planned_total else 0.0, "valid_batches": valid_batches, "achievement_rate_pct": achievement_rate},
+        "kpis": {
+            "planned_hours": round(planned_total, 1), "downtime_hours": round(downtime_total, 1),
+            "downtime_rate_pct": round(downtime_total / planned_total * 100, 1) if planned_total else 0.0,
+            "downtime_hours_per_batch": round(downtime_total / valid_batches, 2) if valid_batches else 0.0,
+            "valid_batches": valid_batches, "achievement_rate_pct": achievement_rate,
+        },
         "achievement": {"periods": achievement_periods, "breakdown": achievement_breakdown, "overall_rate_pct": achievement_rate},
     }
 

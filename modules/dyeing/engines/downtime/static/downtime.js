@@ -109,7 +109,7 @@
             const totalValue = useHours ? row.total_hours : row.total_pct;
             const totalOver = target !== null && Number(totalValue) > target;
             return `<tr><th>${row.category}</th>${renderTargetCell(row, useHours)}${cells}<td class="${totalOver ? "cell-over-target" : ""}"><strong>${useHours ? Number(row.total_hours).toFixed(2) : `${Number(row.total_pct).toFixed(1)}%`}</strong></td></tr>`;
-        }).join("") + `<tr class="total-row"><th>Total</th><td>-</td>${(useHours ? data.total_row_hours : data.total_row).map((value) => `<td><strong>${useHours ? (value === null ? "-" : Number(value).toFixed(2)) : `${Number(value).toFixed(1)}%`}</strong></td>`).join("")}<td><strong>${useHours ? Number(data.total_row_hours.reduce((sum, value) => sum + (value || 0), 0)).toFixed(2) : `${data.kpis.downtime_rate_pct.toFixed(1)}%`}</strong></td></tr>`;
+        }).join("") + `<tr class="total-row"><th>Total</th><td>-</td>${(useHours ? data.total_row_hours : data.total_row).map((value) => `<td><strong>${useHours ? (value === null ? "-" : Number(value).toFixed(2)) : `${Number(value).toFixed(1)}%`}</strong></td>`).join("")}<td><strong>${useHours ? Number(data.kpis.downtime_hours_per_batch).toFixed(2) : `${data.kpis.downtime_rate_pct.toFixed(1)}%`}</strong></td></tr>`;
     }
 
     function startEditingTarget(cell) {
