@@ -19,6 +19,7 @@ Python (`get_production_date`) lẫn bản chuỗi SQL (`PRODUCTION_DATE_SQL_EXP
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from typing import Any
 
 from core.database import get_dialect
 
@@ -44,6 +45,23 @@ def production_date_sql_expr(col: str) -> str:
     Postgres/Supabase."""
     template = _PRODUCTION_DATE_SQL_EXPR_POSTGRES if get_dialect() == "postgres" else PRODUCTION_DATE_SQL_EXPR
     return template.format(col=col)
+
+
+def normalize_production_date(value: Any) -> str | None:
+    """Chuẩn hoá 1 giá trị production_date đọc trực tiếp từ kết quả SELECT dùng
+    `production_date_sql_expr()` (KHÔNG áp dụng cho cột TEXT đã lưu sẵn trong các bảng
+    summary — những cột đó luôn là `str` ở cả 2 dialect) về `str` dạng 'YYYY-MM-DD'.
+
+    Cùng 1 biểu thức SQL nhưng driver trả về KHÁC KIỂU theo dialect: SQLite (`date(...)`)
+    trả `str`; Postgres (`(...)::date`) trả `datetime.date` (psycopg2 tự ép kiểu). Nếu
+    không chuẩn hoá, `date` object sẽ: (1) làm `datetime.strptime()` raise TypeError, hoặc
+    (2) không khớp key khi so với các dict được key bằng `str` (VD kết quả đọc từ cột TEXT
+    của bảng summary) — bug ngầm mất dữ liệu, không raise Exception nên rất khó phát hiện.
+    Dùng hàm này ở MỌI nơi đọc production_date kiểu này thay vì tự viết `isinstance` rải
+    rác — xem `core/batch_importer.py::sync_batch_details()` cho ví dụ lỗi thật đã gặp."""
+    if value is None:
+        return None
+    return value if isinstance(value, str) else str(value)
 
 
 def get_production_date(value: datetime) -> date:

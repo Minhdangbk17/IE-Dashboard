@@ -21,7 +21,7 @@ from flask import Flask
 
 from core.database import get_db
 from core.engine_registry import discover_engines
-from core.production_time import production_date_sql_expr
+from core.production_time import normalize_production_date, production_date_sql_expr
 
 
 def trigger_recompute(affected_dates: set[date]) -> None:
@@ -49,7 +49,7 @@ def _all_known_production_dates() -> set[date]:
     rows = conn.execute(
         f"SELECT DISTINCT {expr} AS d FROM availability_logs WHERE end_time IS NOT NULL OR start_time IS NOT NULL"
     ).fetchall()
-    return {datetime.strptime(row["d"], "%Y-%m-%d").date() for row in rows if row["d"]}
+    return {datetime.strptime(normalize_production_date(row["d"]), "%Y-%m-%d").date() for row in rows if row["d"]}
 
 
 def rebuild_all_summaries() -> int:

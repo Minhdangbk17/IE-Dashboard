@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - dependency is declared in requirements
 
 from core.database import get_db, get_dialect, insert_returning_id
 from core.excel_importer import record_import_rows
-from core.production_time import production_date_sql_expr
+from core.production_time import normalize_production_date, production_date_sql_expr
 from core.rollup import trigger_recompute
 from models.dyeing import BATCH_DETAIL_FIELDS
 
@@ -444,7 +444,10 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
             """,
             (log_id,),
         ).fetchall()
-        affected_dates = {datetime.strptime(row["production_date"], "%Y-%m-%d").date() for row in affected_rows if row["production_date"]}
+        affected_dates = {
+            datetime.strptime(normalize_production_date(row["production_date"]), "%Y-%m-%d").date()
+            for row in affected_rows if row["production_date"]
+        }
         trigger_recompute(affected_dates)
 
     return {

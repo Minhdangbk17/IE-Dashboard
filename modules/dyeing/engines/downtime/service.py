@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from core.database import DatabaseError, execute_query, get_db, get_dialect, sql_datetime
-from core.production_time import production_date_sql_expr
+from core.production_time import normalize_production_date, production_date_sql_expr
 
 CATEGORIES = (
     "Rework", "Color Adjustment", "Sample checking", "Fabric loading",
@@ -279,7 +279,7 @@ def _daily_planned_and_achievement(
     result: dict[str, dict[str, Any]] = {}
     for row in rows:
         achievement = {names[i]: [int(row[f"evaluated_{i}"] or 0), int(row[f"passed_{i}"] or 0)] for i in range(len(names))}
-        result[row["production_date"]] = {"planned": float(row["planned"] or 0), "achievement": achievement}
+        result[normalize_production_date(row["production_date"])] = {"planned": float(row["planned"] or 0), "achievement": achievement}
     return result
 
 
@@ -316,7 +316,7 @@ def _daily_batches(
         return {}
     result: dict[str, set[str]] = {}
     for row in rows:
-        result.setdefault(row["production_date"], set()).add(str(row["batch"]).strip())
+        result.setdefault(normalize_production_date(row["production_date"]), set()).add(str(row["batch"]).strip())
     return result
 
 
@@ -855,7 +855,7 @@ def get_abnormal_point_batches(
             "availability_log_id": row["availability_log_id"],
             "batch": row["batch"], "batch_ref_no": row["batch_ref_no"], "machine": row["machine"],
             "fabric_type": row["fabric_type"], "capacity_kg": row["capacity_kg"],
-            "production_date": row["production_date"],
+            "production_date": normalize_production_date(row["production_date"]),
             "start_time": row["start_time"], "end_time": row["end_time"],
             "load_hour": row["load_hour"], "unload_hour": row["unload_hour"],
             "customer": row["customer"] or None, "colour_no": row["colour_no"] or None,

@@ -56,7 +56,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from core.database import execute_query, get_db, get_dialect, sql_datetime
-from core.production_time import get_production_date, production_bounds, production_date_sql_expr
+from core.production_time import get_production_date, normalize_production_date, production_bounds, production_date_sql_expr
 
 # So khớp không phân biệt hoa/thường, chấp nhận cả lỗi chính tả gốc "Unknow" (thiếu "n").
 _INVALID_FABRIC_TYPES = {"", "unknow", "unknown"}
@@ -307,7 +307,7 @@ def _raw_fabric_and_grand_machines(
     fabric_machines: dict[tuple[str, str], set[str]] = {}
     grand_machines: dict[str, set[str]] = {}
     for row in execute_query(sql, params):
-        day = row["production_date"]
+        day = normalize_production_date(row["production_date"])
         machine = (row["machine"] or "").strip()
         if not day or not machine:
             continue
