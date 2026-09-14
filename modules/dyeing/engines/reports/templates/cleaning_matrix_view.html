@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Cleaning MC Ratio / Production Schedule{% endblock %}
+{% block title %}Batch Per Day by Machine{% endblock %}
 {% block content %}
-<div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Cleaning MC Ratio / Production Schedule</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
+<div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Batch Per Day by Machine</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
 <section class="Box p-3 mb-3"><h3 class="mt-0">Color Legend</h3><div class="legend-row">{% for code, label in [("CM", "Cleaning machine"), ("B", "Black colour"), ("D", "Dark colour"), ("M", "Middle colour"), ("L", "Light colour"), ("W", "White colour"), ("BR", "Black rework"), ("DR", "Dark rework"), ("MR", "Middle rework"), ("LR", "Light rework"), ("WR", "White rework")] %}<span class="legend-item"><span class="badge-code code-{{ code }}">{{ code }}</span>{{ label }}</span>{% endfor %}</div></section>
 <section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px"><div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div><div class="form-group mb-0"><label for="matrix-to">To Date</label><input id="matrix-to" class="form-control" type="date"></div><div class="form-group mb-0" style="position:relative"><label for="capacity-filter-btn">Capacity (Kg)</label><button type="button" id="capacity-filter-btn" class="form-control text-left" style="min-width:170px;cursor:pointer">All</button><div id="capacity-filter-panel" class="Box p-2" style="display:none;position:absolute;top:100%;left:0;z-index:20;min-width:170px;max-height:240px;overflow-y:auto;margin-top:2px"></div></div><button id="matrix-load" class="btn btn-primary">Load Matrix</button></div></section>
 <div id="matrix-coverage-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
@@ -12,7 +12,7 @@
 (function () { "use strict"; const endpoint = "{{ url_for('dyeing.reports.api_cleaning_matrix') }}";
     const formatRatio = (value) => value === null || value === undefined ? "-" : Number(value).toFixed(2);
     const ratioClass = (value) => value === null || value === undefined ? "" : value >= 50 ? "ratio-good" : value <= 5 ? "ratio-warning" : "";
-    const selectedCapacities = new Set();
+    const selectedCapacities = new Set([300, 500, 600, 1200, 2400]);
     const capacityBtn = document.getElementById("capacity-filter-btn");
     const capacityPanel = document.getElementById("capacity-filter-panel");
     function updateCapacityButtonLabel() { capacityBtn.textContent = selectedCapacities.size ? [...selectedCapacities].sort((a, b) => a - b).map((value) => `${value}kg`).join(", ") : "All"; }
@@ -36,6 +36,11 @@
         el.innerHTML = `<strong>Missing color data:</strong> ${coverage.missing}/${coverage.missing + coverage.present} batches (${coverage.missing_pct}%) in this range have no matching ColourNo/Shade in Batch Detail — shown with default badge 'M'. Import the missing Dyelots' Batch Detail (.xlsx) to fix classification.`;
     }
     function render(data) { renderCoverageWarning(data.color_data_coverage); document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join(""); const head = document.getElementById("matrix-head"); head.innerHTML = "<th>Machine</th><th>MC brand</th><th>Tank</th><th>MC quantity</th><th>Tube no</th><th>Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join(""); document.querySelector("#matrix-table tbody").innerHTML = data.matrix.map((row) => `<tr><td>${row.machine_code || "-"}</td><td>${row.mc_brand || "-"}</td><td>${row.tank_type || "-"}</td><td>${row.mc_quantity ?? "-"}</td><td>${row.tube_no ?? "-"}</td><td>${row.capacity ?? "-"}</td><td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${data.time_labels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${batch.color_code_display}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`).join(""); }
+    function pad2(value) { return String(value).padStart(2, "0"); }
+    function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+    const today = new Date();
+    document.getElementById("matrix-from").value = formatDate(new Date(today.getFullYear(), today.getMonth(), 1));
+    document.getElementById("matrix-to").value = formatDate(today);
     document.getElementById("matrix-load").addEventListener("click", load); load();
 }());
 </script>
