@@ -399,10 +399,18 @@
         }).join("") + `<tr class="total-row"><th>Total</th>${data.total_row.map((value) => `<td><strong>${value}</strong></td>`).join("")}<td><strong>${data.total_row.reduce((sum, value) => sum + (value || 0), 0)}</strong></td></tr>`;
     }
 
+    let abnormalPointSeq = 0;
     async function loadAbnormalPoint() {
+        // Bấm đổi filter (VD Group By Day <-> Week) liên tiếp bắn ra nhiều fetch() chồng
+        // nhau — request CHẬM hơn (VD Day, nhiều kỳ hơn) có thể resolve SAU request nhanh
+        // hơn (VD Week) dù được bắn TRƯỚC, khiến DOM bị response CŨ ghi đè sau response MỚI
+        // -> bảng hiển thị dữ liệu không khớp filter đang chọn. Đánh số thứ tự mỗi lần gọi,
+        // chỉ áp dụng response nếu vẫn là lần gọi MỚI NHẤT tại thời điểm resolve.
+        const seq = ++abnormalPointSeq;
         const response = await fetch(`${window.DOWNTIME_ABNORMAL_POINT_API_URL}?${filters()}`);
-        if (!response.ok) return;
+        if (seq !== abnormalPointSeq || !response.ok) return;
         const data = await response.json();
+        if (seq !== abnormalPointSeq) return;
         latestAbnormalData = data;
         renderAbnormalPointTable(data);
         updateDataQualityChart(data);
@@ -575,10 +583,16 @@
         }).join("");
     }
 
+    let loadSeq = 0;
     async function load() {
+        // Cùng lý do với loadAbnormalPoint(): bấm đổi Group By/Date/Capacity liên tiếp bắn
+        // nhiều fetch() chồng nhau, response CHẬM hơn có thể resolve SAU và ghi đè DOM bằng
+        // dữ liệu của filter đã cũ. Đánh số thứ tự, bỏ qua response không còn là lần gọi mới nhất.
+        const seq = ++loadSeq;
         const response = await fetch(`${window.DOWNTIME_API_URL}?${filters()}`);
-        if (!response.ok) return;
+        if (seq !== loadSeq || !response.ok) return;
         const data = await response.json();
+        if (seq !== loadSeq) return;
         document.getElementById("planned-hours").textContent = data.kpis.planned_hours.toFixed(1);
         document.getElementById("downtime-hours").textContent = data.kpis.downtime_hours.toFixed(1);
         document.getElementById("downtime-rate").textContent = `${data.kpis.downtime_rate_pct.toFixed(1)}%`;
