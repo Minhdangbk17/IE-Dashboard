@@ -7,7 +7,10 @@
         <p class="color-fg-muted f6">Aggregated data from the OEE and Downtime Engines.</p>
     </div>
     {% if has_excel_import %}
-    <button class="btn btn-primary" id="btn-open-import">📥 Import Data</button>
+    <div class="d-flex" style="gap:8px;">
+        <button class="btn" id="btn-open-export">📤 Export Data</button>
+        <button class="btn btn-primary" id="btn-open-import">📥 Import Data</button>
+    </div>
     {% endif %}
 </div>
 
@@ -93,6 +96,40 @@
                 <button class="btn btn-sm" id="btn-reupload" type="button">↺ Re-upload</button>
             </div>
             <div id="drawer-pagination"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ============ EXPORT MODAL (chọn loại dữ liệu + khoảng ngày, tải file .xlsx) ============ -->
+<div id="export-modal" class="d-none" style="position:fixed; inset:0; background:rgba(1,4,9,.75); z-index:100;"
+    data-export-url="{{ url_for('dyeing.excel_import.export_data') }}">
+    <div class="Box" style="max-width:440px; margin:10vh auto;">
+        <div class="Box-header d-flex flex-justify-between flex-items-center">
+            <h3 class="Box-title">Export Data</h3>
+            <button class="btn btn-sm" id="btn-close-export" type="button">Close ✕</button>
+        </div>
+        <div class="Box-body">
+            <div class="form-group">
+                <label for="export-data-type">Data Type</label>
+                <select class="form-select input-block" id="export-data-type">
+                    <option value="availability">Availability</option>
+                    <option value="performance">Performance</option>
+                    <option value="batch">Batch Data</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="export-from-date">From Date</label>
+                <input type="date" class="form-control input-block" id="export-from-date" required>
+            </div>
+            <div class="form-group">
+                <label for="export-to-date">To Date</label>
+                <input type="date" class="form-control input-block" id="export-to-date" required>
+            </div>
+            <p id="export-error" class="flash flash-error d-none"></p>
+        </div>
+        <div class="Box-footer d-flex flex-justify-end" style="gap:8px;">
+            <button class="btn" id="btn-cancel-export" type="button">Cancel</button>
+            <button class="btn btn-primary" id="btn-confirm-export" type="button">Export</button>
         </div>
     </div>
 </div>

@@ -13,12 +13,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core.database import execute_query, get_db, get_dialect, insert_returning_id
-from core.excel_importer import ColumnSpec, ImportResult, ImportSchema, run_import
-from core.excel_importer import detect_and_parse_file, save_to_db, record_import_rows
+from core.database import execute_query, get_db, get_dialect, insert_returning_id, sql_datetime
+from core.excel_importer import AVAILABILITY_COLUMNS, PERFORMANCE_COLUMNS, ColumnSpec, ImportResult, ImportSchema, run_import
+from core.excel_importer import detect_and_parse_file, save_to_db, record_import_rows, export_rows_to_excel
 from core.batch_importer import parse_batch_file, sync_batch_details
-from core.production_time import get_production_date
+from core.production_time import get_production_date, production_bounds
 from core.rollup import trigger_recompute
+from models.dyeing import BATCH_DETAIL_FIELDS
 
 # ---------------------------------------------------------------------------
 # Schema Definitions
@@ -297,3 +298,83 @@ def import_selected_file(filename: str, file_bytes: bytes, imported_by: str, req
     if requested_type not in {"", "auto"} and result["file_type"].lower() != requested_type.lower():
         raise ValueError(f"File uploaded thuộc dạng {result['file_type']} Data, vui lòng chuyển loại dữ liệu sang {result['file_type'].title()} hoặc chọn Auto-detect.")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Export Data: xuất lại Availability/Performance/Batch đã import, lọc theo
+# khoảng ngày — chiều ngược lại của Import, dùng CHUNG tên cột Excel gốc
+# (AVAILABILITY_COLUMNS/PERFORMANCE_COLUMNS/BATCH_EXPORT_HEADERS) để file xuất
+# ra giữ đúng định dạng người dùng đã quen, xem lại được bằng Excel bình
+# thường (không nhằm để re-import lại, dù cấu trúc cột tương thích).
+# ---------------------------------------------------------------------------
+
+# Chọn 1 tên cột "đẹp" duy nhất cho mỗi field batch_details (BATCH_HEADER_MAP ở
+# core/batch_importer.py có nhiều alias/field để IMPORT linh hoạt — export thì chỉ cần
+# đúng 1 tên/cột, chọn alias tự nhiên nhất, giữ đúng thứ tự BATCH_DETAIL_FIELDS).
+BATCH_EXPORT_HEADERS: dict[str, str] = {
+    "dyelot": "Dyelot", "customer": "Customer", "color": "Color", "order_no": "OrderNo",
+    "greige_code": "GreigeCode", "recipe_no": "RecipeNo", "colour_no": "ColourNo", "shade": "Shade",
+    "customer_color": "CustomerColor", "is_rework": "IsRework", "machine": "Machine", "machine_group": "MachineGroup",
+    "fabric_code": "FabricCode", "fabric_type": "FabricType", "fabric_content": "FabricContent", "wo_qty": "WOQty",
+    "batch_type": "BatchType", "batch_state": "BatchState", "formula_code": "FormulaCode", "formula_type": "FormulaType",
+    "process_type": "ProcessType", "weight": "Weight", "redye": "ReDye", "liquor_ratio": "LiquorRatio",
+    "liquor_quantity": "LiquorQuantity", "weight_per_area": "WeightPerArea", "greige_width": "GreigeWidth",
+    "reel_speed": "ReelSpeed", "pump_speed": "PumpSpeed", "max_reel_speed": "MaxReelSpeed", "absorption": "Absorption",
+    "nozzle": "Nozzle", "sap_lot": "SapLot", "customer_code": "CustomerCode", "customer_po": "CustomerPO",
+    "soft_water": "SoftWater", "hot_water": "HotWater", "hard_water": "HardWater", "mix_water": "MixWater",
+    "sum_water": "SumWater", "water_per_kg": "WaterxKg", "power": "Power", "power_per_kg": "PowerxKg",
+    "heating_energy": "HeatingEnergy", "steam_per_kg": "SteamxKg", "dye_cost": "DyeCost", "chemical_cost": "ChemicalCost",
+    "correction_cnt": "CorrectionCnt", "alarm_cnt": "AlarmCnt", "intervention_cnt": "InterventionCnt",
+    "total_correction_cnt": "TotalCorrectionCnt", "washing_correction": "WashingCorrection",
+    "dyestuff_correction": "DyestuffCorrrection", "chemical_correction": "ChemicalCorrrection",
+    "schedule_time": "ScheduleTime", "start_time": "StartTime", "end_time": "EndTime", "run_time": "RunTime",
+    "set_time": "SetTime", "stop_time": "StopTime", "operator_time": "OperatorTime", "correction_time": "CorrectionTime",
+    "manual_time": "ManualTime", "stop_alarm_time": "StopAlarmTime", "hold_alarm_time": "HoldAlarmTime",
+    "diff_time": "DiffTime", "percent": "Percent", "fuyang_request": "FuyangRequest",
+    "note1": "Note1", "note2": "Note2", "note3": "Note3", "note4": "Note4", "note5": "Note5",
+}
+
+# field -> header, chuẩn hoá CÙNG 1 chiều cho cả 3 loại (AVAILABILITY_COLUMNS/
+# PERFORMANCE_COLUMNS ở core/excel_importer.py khai báo ngược lại — header -> field —
+# vì đó là chiều IMPORT cần; `setdefault` giữ đúng header ĐẦU TIÊN gặp cho field nào bị
+# khai 2 header (VD field _hour và field _kgh KHÔNG trùng nên không mất dữ liệu ở đây).
+def _invert_to_field_header(header_to_field: dict[str, str]) -> dict[str, str]:
+    field_to_header: dict[str, str] = {}
+    for header, field in header_to_field.items():
+        field_to_header.setdefault(field, header)
+    return field_to_header
+
+
+_EXPORT_CONFIG: dict[str, tuple[str, dict[str, str]]] = {
+    "availability": ("availability_logs", _invert_to_field_header(AVAILABILITY_COLUMNS)),
+    "performance": ("performance_logs", _invert_to_field_header(PERFORMANCE_COLUMNS)),
+    "batch": ("batch_details", BATCH_EXPORT_HEADERS),
+}
+
+
+def export_data(data_type: str, from_date: str | None, to_date: str | None) -> tuple[bytes, str]:
+    """Xuất dữ liệu Availability/Performance/Batch đã import trong DB ra `.xlsx`, lọc theo
+    khoảng `production_date` (cùng quy ước ca 07:00 dùng cho MỌI bộ lọc ngày khác trong dự
+    án — xem `core/production_time.py::production_bounds()` — để nhất quán với các báo cáo
+    Downtime/Batch Matrix/Cleaning MC, KHÔNG dùng ranh giới ngày dương lịch 00:00 riêng)."""
+    config = _EXPORT_CONFIG.get(data_type)
+    if config is None:
+        raise ValueError(f"data_type không hợp lệ: {data_type!r}. Phải là 1 trong {list(_EXPORT_CONFIG)}.")
+    if not from_date or not to_date:
+        raise ValueError("Vui lòng chọn đủ Từ ngày và Đến ngày.")
+    table, field_to_header = config
+    field_order = BATCH_DETAIL_FIELDS if data_type == "batch" else field_to_header.keys()
+    fields = [field for field in field_order if field in field_to_header]
+    headers = [field_to_header[field] for field in fields]
+
+    start_ts, end_ts = production_bounds(from_date, to_date)
+    record_time = "COALESCE(end_time, start_time)"
+    sql = (
+        f"SELECT * FROM {table} WHERE {sql_datetime(record_time)} >= {sql_datetime('?')} "
+        f"AND {sql_datetime(record_time)} < {sql_datetime('?')} ORDER BY {record_time}"
+    )
+    rows = [dict(row) for row in execute_query(sql, (start_ts, end_ts))]
+
+    content = export_rows_to_excel(headers, fields, rows, sheet_title=data_type.title())
+    filename = f"{data_type}_{from_date}_to_{to_date}.xlsx"
+    return content, filename

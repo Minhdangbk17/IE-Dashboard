@@ -121,6 +121,23 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         status_code = 200 if result.committed else 422
         return jsonify(result.to_dict()), status_code
 
+    @bp.route("/api/export")
+    @permission_required("dyeing", "excel_import", "view")
+    def export_data() -> Any:
+        data_type = request.args.get("data_type", "")
+        from_date = request.args.get("from_date") or None
+        to_date = request.args.get("to_date") or None
+        try:
+            content, filename = service.export_data(data_type, from_date, to_date)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return send_file(
+            io.BytesIO(content),
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
     @bp.route("/api/history")
     @permission_required("dyeing", "excel_import", "view")
     def history() -> Any:

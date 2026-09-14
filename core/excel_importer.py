@@ -563,6 +563,33 @@ def export_template(schema: ImportSchema, sample_rows: list[tuple[Any, ...]] | N
     return buffer.getvalue()
 
 
+def export_rows_to_excel(headers: list[str], fields: list[str], rows: list[dict[str, Any]], sheet_title: str) -> bytes:
+    """Xuất `rows` (list dict, đọc thẳng từ DB) ra file `.xlsx` — header in đậm giống
+    `export_template()`, nhưng dùng cho dữ liệu THẬT đã import (Availability/Performance/
+    Batch), không phải file mẫu rỗng. `headers`/`fields` cùng thứ tự — `fields[i]` là key
+    đọc từ mỗi dict trong `rows` để điền vào cột `headers[i]`."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = sheet_title[:31]
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="24292F", end_color="24292F", fill_type="solid")
+    for col_idx, header in enumerate(headers, start=1):
+        cell = sheet.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        sheet.column_dimensions[cell.column_letter].width = max(14, len(header) + 2)
+
+    for row_idx, row in enumerate(rows, start=2):
+        for col_idx, field in enumerate(fields, start=1):
+            sheet.cell(row=row_idx, column=col_idx, value=row.get(field))
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def allowed_file(filename: str, allowed_extensions: set[str]) -> bool:
     """Kiểm tra phần mở rộng file có nằm trong danh sách cho phép hay không."""
     return "." in filename and filename.rsplit(".", 1)[-1].lower() in allowed_extensions

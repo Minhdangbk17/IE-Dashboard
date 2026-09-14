@@ -121,4 +121,40 @@
     [closeBtn, cancelBtn].forEach((btn) => {
         if (btn) btn.addEventListener("click", () => modal.classList.add("d-none"));
     });
+
+    // --- Mở/đóng modal Export + tải file .xlsx theo Data Type/khoảng ngày đã chọn ---
+    const exportOpenBtn = document.getElementById("btn-open-export");
+    const exportModal = document.getElementById("export-modal");
+    const exportCloseBtn = document.getElementById("btn-close-export");
+    const exportCancelBtn = document.getElementById("btn-cancel-export");
+    const exportConfirmBtn = document.getElementById("btn-confirm-export");
+    const exportError = document.getElementById("export-error");
+
+    function closeExportModal() {
+        exportModal.classList.add("d-none");
+        exportError.classList.add("d-none");
+    }
+
+    if (exportOpenBtn && exportModal) {
+        exportOpenBtn.addEventListener("click", () => exportModal.classList.remove("d-none"));
+    }
+    [exportCloseBtn, exportCancelBtn].forEach((btn) => {
+        if (btn) btn.addEventListener("click", closeExportModal);
+    });
+    if (exportConfirmBtn) {
+        exportConfirmBtn.addEventListener("click", () => {
+            const dataType = document.getElementById("export-data-type").value;
+            const fromDate = document.getElementById("export-from-date").value;
+            const toDate = document.getElementById("export-to-date").value;
+            if (!fromDate || !toDate) {
+                exportError.textContent = "Vui lòng chọn đủ Từ ngày và Đến ngày.";
+                exportError.classList.remove("d-none");
+                return;
+            }
+            exportError.classList.add("d-none");
+            const params = new URLSearchParams({ data_type: dataType, from_date: fromDate, to_date: toDate });
+            window.location.href = `${exportModal.dataset.exportUrl}?${params}`;
+            closeExportModal();
+        });
+    }
 })();
