@@ -17,7 +17,7 @@ from core.database import execute_query, get_db, get_dialect, insert_returning_i
 from core.excel_importer import AVAILABILITY_COLUMNS, PERFORMANCE_COLUMNS, ColumnSpec, ImportResult, ImportSchema, run_import
 from core.excel_importer import detect_and_parse_file, save_to_db, record_import_rows, export_rows_to_excel
 from core.batch_importer import parse_batch_file, sync_batch_details
-from core.production_time import get_production_date, production_bounds
+from core.production_time import get_production_date, normalize_production_date, production_bounds, production_date_sql_expr
 from core.rollup import trigger_recompute
 from models.dyeing import BATCH_DETAIL_FIELDS
 
@@ -356,7 +356,13 @@ def export_data(data_type: str, from_date: str | None, to_date: str | None) -> t
     """Xuất dữ liệu Availability/Performance/Batch đã import trong DB ra `.xlsx`, lọc theo
     khoảng `production_date` (cùng quy ước ca 07:00 dùng cho MỌI bộ lọc ngày khác trong dự
     án — xem `core/production_time.py::production_bounds()` — để nhất quán với các báo cáo
-    Downtime/Batch Matrix/Cleaning MC, KHÔNG dùng ranh giới ngày dương lịch 00:00 riêng)."""
+    Downtime/Batch Matrix/Cleaning MC, KHÔNG dùng ranh giới ngày dương lịch 00:00 riêng).
+
+    Mỗi dòng xuất ra kèm thêm cột đầu tiên "Production Day" — tính TRỰC TIẾP bằng
+    `production_date_sql_expr()` từ `COALESCE(end_time, start_time)` (KHÔNG đọc lại cột
+    `production_date` đã lưu sẵn của `availability_logs`, vì `performance_logs`/
+    `batch_details` không có cột này — tính thống nhất 1 cách cho CẢ 3 loại để cùng ý
+    nghĩa/công thức, tránh lệch nhau giữa dữ liệu cũ chưa backfill và dữ liệu mới)."""
     config = _EXPORT_CONFIG.get(data_type)
     if config is None:
         raise ValueError(f"data_type không hợp lệ: {data_type!r}. Phải là 1 trong {list(_EXPORT_CONFIG)}.")
@@ -369,11 +375,18 @@ def export_data(data_type: str, from_date: str | None, to_date: str | None) -> t
 
     start_ts, end_ts = production_bounds(from_date, to_date)
     record_time = "COALESCE(end_time, start_time)"
+    production_expr = production_date_sql_expr(record_time)
     sql = (
-        f"SELECT * FROM {table} WHERE {sql_datetime(record_time)} >= {sql_datetime('?')} "
+        f"SELECT *, {production_expr} AS export_production_date FROM {table} "
+        f"WHERE {sql_datetime(record_time)} >= {sql_datetime('?')} "
         f"AND {sql_datetime(record_time)} < {sql_datetime('?')} ORDER BY {record_time}"
     )
     rows = [dict(row) for row in execute_query(sql, (start_ts, end_ts))]
+    for row in rows:
+        row["export_production_date"] = normalize_production_date(row.get("export_production_date"))
+
+    headers = ["Production Day", *headers]
+    fields = ["export_production_date", *fields]
 
     content = export_rows_to_excel(headers, fields, rows, sheet_title=data_type.title())
     filename = f"{data_type}_{from_date}_to_{to_date}.xlsx"
