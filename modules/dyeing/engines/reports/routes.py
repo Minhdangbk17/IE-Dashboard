@@ -29,8 +29,9 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
                 capacities.append(float(raw_value))
             except ValueError:
                 continue
+        brand_programs = [value for value in request.args.getlist("brand_program") if value]
         try:
-            return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None))
+            return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 

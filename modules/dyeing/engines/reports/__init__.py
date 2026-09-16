@@ -20,7 +20,7 @@ class ReportsEngine(BaseEngine):
             name=self.name,
             domain=self.domain,
             description="Dyeing schedule and machine cleaning ratio report.",
-            data_sources=["availability_logs", "batch_details"],
+            data_sources=["availability_logs", "batch_details", "brand_program_mapping"],
             data_sinks=["cleaning_mc_daily_summary"],
             depends_on=["excel_import"],
         )

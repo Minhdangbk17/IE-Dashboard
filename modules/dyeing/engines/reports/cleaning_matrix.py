@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import date, datetime
 from typing import Any, Mapping
 
+from core.brand_program_importer import ensure_brand_program_table
 from core.database import execute_query, get_db, get_dialect
 from core.production_time import production_date_sql_expr
 
@@ -135,6 +136,7 @@ def _ensure_batch_details_columns(conn: Any) -> None:
     # thiếu index này khiến SQLite phải SCAN nested-loop (đo thực tế: 436ms/ngày -> 3ms/ngày
     # sau khi có index, ~145 lần). Không đổi kết quả truy vấn, chỉ đổi execution plan.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_details_dyelot_norm ON batch_details (LOWER(TRIM(dyelot)))")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_details_greige_code_norm ON batch_details (LOWER(TRIM(greige_code)))")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_availability_batch_norm ON availability_logs (LOWER(TRIM(batch)))")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_availability_batch_ref_norm ON availability_logs (LOWER(TRIM(batch_ref_no)))")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_machines_code_norm ON machines (LOWER(TRIM(COALESCE(machine_code, machine_id))))")
@@ -142,7 +144,9 @@ def _ensure_batch_details_columns(conn: Any) -> None:
 
 
 def _ensure_summary_table(conn: Any) -> None:
-    """CHỈ chạy CREATE TABLE ở SQLite — ở Postgres bảng đã có sẵn qua `supabase/schema.sql`."""
+    """CHỈ chạy DDL ở SQLite — ở Postgres bảng/cột đã có sẵn qua `supabase/schema.sql`
+    (bản mới) hoặc phải áp `supabase/migrate_brand_program_mapping.sql` thủ công (bản cũ
+    đã deploy trước khi có cột `brand_program`/`brand` — xem systemPatterns.md mục 5.1)."""
     if get_dialect() == "sqlite":
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cleaning_mc_daily_summary (
@@ -165,12 +169,18 @@ def _ensure_summary_table(conn: Any) -> None:
                 start_time TEXT,
                 end_time TEXT,
                 program TEXT,
+                brand_program TEXT,
+                brand TEXT,
                 badge TEXT NOT NULL,
                 is_rework INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (production_date, availability_log_id)
             )
         """)
+        existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(cleaning_mc_daily_summary)")}
+        for column in ("brand_program", "brand"):
+            if column not in existing_cols:
+                conn.execute(f"ALTER TABLE cleaning_mc_daily_summary ADD COLUMN {column} TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cleaning_mc_daily_summary_date ON cleaning_mc_daily_summary (production_date)")
 
 
@@ -180,6 +190,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
     (`classify_batch_badge`) CHỈ chạy ở đây, không chạy lúc đọc báo cáo."""
     _ensure_batch_details_columns(conn)
     _ensure_summary_table(conn)
+    ensure_brand_program_table(conn)
     day_str = production_date.isoformat()
     conn.execute("DELETE FROM cleaning_mc_daily_summary WHERE production_date = ?", (day_str,))
 
@@ -197,10 +208,12 @@ def recompute_daily(production_date: date, conn: Any) -> None:
              {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
              COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref,
              COALESCE(m.machine_code, a.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
-             COALESCE(m.capacity_kg, a.capacity_kg) AS configured_capacity_kg
+             COALESCE(m.capacity_kg, a.capacity_kg) AS configured_capacity_kg,
+             COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand
         FROM availability_logs a
         LEFT JOIN batch_details b ON lower(trim(b.dyelot)) = lower(trim(a.batch_ref_no)) OR lower(trim(b.dyelot)) = lower(trim(a.batch))
         LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(a.machine))
+        LEFT JOIN brand_program_mapping bp ON lower(trim(bp.greige_code)) = lower(trim(b.greige_code))
         WHERE {shifted_date} = ?
     """
     rows = conn.execute(sql, (day_str,)).fetchall()
@@ -227,7 +240,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, row["availability_log_id"], row["machine"], float(row["capacity_kg"] or 0), row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["sequence_order"], batch_no, row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], row["program"], badge, int(is_rework), now_str,
+            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], badge, int(is_rework), now_str,
         ))
 
     conn.executemany(
@@ -236,14 +249,14 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             production_date, availability_log_id, machine, capacity_kg, configured_capacity_kg,
             machine_code, mc_brand, tank_type, mc_quantity, tube_no,
             sequence_order, batch_no, dyelot_ref, shade_raw, colour_no, batch_type,
-            start_time, end_time, program, badge, is_rework, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            start_time, end_time, program, brand_program, brand, badge, is_rework, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         inserts,
     )
 
 
-def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None) -> dict[str, Any]:
+def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None, brand_programs: list[str] | None = None) -> dict[str, Any]:
     conn = get_db()
     _ensure_summary_table(conn)
 
@@ -259,11 +272,16 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
     try:
         rows = execute_query(sql, params)
     except Exception as exc:
-        return {"time_labels": [], "daily_sequence": {}, "error": str(exc), "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": []}
+        return {"time_labels": [], "daily_sequence": {}, "error": str(exc), "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": []}
 
     # Quét toàn bộ mức Capacity thực tế có trong dữ liệu (trước khi áp filter) để làm nguồn cho bộ lọc.
     available_capacities = sorted({round(float(row["configured_capacity_kg"]), 2) for row in rows if row["configured_capacity_kg"] not in (None, "")})
     capacity_filter = {round(float(value), 2) for value in capacities} if capacities else None
+    # Brand Program gộp "Brand - Program" (VD "UQ - Ht Fleece") thành 1 giá trị filter duy nhất —
+    # mẻ chưa map được Greige Code nào (đa số, vì mapping chỉ phủ dần theo từng file Brand import)
+    # có brand/brand_program rỗng, KHÔNG xuất hiện trong danh sách lọc, luôn hiện khi không lọc.
+    available_brand_programs = sorted({f"{row['brand']} - {row['brand_program']}" for row in rows if row["brand"] and row["brand_program"]})
+    brand_program_filter = set(brand_programs) if brand_programs else None
 
     machines: dict[tuple[str, float], dict[str, Any]] = {}
     normal = cleaning_count = rework = 0
@@ -275,6 +293,10 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
         if capacity_filter is not None:
             row_capacity = round(float(row["configured_capacity_kg"]), 2) if row["configured_capacity_kg"] not in (None, "") else None
             if row_capacity not in capacity_filter:
+                continue
+        if brand_program_filter is not None:
+            row_brand_program = f"{row['brand']} - {row['brand_program']}" if row["brand"] and row["brand_program"] else None
+            if row_brand_program not in brand_program_filter:
                 continue
         machine_key = (row["machine"], float(row["capacity_kg"] or 0))
         normalized_batch_type = str(row["batch_type"] or "").strip().lower()
@@ -290,7 +312,7 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
         badge_counter[code] += 1
         day = row["production_date"] or "Unknown"
         item["days"].setdefault(day, []).append(code)
-        item["batches"].append({"batch_no": row["batch_no"], "machine_code": row["machine_code"], "mc_brand": row["mc_brand"], "tank_type": row["tank_type"], "capacity_kg": row["configured_capacity_kg"], "shade_raw": row["shade_raw"], "colour_no": row["colour_no"], "batch_type": normalized_batch_type, "sequence_order": row["sequence_order"], "production_date": day, "start_time": row["start_time"], "end_time": row["end_time"], "duration_minutes": round((datetime.fromisoformat(row["end_time"]) - datetime.fromisoformat(row["start_time"])).total_seconds() / 60, 1) if row["start_time"] and row["end_time"] else None, "program": row["program"], "color_code_display": code, "is_rework": is_rework_badge})
+        item["batches"].append({"batch_no": row["batch_no"], "machine_code": row["machine_code"], "mc_brand": row["mc_brand"], "tank_type": row["tank_type"], "capacity_kg": row["configured_capacity_kg"], "shade_raw": row["shade_raw"], "colour_no": row["colour_no"], "batch_type": normalized_batch_type, "sequence_order": row["sequence_order"], "production_date": day, "start_time": row["start_time"], "end_time": row["end_time"], "duration_minutes": round((datetime.fromisoformat(row["end_time"]) - datetime.fromisoformat(row["start_time"])).total_seconds() / 60, 1) if row["start_time"] and row["end_time"] else None, "program": row["program"], "brand_program": row["brand_program"] or None, "brand": row["brand"] or None, "color_code_display": code, "is_rework": is_rework_badge})
         if code == "CM":
             item["cleaning_count"] += 1
             cleaning_count += 1
@@ -322,6 +344,7 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
         "kpis": {"normal_batches": normal, "cleaning_count": cleaning_count, "cleaning_ratio": round(normal / cleaning_count, 2) if cleaning_count else 0.0, "rework_batches": rework},
         "matrix": matrix,
         "available_capacities": available_capacities,
+        "available_brand_programs": available_brand_programs,
         "color_data_coverage": {
             "present": color_source_present,
             "missing": color_source_missing,

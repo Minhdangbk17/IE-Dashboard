@@ -361,12 +361,29 @@ create table if not exists cleaning_mc_daily_summary (
     start_time text,
     end_time text,
     program text,
+    brand_program text,
+    brand text,
     badge text not null,
     is_rework integer not null default 0,
     updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
     primary key (production_date, availability_log_id)
 );
 create index if not exists idx_cleaning_mc_daily_summary_date on cleaning_mc_daily_summary (production_date);
+
+-- Mapping Greige Code -> Brand/Program (VD "UQ - Ht Fleece"), nạp qua file Excel riêng cho
+-- từng Brand (xem modules/dyeing/engines/reports/brand_program.py). Cột `program` trong
+-- availability_logs là Treatment Program (loại quy trình nhuộm) — KHÁC hẳn `brand_program`
+-- ở đây (tên Program của Brand cho 1 loại vải), không dùng chung tên để tránh nhầm lẫn.
+create table if not exists brand_program_mapping (
+    greige_code text primary key,
+    item_code text,
+    fabric_type text,
+    brand_program text,
+    brand text,
+    import_log_id bigint,
+    updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+create index if not exists idx_brand_program_mapping_greige_norm on brand_program_mapping (lower(trim(greige_code)));
 
 create table if not exists import_log_rows (
     id bigint generated always as identity primary key,
@@ -420,4 +437,5 @@ alter table downtime_case_notes enable row level security;
 alter table batch_matrix_daily_summary enable row level security;
 alter table batch_matrix_targets enable row level security;
 alter table cleaning_mc_daily_summary enable row level security;
+alter table brand_program_mapping enable row level security;
 alter table import_log_rows enable row level security;
