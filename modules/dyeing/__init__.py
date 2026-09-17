@@ -89,4 +89,5 @@ def _engine_display_name(engine_name: str) -> str:
         "reports": "Batch Per Day by Machine",
         "batch_matrix": "Batch/Machine Daily Matrix",
         "rft": "Right First Time",
+        "tank_loading": "%Tank Loading",
     }.get(engine_name, engine_name.replace("_", " ").title())

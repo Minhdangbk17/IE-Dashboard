@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Tank Loading - Dyeing{% endblock %}
+{% block extra_head %}<style>
+    .tank-loading-kpis { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 12px; }
+    .tank-loading-kpis .widget-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+    .tank-loading-kpis strong { font-size: 28px; line-height: 1.1; }
+    .capacity-dropdown { position: relative; min-width: 210px; }
+    .capacity-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--color-canvas-overlay, #161b22); border: 1px solid var(--color-border-default, #30363d); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
+    .capacity-menu[hidden] { display: none; }
+    .capacity-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+    .capacity-option:hover { background: var(--color-neutral-muted, rgba(110, 118, 129, .15)); }
+    .chart-panel { min-height: 380px; height: 380px; }
+    @media (max-width: 800px) { .tank-loading-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
+</style>{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
+    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Performance</p><h2 class="mt-0">%Tank Loading report</h2></div>
+    <a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a>
+</div>
+
+<section class="tank-loading-filter Box p-3 mb-3" aria-label="Report filters">
+    <div class="d-flex flex-wrap flex-items-end gap-2">
+        <div class="form-group mb-0 mr-3 capacity-dropdown">
+            <label for="capacity-toggle">Capacity (Kg)</label>
+            <button id="capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All capacities</button>
+            <div id="capacity-menu" class="capacity-menu" hidden>
+                <label class="capacity-option"><input id="capacity-all" type="checkbox" value="ALL"> Select All</label>
+                <div class="border-top my-1"></div>
+                {% for capacity in [25, 50, 300, 500, 600, 1200, 2400] %}
+                <label class="capacity-option"><input class="capacity-checkbox" type="checkbox" value="{{ capacity }}" {% if capacity in [500, 600, 1200, 2400] %}checked{% endif %}> {{ capacity }} Kg</label>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="form-group mb-0 mr-3"><label for="from-date">From Date</label><input id="from-date" class="form-control" type="date"></div>
+        <div class="form-group mb-0 mr-3"><label for="to-date">To Date</label><input id="to-date" class="form-control" type="date"></div>
+        <div class="form-group mb-0"><label for="group-by">Group By</label><select id="group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
+    </div>
+</section>
+
+<div class="tank-loading-kpis mb-4">
+    <div class="widget-card"><span class="f6 color-fg-muted">TANK LOADING</span><strong class="kpi-tank-loading-pct">--%</strong><span class="f6 color-fg-muted">Sum(OutputKgH) / Sum(MaxOutputKgH)</span></div>
+    <div class="widget-card"><span class="f6 color-fg-muted">TOTAL OUTPUT (KG/H)</span><strong class="kpi-total-output">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
+    <div class="widget-card"><span class="f6 color-fg-muted">TOTAL MAX LOAD (KG/H)</span><strong class="kpi-total-max-load">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
+</div>
+
+<div class="Box p-3 mb-4 chart-panel">
+    <h3 class="mt-0 mb-2">Tank Loading — trend</h3>
+    <canvas id="tank-loading-chart" aria-label="Tank Loading chart"></canvas>
+</div>
+
+<div class="Box p-3" style="overflow-x:auto;">
+    <table class="preview-table" id="tank-loading-table">
+        <thead><tr id="tank-loading-head"><th>Tank Loading %</th><th>Total</th></tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+    window.TANK_LOADING_API_URL = "{{ url_for('dyeing.tank_loading.api_summary') }}";
+</script>
+<script src="{{ url_for('dyeing.tank_loading.static', filename='tank_loading.js') }}"></script>
+{% endblock %}
