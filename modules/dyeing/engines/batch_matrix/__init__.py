@@ -13,7 +13,7 @@ from flask import Blueprint
 
 from core.engine_base import BaseEngine, EngineMetadata
 
-from . import service
+from . import batch_day_trend, service
 from .routes import build_blueprint
 
 
@@ -26,9 +26,13 @@ class BatchMatrixEngine(BaseEngine):
         return EngineMetadata(
             name=self.name,
             domain=self.domain,
-            description="Batch/Machine Daily Matrix (Fabric Type x Color Group), value = SUM(batches)/SUM(operating hours for that cell's machines)/24.",
+            description=(
+                "Batch/Day: Fabric Type x Color Group matrix (value = SUM(batches)/SUM(operating "
+                "hours for that cell's machines)/24), plus a Batch/Day Trend tab "
+                "(valid batches * 24 / total planned production hours)."
+            ),
             data_sources=["availability_logs", "batch_details"],
-            data_sinks=["batch_matrix_targets", "batch_matrix_daily_summary"],
+            data_sinks=["batch_matrix_targets", "batch_matrix_daily_summary", "batch_day_trend_daily_summary"],
             depends_on=["excel_import"],
         )
 
@@ -37,6 +41,7 @@ class BatchMatrixEngine(BaseEngine):
 
     def recompute_daily(self, production_date: date, conn: Any) -> None:
         service.recompute_daily(production_date, conn)
+        batch_day_trend.recompute_daily(production_date, conn)
 
 
 engine = BatchMatrixEngine()

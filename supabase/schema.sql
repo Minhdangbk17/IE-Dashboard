@@ -337,6 +337,23 @@ create table if not exists batch_matrix_targets (
     primary key (fabric_type, color_group)
 );
 
+-- Batch/Day Trend tab (batch_matrix engine). Grain = 1 row per REAL batch already
+-- resolved (fabric type valid, carry-forward from preceding Unknown-fabric rows on the
+-- same machine already folded in) — see batch_day_trend.py module docstring for why this
+-- cannot be rolled up as a simple per-day count like batch_matrix_daily_summary.
+create table if not exists batch_day_trend_daily_summary (
+    production_date text not null,
+    machine text not null,
+    start_time text not null,
+    fabric_type text not null,
+    capacity_kg double precision,
+    hours double precision not null default 0,
+    is_valid integer not null default 0,
+    updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+    primary key (production_date, machine, start_time)
+);
+create index if not exists idx_batch_day_trend_daily_summary_date on batch_day_trend_daily_summary (production_date);
+
 -- Grain = one row per source record (1 row = 1 availability_logs.id, already
 -- joined + badge-classified). Unlike downtime/batch_matrix, Cleaning MC shows
 -- per-batch detail in sequence (not aggregated numbers), so it cannot be
@@ -436,6 +453,7 @@ alter table downtime_targets enable row level security;
 alter table downtime_case_notes enable row level security;
 alter table batch_matrix_daily_summary enable row level security;
 alter table batch_matrix_targets enable row level security;
+alter table batch_day_trend_daily_summary enable row level security;
 alter table cleaning_mc_daily_summary enable row level security;
 alter table brand_program_mapping enable row level security;
 alter table import_log_rows enable row level security;

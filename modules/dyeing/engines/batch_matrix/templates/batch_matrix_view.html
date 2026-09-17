@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Batch/Machine Daily Matrix - Dyeing{% endblock %}
+{% block title %}Batch/Day - Dyeing{% endblock %}
 {% block extra_head %}<style>
     .matrix-filter-dropdown { position: relative; min-width: 210px; }
     .matrix-filter-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--color-canvas-overlay, #161b22); border: 1px solid var(--color-border-default, #30363d); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); max-height: 260px; overflow-y: auto; }
@@ -23,49 +23,103 @@
     .day-batches-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--color-border-default, #30363d); }
     .day-batches-body { overflow: auto; padding: 8px 16px 16px; }
     .day-batches-body table th, .day-batches-body table td { white-space: nowrap; }
+    .batch-matrix-page[hidden] { display: none; }
+    .trend-kpis { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 12px; }
+    .trend-kpis .widget-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+    .trend-kpis strong { font-size: 28px; line-height: 1.1; }
+    .chart-panel { min-height: 380px; height: 380px; }
+    @media (max-width: 800px) { .trend-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
-    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Batch</p><h2 class="mt-0">Batch/Machine Daily Matrix</h2></div>
+    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Batch</p><h2 class="mt-0">Batch/Day</h2></div>
     <a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a>
 </div>
 
-<section class="Box p-3 mb-3" aria-label="Report filters">
-    <div class="d-flex flex-wrap flex-items-end gap-2">
-        <div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div>
-        <div class="form-group mb-0"><label for="matrix-to">To Date</label><input id="matrix-to" class="form-control" type="date"></div>
-        <div class="form-group mb-0 matrix-filter-dropdown">
-            <label for="capacity-toggle">Capacity (Kg)</label>
-            <button id="capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All</button>
-            <div id="capacity-menu" class="matrix-filter-menu" hidden></div>
+<nav class="page-tabs mb-3" id="batch-day-tabs" aria-label="Batch/Day pages">
+    <button class="page-tab is-active" type="button" data-page="matrix">Fabric/Color Matrix</button>
+    <button class="page-tab" type="button" data-page="trend">Batch/Day Trend</button>
+</nav>
+
+<section class="batch-matrix-page" id="page-matrix" data-page="matrix">
+    <section class="Box p-3 mb-3" aria-label="Report filters">
+        <div class="d-flex flex-wrap flex-items-end gap-2">
+            <div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div>
+            <div class="form-group mb-0"><label for="matrix-to">To Date</label><input id="matrix-to" class="form-control" type="date"></div>
+            <div class="form-group mb-0 matrix-filter-dropdown">
+                <label for="capacity-toggle">Capacity (Kg)</label>
+                <button id="capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All</button>
+                <div id="capacity-menu" class="matrix-filter-menu" hidden></div>
+            </div>
+            <button id="matrix-load" class="btn btn-primary">View Report</button>
         </div>
-        <button id="matrix-load" class="btn btn-primary">View Report</button>
+    </section>
+
+    <div id="matrix-summary" class="d-flex flex-wrap mb-3" style="gap:12px"></div>
+
+    <div class="Box p-3" style="overflow-x:auto;">
+    <table class="preview-table batch-matrix-table" id="matrix-table">
+        <thead><tr id="matrix-head"></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="f6 color-fg-muted mt-2 mb-0">Click a cell to see the batches behind that number.</p>
+    </div>
+
+    <div id="day-batches-overlay" class="day-batches-overlay" hidden>
+        <div class="day-batches-panel">
+            <div class="day-batches-header">
+                <h3 id="day-batches-title" class="mt-0 mb-0"></h3>
+                <button id="day-batches-close" class="btn btn-sm" type="button">Close</button>
+            </div>
+            <div id="day-batches-body" class="day-batches-body"></div>
+        </div>
     </div>
 </section>
 
-<div id="matrix-summary" class="d-flex flex-wrap mb-3" style="gap:12px"></div>
-
-<div class="Box p-3" style="overflow-x:auto;">
-<table class="preview-table batch-matrix-table" id="matrix-table">
-    <thead><tr id="matrix-head"></tr></thead>
-    <tbody></tbody>
-</table>
-<p class="f6 color-fg-muted mt-2 mb-0">Click a cell to see the batches behind that number.</p>
-</div>
-
-<div id="day-batches-overlay" class="day-batches-overlay" hidden>
-    <div class="day-batches-panel">
-        <div class="day-batches-header">
-            <h3 id="day-batches-title" class="mt-0 mb-0"></h3>
-            <button id="day-batches-close" class="btn btn-sm" type="button">Close</button>
+<section class="batch-matrix-page" id="page-trend" data-page="trend" hidden>
+    <section class="Box p-3 mb-3" aria-label="Batch/Day Trend filters">
+        <div class="d-flex flex-wrap flex-items-end gap-2">
+            <div class="form-group mb-0"><label for="trend-from">From Date</label><input id="trend-from" class="form-control" type="date"></div>
+            <div class="form-group mb-0"><label for="trend-to">To Date</label><input id="trend-to" class="form-control" type="date"></div>
+            <div class="form-group mb-0 matrix-filter-dropdown">
+                <label for="trend-capacity-toggle">Capacity (Kg)</label>
+                <button id="trend-capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All</button>
+                <div id="trend-capacity-menu" class="matrix-filter-menu" hidden></div>
+            </div>
+            <div class="form-group mb-0 matrix-filter-dropdown">
+                <label for="trend-fabric-toggle">Fabric Type</label>
+                <button id="trend-fabric-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All</button>
+                <div id="trend-fabric-menu" class="matrix-filter-menu" hidden></div>
+            </div>
+            <div class="form-group mb-0"><label for="trend-group-by">Group By</label><select id="trend-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
         </div>
-        <div id="day-batches-body" class="day-batches-body"></div>
-    </div>
-</div>
+    </section>
 
+    <div class="trend-kpis mb-4">
+        <div class="widget-card"><span class="f6 color-fg-muted">BATCH/DAY</span><strong class="kpi-batch-per-day">--</strong><span class="f6 color-fg-muted">Valid batches * 24 / total planned hours</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">VALID BATCHES (REWORK = 0)</span><strong class="kpi-valid-batches">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLANNED HOURS</span><strong class="kpi-total-hours">--</strong><span class="f6 color-fg-muted">Planned PRD time, all batches</span></div>
+    </div>
+
+    <div class="Box p-3 mb-4 chart-panel">
+        <h3 class="mt-0 mb-2">Batch/Day — trend</h3>
+        <canvas id="trend-chart" aria-label="Batch/Day trend chart"></canvas>
+    </div>
+
+    <div class="Box p-3" style="overflow-x:auto;">
+        <table class="preview-table" id="trend-table">
+            <thead><tr id="trend-head"><th>Batch/Day</th><th>Total</th></tr></thead>
+            <tbody></tbody>
+        </table>
+        <p class="f6 color-fg-muted mt-2 mb-0">Fabric Type "Unknown"/blank batches are not counted separately — their time is carried forward into the next real batch on the same machine.</p>
+    </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 (function () { "use strict"; const matrixUrl = "{{ url_for('dyeing.batch_matrix.api_matrix') }}";
     const dayBatchesUrl = "{{ url_for('dyeing.batch_matrix.api_day_batches') }}";
+    const trendUrl = "{{ url_for('dyeing.batch_matrix.api_batch_day_trend') }}";
     const capacityToggle = document.getElementById("capacity-toggle");
     const capacityMenu = document.getElementById("capacity-menu");
     let availableCapacities = [];
@@ -132,7 +186,7 @@
     }
 
     capacityToggle.addEventListener("click", (event) => { event.stopPropagation(); capacityMenu.hidden = !capacityMenu.hidden; capacityToggle.setAttribute("aria-expanded", String(!capacityMenu.hidden)); });
-    document.addEventListener("click", (event) => { if (!event.target.closest(".matrix-filter-dropdown")) { capacityMenu.hidden = true; capacityToggle.setAttribute("aria-expanded", "false"); } });
+    document.addEventListener("click", (event) => { if (!event.target.closest(".matrix-filter-dropdown")) { capacityMenu.hidden = true; capacityToggle.setAttribute("aria-expanded", "false"); trendCapacityMenu.hidden = true; trendCapacityToggle.setAttribute("aria-expanded", "false"); trendFabricMenu.hidden = true; trendFabricToggle.setAttribute("aria-expanded", "false"); } });
 
     function renderSummary(data) {
         const dateRange = data.days.length ? `${data.days[0]} → ${data.days[data.days.length - 1]}` : "-";
@@ -204,7 +258,160 @@
     }
 
     document.getElementById("matrix-load").addEventListener("click", load);
+
+    // -----------------------------------------------------------------
+    // Tab "Batch/Day Trend"
+    // -----------------------------------------------------------------
+    const trendCapacityToggle = document.getElementById("trend-capacity-toggle");
+    const trendCapacityMenu = document.getElementById("trend-capacity-menu");
+    const trendFabricToggle = document.getElementById("trend-fabric-toggle");
+    const trendFabricMenu = document.getElementById("trend-fabric-menu");
+    let trendSelectedCapacities = new Set();
+    let trendSelectedFabricTypes = new Set();
+    let trendChart = null;
+
+    function pad2(value) { return String(value).padStart(2, "0"); }
+    function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+    function mondayOf(d) {
+        const date = new Date(d);
+        const isoDay = (date.getDay() + 6) % 7;
+        date.setDate(date.getDate() - isoDay);
+        date.setHours(0, 0, 0, 0);
+        return date;
+    }
+    function defaultTrendRange() {
+        const currentWeekStart = mondayOf(new Date());
+        const from = new Date(currentWeekStart);
+        from.setDate(from.getDate() - 5 * 7);
+        const to = new Date(currentWeekStart);
+        to.setDate(to.getDate() + 6);
+        return { from: formatDate(from), to: formatDate(to) };
+    }
+
+    function renderTrendCapacityMenu(capacities) {
+        trendCapacityMenu.innerHTML = capacities.length
+            ? capacities.map((value) => `<label class="matrix-filter-option"><input type="checkbox" class="trend-capacity-checkbox" value="${value}" ${trendSelectedCapacities.has(String(value)) ? "checked" : ""}> ${value} Kg</label>`).join("")
+            : `<span class="f6 color-fg-muted">No capacity data</span>`;
+        trendCapacityMenu.querySelectorAll(".trend-capacity-checkbox").forEach((box) => box.addEventListener("change", () => {
+            if (box.checked) trendSelectedCapacities.add(box.value); else trendSelectedCapacities.delete(box.value);
+            trendCapacityToggle.textContent = trendSelectedCapacities.size ? `${trendSelectedCapacities.size} selected` : "All";
+            loadTrend();
+        }));
+        trendCapacityToggle.textContent = trendSelectedCapacities.size ? `${trendSelectedCapacities.size} selected` : "All";
+    }
+
+    function renderTrendFabricMenu(fabricTypes) {
+        trendFabricMenu.innerHTML = fabricTypes.length
+            ? fabricTypes.map((value) => `<label class="matrix-filter-option"><input type="checkbox" class="trend-fabric-checkbox" value="${escAttr(value)}" ${trendSelectedFabricTypes.has(value) ? "checked" : ""}> ${escHtml(value)}</label>`).join("")
+            : `<span class="f6 color-fg-muted">No fabric type data</span>`;
+        trendFabricMenu.querySelectorAll(".trend-fabric-checkbox").forEach((box) => box.addEventListener("change", () => {
+            if (box.checked) trendSelectedFabricTypes.add(box.value); else trendSelectedFabricTypes.delete(box.value);
+            trendFabricToggle.textContent = trendSelectedFabricTypes.size ? `${trendSelectedFabricTypes.size} selected` : "All";
+            loadTrend();
+        }));
+        trendFabricToggle.textContent = trendSelectedFabricTypes.size ? `${trendSelectedFabricTypes.size} selected` : "All";
+    }
+
+    trendCapacityToggle.addEventListener("click", (event) => { event.stopPropagation(); trendCapacityMenu.hidden = !trendCapacityMenu.hidden; trendCapacityToggle.setAttribute("aria-expanded", String(!trendCapacityMenu.hidden)); });
+    trendFabricToggle.addEventListener("click", (event) => { event.stopPropagation(); trendFabricMenu.hidden = !trendFabricMenu.hidden; trendFabricToggle.setAttribute("aria-expanded", String(!trendFabricMenu.hidden)); });
+
+    function chartTextColors() {
+        const isLight = document.documentElement.getAttribute("data-color-mode") === "light";
+        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#abaebb";
+        const gridColor = isLight ? "rgba(11, 12, 14, 0.08)" : "rgba(255, 255, 255, 0.08)";
+        return { textColor, gridColor };
+    }
+
+    function renderTrendTable(data) {
+        const head = document.getElementById("trend-head");
+        head.innerHTML = "<th>Batch/Day</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
+        const row = data.rows[0];
+        document.querySelector("#trend-table tbody").innerHTML =
+            `<tr><th>${row.label}</th>${row.values.map((value) => `<td>${Number(value).toFixed(2)}</td>`).join("")}<td><strong>${Number(row.total).toFixed(2)}</strong></td></tr>`;
+    }
+
+    function updateTrendChart(data) {
+        if (typeof Chart === "undefined") return;
+        const canvas = document.getElementById("trend-chart");
+        if (!canvas) return;
+        const { textColor, gridColor } = chartTextColors();
+        const row = data.rows[0];
+        if (trendChart) trendChart.destroy();
+        trendChart = new Chart(canvas, {
+            type: "line",
+            data: { labels: data.periods, datasets: [{ label: row.label, data: row.values, borderColor: "#2862d7", backgroundColor: "rgba(40,98,215,.2)", tension: .2, fill: true }] },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                scales: {
+                    x: { ticks: { color: textColor }, grid: { color: gridColor } },
+                    y: { beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: "Batch/Day", color: textColor } },
+                },
+                plugins: { legend: { display: false } },
+            },
+        });
+    }
+
+    let trendCapacitiesLoaded = false;
+    function loadTrend() {
+        const params = new URLSearchParams({
+            from_date: document.getElementById("trend-from").value,
+            to_date: document.getElementById("trend-to").value,
+            group_by: document.getElementById("trend-group-by").value,
+        });
+        trendSelectedCapacities.forEach((value) => params.append("capacities", value));
+        trendSelectedFabricTypes.forEach((value) => params.append("fabric_types", value));
+        fetch(`${trendUrl}?${params}`).then((response) => response.json()).then((data) => {
+            if (!trendCapacitiesLoaded && data.available_capacities) {
+                trendCapacitiesLoaded = true;
+                renderTrendCapacityMenu(data.available_capacities);
+            }
+            renderTrendFabricMenu(data.available_fabric_types || []);
+            document.querySelector(".kpi-batch-per-day").textContent = Number(data.kpis.batch_per_day).toFixed(2);
+            document.querySelector(".kpi-valid-batches").textContent = Number(data.kpis.valid_batches).toLocaleString();
+            document.querySelector(".kpi-total-hours").textContent = Number(data.kpis.total_planned_hours).toLocaleString();
+            renderTrendTable(data);
+            updateTrendChart(data);
+        });
+    }
+
+    document.getElementById("trend-group-by").addEventListener("change", loadTrend);
+    document.getElementById("trend-from").addEventListener("change", loadTrend);
+    document.getElementById("trend-to").addEventListener("change", loadTrend);
+    document.addEventListener("colormodechange", loadTrend);
+
+    // -----------------------------------------------------------------
+    // Tab switching
+    // -----------------------------------------------------------------
+    const tabsNav = document.getElementById("batch-day-tabs");
+    const tabs = [...tabsNav.querySelectorAll(".page-tab")];
+    const pages = [...document.querySelectorAll(".batch-matrix-page")];
+    let activePageIndex = 0;
+    function activatePage(index) {
+        index = Math.max(0, Math.min(pages.length - 1, index));
+        activePageIndex = index;
+        tabs.forEach((tab, i) => tab.classList.toggle("is-active", i === index));
+        pages.forEach((page, i) => { page.hidden = i !== index; });
+        requestAnimationFrame(() => { if (trendChart) trendChart.resize(); });
+    }
+    tabs.forEach((tab, index) => tab.addEventListener("click", () => activatePage(index)));
+    let wheelLocked = false;
+    tabsNav.addEventListener("wheel", (event) => {
+        if (Math.abs(event.deltaY) < 2) return;
+        event.preventDefault();
+        if (wheelLocked) return;
+        wheelLocked = true;
+        activatePage(activePageIndex + (event.deltaY > 0 ? 1 : -1));
+        window.setTimeout(() => { wheelLocked = false; }, 450);
+    }, { passive: false });
+
+    const trendDefaultRange = defaultTrendRange();
+    document.getElementById("trend-from").value = trendDefaultRange.from;
+    document.getElementById("trend-to").value = trendDefaultRange.to;
+
     load();
+    loadTrend();
 }());
 </script>
 {% endblock %}

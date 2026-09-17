@@ -12,6 +12,8 @@ Blueprint & Route (API + View) của Engine "batch_matrix".
 - `POST /dyeing/batch_matrix/api/targets`   -> Set/update 1 Target (fabric_type, color_group).
 - `GET  /dyeing/batch_matrix/api/day-batches?date=&fabric_type=&color_group=&capacity=...`
   -> API JSON danh sách mẻ THẬT của 1 ô ma trận (drill-down double-check, bấm vào ô ngày trên UI).
+- `GET  /dyeing/batch_matrix/api/batch-day-trend?capacities=&fabric_types=&from_date=&to_date=&group_by=`
+  -> API JSON tab "Batch/Day Trend" — xem `batch_day_trend.py` cho công thức đầy đủ.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from flask import Blueprint, jsonify, render_template, request
 from core.auth import permission_required
 
 from . import service
+from .batch_day_trend import get_batch_day_trend
 
 if TYPE_CHECKING:
     from core.engine_base import BaseEngine
@@ -54,6 +57,18 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             return jsonify({"error": "Missing date/fabric_type/color_group."}), 400
         capacities = request.args.getlist("capacity") or None
         return jsonify(service.get_day_batches(production_date, fabric_type, color_group, capacities))
+
+    @bp.route("/api/batch-day-trend")
+    @permission_required("dyeing", "batch_matrix", "view")
+    def api_batch_day_trend() -> Any:
+        data = get_batch_day_trend(
+            capacities=request.args.get("capacities") or None,
+            fabric_types=request.args.get("fabric_types") or None,
+            from_date=request.args.get("from_date") or None,
+            to_date=request.args.get("to_date") or None,
+            group_by=request.args.get("group_by", "date"),
+        )
+        return jsonify(data)
 
     @bp.route("/api/targets")
     @permission_required("dyeing", "batch_matrix", "view")

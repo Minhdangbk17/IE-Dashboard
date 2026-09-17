@@ -87,7 +87,7 @@ def _engine_display_name(engine_name: str) -> str:
         "downtime": "Downtime",
         "manual_entry": "Manual Availability Entry",
         "reports": "Batch Per Day by Machine",
-        "batch_matrix": "Batch/Machine Daily Matrix",
+        "batch_matrix": "Batch/Day",
         "rft": "Right First Time",
         "tank_loading": "%Tank Loading",
     }.get(engine_name, engine_name.replace("_", " ").title())
