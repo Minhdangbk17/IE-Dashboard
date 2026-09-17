@@ -7,9 +7,94 @@
 <div id="matrix-coverage-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
 <div id="matrix-kpis" class="d-flex flex-wrap mb-3" style="gap:12px"></div>
 <div class="Box p-3" style="overflow-x:auto"><table class="preview-table matrix-table" id="matrix-table"><thead><tr id="matrix-head"><th>Machine</th><th>MC brand</th><th>Tank</th><th>MC quantity</th><th>Tube no</th><th>Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th></tr></thead><tbody></tbody></table></div>
+<div class="Box p-3 mt-3" style="overflow-x:auto"><h3 class="mt-0">Normal Dyeing Batches by Colour (per day)</h3><table class="preview-table matrix-table" id="color-summary-table"><thead><tr id="color-summary-head"></tr></thead><tbody></tbody></table></div>
 <style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}</style>
 <script>
+    window.REPORTS_CAN_EDIT_MACHINES = {{ "true" if current_user_can('dyeing', 'reports', 'edit') else "false" }};
+    window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE = "{{ url_for('dyeing.reports.api_update_machine', machine_code='__MACHINE__') }}";
+</script>
+<script>
 (function () { "use strict"; const endpoint = "{{ url_for('dyeing.reports.api_cleaning_matrix') }}";
+    function showToast(message, kind) {
+        let container = document.querySelector(".toast-container");
+        if (!container) { container = document.createElement("div"); container.className = "toast-container"; document.body.appendChild(container); }
+        const el = document.createElement("div");
+        el.className = `flash flash-${kind || "success"} import-toast`;
+        el.textContent = message;
+        container.appendChild(el);
+        window.setTimeout(() => el.remove(), 4000);
+    }
+    const MACHINE_FIELD_LABELS = { mc_brand: "MC brand", tank_type: "Tank", mc_quantity: "MC quantity", tube_no: "Tube no", capacity_kg: "Capacity (Kg)" };
+    function machineUpdateUrl(code) { return window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE.replace("__MACHINE__", encodeURIComponent(code)); }
+    function renderMachineCell(row, field, rawValue) {
+        const displayValue = rawValue === null || rawValue === undefined || rawValue === "" ? "-" : rawValue;
+        if (!window.REPORTS_CAN_EDIT_MACHINES || !row.machine_code) return `<td>${displayValue}</td>`;
+        return `<td><span class="case-note-cell" data-machine="${row.machine_code}" data-field="${field}">${displayValue}</span></td>`;
+    }
+    function buildMachineCellSpan(machine, field, value) {
+        const span = document.createElement("span");
+        span.className = "case-note-cell";
+        span.dataset.machine = machine;
+        span.dataset.field = field;
+        span.textContent = value === "" || value === null || value === undefined ? "-" : value;
+        return span;
+    }
+    function saveMachineField(inputEl, machine, field, rawValue) {
+        let value = rawValue;
+        if (field === "mc_quantity" || field === "tube_no") {
+            value = rawValue === "" ? null : parseInt(rawValue, 10);
+        } else if (field === "capacity_kg") {
+            value = rawValue === "" ? null : Number(rawValue);
+        } else {
+            value = rawValue === "" ? null : rawValue;
+        }
+        if (value !== null && Number.isNaN(value)) {
+            inputEl.replaceWith(buildMachineCellSpan(machine, field, ""));
+            showToast(`${MACHINE_FIELD_LABELS[field]} must be a number.`, "error");
+            return;
+        }
+        fetch(machineUpdateUrl(machine), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ [field]: value }),
+        }).then((response) => {
+            if (!response.ok) throw new Error("save failed");
+            return response.json();
+        }).then(() => {
+            showToast(`${MACHINE_FIELD_LABELS[field]} saved.`, "success");
+            load();
+        }).catch(() => {
+            inputEl.replaceWith(buildMachineCellSpan(machine, field, rawValue));
+            showToast(`Failed to save ${MACHINE_FIELD_LABELS[field]}.`, "error");
+        });
+    }
+    function startEditingMachineCell(cell) {
+        const machine = cell.dataset.machine;
+        const field = cell.dataset.field;
+        const currentText = cell.textContent.trim();
+        const currentValue = currentText === "-" ? "" : currentText;
+        const input = document.createElement("input");
+        input.type = (field === "mc_quantity" || field === "tube_no" || field === "capacity_kg") ? "number" : "text";
+        if (field === "capacity_kg") input.step = "0.1";
+        input.className = "case-note-input";
+        input.value = currentValue;
+        cell.replaceWith(input);
+        input.focus();
+        input.select();
+        let settled = false;
+        function commit() { if (settled) return; settled = true; saveMachineField(input, machine, field, input.value.trim()); }
+        function cancel() { if (settled) return; settled = true; input.replaceWith(buildMachineCellSpan(machine, field, currentValue)); }
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+        });
+    }
+    document.querySelector("#matrix-table tbody").addEventListener("click", (event) => {
+        const cell = event.target.closest(".case-note-cell");
+        if (!cell || !cell.dataset.machine) return;
+        startEditingMachineCell(cell);
+    });
     const formatRatio = (value) => value === null || value === undefined ? "-" : Number(value).toFixed(2);
     const ratioClass = (value) => value === null || value === undefined ? "" : value >= 50 ? "ratio-good" : value <= 5 ? "ratio-warning" : "";
     const selectedCapacities = new Set([300, 500, 600, 1200, 2400]);
@@ -17,10 +102,27 @@
     const capacityPanel = document.getElementById("capacity-filter-panel");
     function updateCapacityButtonLabel() { capacityBtn.textContent = selectedCapacities.size ? [...selectedCapacities].sort((a, b) => a - b).map((value) => `${value}kg`).join(", ") : "All"; }
     function renderCapacityOptions(capacities) {
-        capacityPanel.innerHTML = capacities.length ? capacities.map((value) => `<label class="d-block" style="white-space:nowrap;font-weight:normal"><input type="checkbox" class="capacity-checkbox" value="${value}" ${selectedCapacities.has(value) ? "checked" : ""}> ${value} kg</label>`).join("") : `<span class="f6 color-fg-muted">No capacity data</span>`;
+        // "All" = bỏ lọc Capacity hoàn toàn (selectedCapacities rỗng) — cần thiết vì máy MỚI
+        // chưa được cấu hình Capacity (configured_capacity_kg = null) sẽ bị ẩn khỏi bảng nếu
+        // bộ lọc mặc định (300/500/600/1200/2400) đang bật, khiến không có dòng nào để bấm
+        // sửa Capacity cho máy đó — chọn "All" là cách duy nhất để thấy lại các máy này.
+        const allOption = `<label class="d-block" style="white-space:nowrap;font-weight:600;padding-bottom:4px;margin-bottom:4px;border-bottom:1px solid var(--border-default)"><input type="checkbox" id="capacity-all-checkbox" ${selectedCapacities.size === 0 ? "checked" : ""}> All (kể cả máy chưa cấu hình Capacity)</label>`;
+        const options = capacities.length ? capacities.map((value) => `<label class="d-block" style="white-space:nowrap;font-weight:normal"><input type="checkbox" class="capacity-checkbox" value="${value}" ${selectedCapacities.has(value) ? "checked" : ""}> ${value} kg</label>`).join("") : `<span class="f6 color-fg-muted">No capacity data</span>`;
+        capacityPanel.innerHTML = allOption + options;
+        document.getElementById("capacity-all-checkbox").addEventListener("change", (event) => {
+            if (event.target.checked) {
+                selectedCapacities.clear();
+                renderCapacityOptions(capacities);
+                updateCapacityButtonLabel();
+                load();
+            } else {
+                event.target.checked = true; // bỏ chọn "All" phải qua việc tick 1 mốc cụ thể, không để lại trạng thái rỗng-không-checkbox-nào-được-chọn
+            }
+        });
         capacityPanel.querySelectorAll(".capacity-checkbox").forEach((box) => box.addEventListener("change", () => {
             const value = Number(box.value);
             if (box.checked) { selectedCapacities.add(value); } else { selectedCapacities.delete(value); }
+            renderCapacityOptions(capacities);
             updateCapacityButtonLabel();
             load();
         }));
@@ -52,7 +154,25 @@
         el.style.display = "block";
         el.innerHTML = `<strong>Missing color data:</strong> ${coverage.missing}/${coverage.missing + coverage.present} batches (${coverage.missing_pct}%) in this range have no matching ColourNo/Shade in Batch Detail — shown with default badge 'M'. Import the missing Dyelots' Batch Detail (.xlsx) to fix classification.`;
     }
-    function render(data) { renderCoverageWarning(data.color_data_coverage); document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join(""); const head = document.getElementById("matrix-head"); head.innerHTML = "<th>Machine</th><th>MC brand</th><th>Tank</th><th>MC quantity</th><th>Tube no</th><th>Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join(""); document.querySelector("#matrix-table tbody").innerHTML = data.matrix.map((row) => `<tr><td>${row.machine_code || "-"}</td><td>${row.mc_brand || "-"}</td><td>${row.tank_type || "-"}</td><td>${row.mc_quantity ?? "-"}</td><td>${row.tube_no ?? "-"}</td><td>${row.capacity ?? "-"}</td><td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${data.time_labels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${batch.color_code_display}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}${batch.brand_program ? ` | ${batch.brand} - ${batch.brand_program}` : ""}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`).join(""); }
+    function renderColorSummary(data) {
+        const summary = data.color_summary || { labels: [], by_day: {} };
+        const head = document.getElementById("color-summary-head");
+        const body = document.querySelector("#color-summary-table tbody");
+        if (!summary.labels.length || !data.time_labels.length) { head.innerHTML = ""; body.innerHTML = `<tr><td class="f6 color-fg-muted">No data</td></tr>`; return; }
+        head.innerHTML = "<th>Colour</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join("") + "<th>Total</th>";
+        const dayTotals = data.time_labels.map(() => 0);
+        let grandTotal = 0;
+        const rowsHtml = summary.labels.map((label, labelIndex) => {
+            const counts = data.time_labels.map((day) => (summary.by_day[day] || [])[labelIndex] || 0);
+            counts.forEach((count, dayIndex) => { dayTotals[dayIndex] += count; });
+            const rowTotal = counts.reduce((sum, count) => sum + count, 0);
+            grandTotal += rowTotal;
+            return `<tr><th>${label}</th>${counts.map((count) => `<td>${count}</td>`).join("")}<td><strong>${rowTotal}</strong></td></tr>`;
+        }).join("");
+        const totalRow = `<tr class="total-row"><th>Total</th>${dayTotals.map((count) => `<td><strong>${count}</strong></td>`).join("")}<td><strong>${grandTotal}</strong></td></tr>`;
+        body.innerHTML = rowsHtml + totalRow;
+    }
+    function render(data) { renderCoverageWarning(data.color_data_coverage); renderColorSummary(data); document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join(""); const head = document.getElementById("matrix-head"); head.innerHTML = "<th>Machine</th><th>MC brand</th><th>Tank</th><th>MC quantity</th><th>Tube no</th><th>Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join(""); document.querySelector("#matrix-table tbody").innerHTML = data.matrix.map((row) => `<tr><td>${row.machine_code || "-"}</td>${renderMachineCell(row, "mc_brand", row.mc_brand)}${renderMachineCell(row, "tank_type", row.tank_type)}${renderMachineCell(row, "mc_quantity", row.mc_quantity)}${renderMachineCell(row, "tube_no", row.tube_no)}${renderMachineCell(row, "capacity_kg", row.capacity)}<td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${data.time_labels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${batch.color_code_display}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}${batch.brand_program ? ` | ${batch.brand} - ${batch.brand_program}` : ""}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`).join(""); }
     function pad2(value) { return String(value).padStart(2, "0"); }
     function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
     const today = new Date();

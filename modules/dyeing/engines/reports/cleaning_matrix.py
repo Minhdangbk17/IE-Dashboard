@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, datetime
 from typing import Any, Mapping
 
@@ -27,6 +27,12 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
 
 # Toàn bộ 11 mã badge hợp lệ (dùng để log kiểm tra đầu ra).
 ALL_BADGE_CODES = ("CM", "B", "D", "M", "L", "W", "BR", "DR", "MR", "LR", "WR")
+
+# Thứ tự cột hiển thị cho summary "Normal Dyeing Batches by Colour" (theo đúng thứ tự
+# người dùng yêu cầu) — chỉ tính mẻ Normal (không CM, không Rework), map trực tiếp từ
+# base badge code (B/D/M/L/W) đã phân loại sẵn ở `classify_batch_badge()`.
+COLOR_LABEL_ORDER = ("Dark", "Light", "Medium", "Black", "White")
+BADGE_TO_COLOR_LABEL: dict[str, str] = {"D": "Dark", "L": "Light", "M": "Medium", "B": "Black", "W": "White"}
 
 # Từ khoá tông màu Đậm/Nhạt được đúc kết từ ColourNo thực tế trong hệ thống
 # (VD: "115-23-11-MARINE BLUE" -> Đậm, "096-70-05-MORDEN MINT" -> Nhạt).
@@ -184,10 +190,49 @@ def _ensure_summary_table(conn: Any) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cleaning_mc_daily_summary_date ON cleaning_mc_daily_summary (production_date)")
 
 
+def _orphan_batch_rows(conn: Any, day_str: str, batch_columns: set[str]) -> list[Any]:
+    """Lấy các dòng `batch_details` KHÔNG khớp bất kỳ dòng nào trong `availability_logs`
+    (theo `batch`/`batch_ref_no`) và có production_date (tính từ EndTime/StartTime của
+    chính batch_details) đúng bằng `day_str` — đây là các mẻ chạy trên MÁY chỉ tồn tại
+    trong Batch Detail (VD line Polyester riêng dùng mã máy `0101`/`16xx`/`Hxxx`, xem
+    memory-bank/activeContext.md), chưa từng được import qua Availability nên trước đây
+    hoàn toàn KHÔNG xuất hiện trên báo cáo (vì hàm này trước đó chỉ FROM availability_logs).
+    KHÔNG hardcode danh sách mã máy — mọi mẻ "mồ côi" nào khớp điều kiện đều được gộp vào,
+    tự động phủ cả máy mới phát sinh sau này."""
+    shifted_date_batch = production_date_sql_expr("COALESCE(b.end_time, b.start_time)")
+    sql = f"""
+         SELECT b.dyelot AS dyelot_ref, b.machine, b.start_time, b.end_time,
+             COALESCE(b.batch_type, '') AS batch_type,
+             {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
+             COALESCE(b.shade, '') AS shade, COALESCE(b.colour_no, '') AS colour_no,
+             COALESCE(b.recipe_no, '') AS recipe_no, COALESCE(b.customer_color, '') AS customer_color,
+             COALESCE(b.is_rework, 0) AS is_rework,
+             COALESCE(m.machine_code, b.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
+             m.capacity_kg AS configured_capacity_kg,
+             COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand
+        FROM batch_details b
+        LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(b.machine))
+        LEFT JOIN brand_program_mapping bp ON lower(trim(bp.greige_code)) = lower(trim(b.greige_code))
+        WHERE b.machine IS NOT NULL AND TRIM(b.machine) != ''
+          AND {shifted_date_batch} = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM availability_logs a2
+              WHERE lower(trim(a2.batch)) = lower(trim(b.dyelot)) OR lower(trim(a2.batch_ref_no)) = lower(trim(b.dyelot))
+          )
+    """
+    return conn.execute(sql, (day_str,)).fetchall()
+
+
 def recompute_daily(production_date: date, conn: Any) -> None:
     """Tính lại `cleaning_mc_daily_summary` cho ĐÚNG 1 production_date — idempotent
     (DELETE dòng cũ của ngày này rồi INSERT lại từ raw data). JOIN + phân loại badge
-    (`classify_batch_badge`) CHỈ chạy ở đây, không chạy lúc đọc báo cáo."""
+    (`classify_batch_badge`) CHỈ chạy ở đây, không chạy lúc đọc báo cáo.
+
+    Gộp 2 nguồn: (1) mọi dòng `availability_logs` của ngày này (như trước), VÀ (2) các
+    dòng `batch_details` "mồ côi" — có Machine/Time riêng nhưng KHÔNG có bản ghi
+    `availability_logs` tương ứng (xem `_orphan_batch_rows()`) — để các máy chỉ tồn tại ở
+    nguồn Batch Detail vẫn hiện đúng trên báo cáo Batch Per Day by Machine, KHÔNG chỉ ẩn đi
+    vì thiếu Availability."""
     _ensure_batch_details_columns(conn)
     _ensure_summary_table(conn)
     ensure_brand_program_table(conn)
@@ -217,7 +262,8 @@ def recompute_daily(production_date: date, conn: Any) -> None:
         WHERE {shifted_date} = ?
     """
     rows = conn.execute(sql, (day_str,)).fetchall()
-    if not rows:
+    orphan_rows = _orphan_batch_rows(conn, day_str, batch_columns)
+    if not rows and not orphan_rows:
         return
 
     inserts = []
@@ -241,6 +287,30 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["sequence_order"], batch_no, row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
             row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], badge, int(is_rework), now_str,
+        ))
+
+    # `availability_log_id` âm (-1, -2, ...) đánh dấu mẻ "mồ côi" (không có availability_logs.id
+    # thật) — chỉ cần duy nhất TRONG PHẠM VI 1 production_date (khoá PK là cặp
+    # (production_date, availability_log_id)), KHÔNG bao giờ đụng độ với id thật (luôn dương).
+    for index, row in enumerate(orphan_rows, start=1):
+        batch_record = {
+            "dyelot": row["dyelot_ref"],
+            "batch_type": row["batch_type"],
+            "redye": row["redye"],
+            "shade": row["shade"],
+            "colour_no": row["colour_no"],
+            "recipe_no": row["recipe_no"],
+            "customer_color": row["customer_color"],
+            "log_rework_minutes": 0,
+        }
+        badge = classify_batch_badge(batch_record)
+        is_rework = badge.endswith("R")
+        capacity_value = float(row["configured_capacity_kg"] or 0)
+        inserts.append((
+            day_str, -index, row["machine"], capacity_value, row["configured_capacity_kg"],
+            row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
+            row["start_time"], row["dyelot_ref"], row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
+            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], badge, int(is_rework), now_str,
         ))
 
     conn.executemany(
@@ -272,7 +342,7 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
     try:
         rows = execute_query(sql, params)
     except Exception as exc:
-        return {"time_labels": [], "daily_sequence": {}, "error": str(exc), "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": []}
+        return {"time_labels": [], "daily_sequence": {}, "error": str(exc), "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}}}
 
     # Quét toàn bộ mức Capacity thực tế có trong dữ liệu (trước khi áp filter) để làm nguồn cho bộ lọc.
     available_capacities = sorted({round(float(row["configured_capacity_kg"]), 2) for row in rows if row["configured_capacity_kg"] not in (None, "")})
@@ -286,6 +356,10 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
     machines: dict[tuple[str, float], dict[str, Any]] = {}
     normal = cleaning_count = rework = 0
     badge_counter: Counter[str] = Counter()
+    # Đếm mẻ Normal (không CM, không Rework) theo (ngày, màu) cho summary "Normal Dyeing
+    # Batches by Colour" — CÙNG điều kiện với KPI "Normal Dyeing" (`normal`/`item["normal_batches"]`
+    # bên dưới), không định nghĩa tiêu chí "Normal" riêng để tránh 2 số lệch nhau.
+    color_by_day: dict[str, Counter[str]] = defaultdict(Counter)
     # Đếm bao nhiêu dòng lịch máy KHÔNG join được với batch_details (thiếu ColourNo/Shade
     # nguồn) — dùng để phân biệt "toàn M vì thiếu dữ liệu import" với lỗi thuật toán thật.
     color_source_missing = color_source_present = 0
@@ -319,6 +393,9 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
         elif not is_rework_badge and normalized_batch_type in {"normal", "unknown", ""}:
             item["normal_batches"] += 1
             normal += 1
+            color_label = BADGE_TO_COLOR_LABEL.get(code)
+            if color_label:
+                color_by_day[day][color_label] += 1
         if normalized_batch_type in {"r&d", "rd", "research", "development"}:
             item["rd_batches"] += 1
         if is_rework_badge:
@@ -329,6 +406,10 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
         item["cleaning_ratio"] = round(item["normal_batches"] / item["cleaning_count"], 2) if item["cleaning_count"] else None
         matrix.append(item)
     time_labels = sorted({day for item in matrix for day in item["days"]})
+    color_summary = {
+        "labels": list(COLOR_LABEL_ORDER),
+        "by_day": {day: [color_by_day.get(day, Counter()).get(label, 0) for label in COLOR_LABEL_ORDER] for day in time_labels},
+    }
     logger.info(
         "Machine Scheduling Matrix badge check: found=%s missing=%s counts=%s | batch_details join coverage: co_du_lieu_mau=%d thieu_du_lieu_mau=%d (%.0f%% thiếu -> cần bổ sung file Batch Detail nếu tỷ lệ cao)",
         sorted(badge_counter),
@@ -345,9 +426,91 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
         "matrix": matrix,
         "available_capacities": available_capacities,
         "available_brand_programs": available_brand_programs,
+        "color_summary": color_summary,
         "color_data_coverage": {
             "present": color_source_present,
             "missing": color_source_missing,
             "missing_pct": round(100.0 * color_source_missing / len(rows), 1) if rows else 0.0,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Quản lý cấu hình máy (`machines`) — MC brand/Tank/MC quantity/Tube no/Capacity.
+#
+# Bảng `machines` hiện KHÔNG có UI nào để nhập (đã xoá sạch data mock DY-01..05, xem
+# memory-bank/progress.md quyết định -5) nên mọi máy đang hiển thị "-" ở các cột này trên
+# Batch Per Day by Machine — kể cả các máy CÓ dữ liệu Availability. Thêm CRUD tối giản ở
+# đây để user có quyền edit Engine `reports` tự nhập trực tiếp trên UI, KHÔNG cần chờ file
+# Excel danh mục máy (hiện không tồn tại).
+# ---------------------------------------------------------------------------
+
+
+def list_machine_configs() -> list[dict[str, Any]]:
+    """Hợp toàn bộ mã máy đã từng xuất hiện ở `availability_logs.machine` HOẶC
+    `batch_details.machine` (kể cả máy chưa có dòng nào trong `machines`), LEFT JOIN
+    cấu hình hiện có — để UI liệt kê ĐẦY ĐỦ máy cần cấu hình, không chỉ máy đã có sẵn."""
+    conn = get_db()
+    _ensure_batch_details_columns(conn)
+    sql = """
+        SELECT code, MAX(mc_brand) AS mc_brand, MAX(tank_type) AS tank_type,
+               MAX(mc_quantity) AS mc_quantity, MAX(tube_no) AS tube_no, MAX(capacity_kg) AS capacity_kg
+        FROM (
+            SELECT DISTINCT TRIM(machine) AS code FROM availability_logs WHERE machine IS NOT NULL AND TRIM(machine) != ''
+            UNION
+            SELECT DISTINCT TRIM(machine) AS code FROM batch_details WHERE machine IS NOT NULL AND TRIM(machine) != ''
+        ) codes
+        LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(codes.code))
+        GROUP BY code
+        ORDER BY code
+    """
+    rows = execute_query(sql, [])
+    return [dict(row) for row in rows]
+
+
+def upsert_machine_config(machine_code: str, fields: Mapping[str, Any]) -> dict[str, Any]:
+    """UPSERT 1 dòng `machines` theo mã máy (khớp `machine_id`/`machine_code` — bảng này
+    hiện rỗng hoàn toàn nên không có rủi ro đụng dữ liệu cũ). Chỉ ghi đè các field THỰC SỰ
+    có trong `fields` (partial update — cho phép sửa từng ô một, giống pattern Case Notes/
+    Target đã có ở Engine downtime)."""
+    machine_code = machine_code.strip()
+    if not machine_code:
+        raise ValueError("Machine code không được rỗng.")
+    allowed = {"mc_brand", "tank_type", "mc_quantity", "tube_no", "capacity_kg"}
+    updates = {key: value for key, value in fields.items() if key in allowed}
+    if not updates:
+        raise ValueError("Không có field hợp lệ để cập nhật.")
+
+    conn = get_db()
+    _ensure_batch_details_columns(conn)
+    existing = conn.execute(
+        "SELECT id FROM machines WHERE lower(trim(COALESCE(machine_code, machine_id))) = lower(trim(?))",
+        (machine_code,),
+    ).fetchone()
+    if existing:
+        set_clause = ", ".join(f"{key} = ?" for key in updates)
+        conn.execute(f"UPDATE machines SET {set_clause} WHERE id = ?", (*updates.values(), existing["id"]))
+    else:
+        columns = ["machine_id", "machine_code", "machine_name", "domain", *updates.keys()]
+        placeholders = ",".join("?" for _ in columns)
+        conn.execute(
+            f"INSERT INTO machines ({','.join(columns)}) VALUES ({placeholders})",
+            (machine_code, machine_code, machine_code, "dyeing", *updates.values()),
+        )
+    conn.commit()
+
+    affected_dates_rows = conn.execute(
+        "SELECT DISTINCT production_date FROM cleaning_mc_daily_summary WHERE lower(trim(machine)) = lower(trim(?))",
+        (machine_code,),
+    ).fetchall()
+    affected_dates = {datetime.strptime(row["production_date"], "%Y-%m-%d").date() for row in affected_dates_rows}
+    if affected_dates:
+        from core.rollup import trigger_recompute  # import trễ để tránh vòng lặp import với core.rollup
+
+        trigger_recompute(affected_dates)
+
+    row = conn.execute(
+        "SELECT machine_code, mc_brand, tank_type, mc_quantity, tube_no, capacity_kg FROM machines WHERE lower(trim(COALESCE(machine_code, machine_id))) = lower(trim(?))",
+        (machine_code,),
+    ).fetchone()
+    return dict(row) if row else {"machine_code": machine_code, **updates}

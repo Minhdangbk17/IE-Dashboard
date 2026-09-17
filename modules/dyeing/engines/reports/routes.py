@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from core.auth import get_current_user, permission_required
 from core.batch_importer import sync_batch_details
 from core.database import DatabaseError
-from .cleaning_matrix import get_cleaning_matrix
+from .cleaning_matrix import get_cleaning_matrix, list_machine_configs, upsert_machine_config
 
 if TYPE_CHECKING:
     from core.engine_base import BaseEngine
@@ -34,6 +34,21 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+
+    @bp.route("/api/machines")
+    @permission_required("dyeing", "reports", "view")
+    def api_list_machines() -> Any:
+        return jsonify({"machines": list_machine_configs()})
+
+    @bp.route("/api/machines/<machine_code>", methods=["POST"])
+    @permission_required("dyeing", "reports", "edit")
+    def api_update_machine(machine_code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            updated = upsert_machine_config(machine_code, payload)
+            return jsonify({"status": "ok", "machine": updated})
+        except (ValueError, *DatabaseError) as exc:
+            return jsonify({"status": "error", "error": str(exc)}), 400
 
     @bp.route("/api/dyeing/import-batch-detail", methods=["POST"])
     @permission_required("dyeing", "reports", "edit")

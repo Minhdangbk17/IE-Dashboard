@@ -42,14 +42,27 @@ def trigger_recompute(affected_dates: set[date]) -> None:
 
 
 def _all_known_production_dates() -> set[date]:
-    """Toàn bộ production_date đã từng xuất hiện trong `availability_logs` — nguồn dữ
-    liệu chính nuôi cả `downtime_daily_summary` lẫn `batch_matrix_daily_summary`."""
+    """Toàn bộ production_date đã từng xuất hiện trong `availability_logs` (nguồn dữ
+    liệu chính nuôi `downtime_daily_summary`/`batch_matrix_daily_summary`) HỢP VỚI
+    production_date của riêng `batch_details` (nguồn phụ, chỉ dùng cho
+    `cleaning_mc_daily_summary` — xem `reports/cleaning_matrix.py::_orphan_batch_rows()`).
+    Bắt buộc hợp cả 2 vì có những máy (VD line Polyester dùng mã máy `0101`/`16xx`/`Hxxx`)
+    CHỈ có dữ liệu Batch Detail, không hề có dòng `availability_logs` nào — nếu chỉ quét
+    `availability_logs`, những ngày mà các máy này CHẠY nhưng KHÔNG máy nào khác chạy Availability
+    trùng ngày đó sẽ bị bỏ sót hoàn toàn khi backfill."""
     conn = get_db()
-    expr = production_date_sql_expr("COALESCE(end_time, start_time)")
+    expr_avail = production_date_sql_expr("COALESCE(end_time, start_time)")
     rows = conn.execute(
-        f"SELECT DISTINCT {expr} AS d FROM availability_logs WHERE end_time IS NOT NULL OR start_time IS NOT NULL"
+        f"SELECT DISTINCT {expr_avail} AS d FROM availability_logs WHERE end_time IS NOT NULL OR start_time IS NOT NULL"
     ).fetchall()
-    return {datetime.strptime(normalize_production_date(row["d"]), "%Y-%m-%d").date() for row in rows if row["d"]}
+    dates = {datetime.strptime(normalize_production_date(row["d"]), "%Y-%m-%d").date() for row in rows if row["d"]}
+
+    expr_batch = production_date_sql_expr("COALESCE(end_time, start_time)")
+    batch_rows = conn.execute(
+        f"SELECT DISTINCT {expr_batch} AS d FROM batch_details WHERE end_time IS NOT NULL OR start_time IS NOT NULL"
+    ).fetchall()
+    dates.update(datetime.strptime(normalize_production_date(row["d"]), "%Y-%m-%d").date() for row in batch_rows if row["d"])
+    return dates
 
 
 def rebuild_all_summaries() -> int:
