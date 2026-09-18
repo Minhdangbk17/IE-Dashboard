@@ -86,8 +86,29 @@
     // Sparkline THUẦN — ẩn hẳn trục/lưới/chú giải/tooltip, chỉ giữ lại HÌNH DẠNG đường +
     // màu để đọc được từ xa (đúng yêu cầu tối giản cho màn hình Andon) — khác hẳn chart
     // đầy đủ trục ở các trang report riêng của từng Engine.
+    //
+    // Khi KHÔNG có kỳ nào để vẽ (`labels` rỗng — VD chưa import dữ liệu Performance nên
+    // %Tank Loading không có gì để vẽ), Chart.js vẫn "vẽ" được 1 canvas nhưng hoàn toàn
+    // trắng trơn — người dùng dễ hiểu nhầm là LỖI thay vì "chưa có dữ liệu". Hiện rõ dòng
+    // chữ "No data for this period" thay vì để canvas trống im lặng.
     function renderSparkline(canvasKey, canvas, labels, series) {
-        if (!canvas || typeof Chart === "undefined") return;
+        if (!canvas) return;
+        const wrap = canvas.parentElement;
+        let emptyNote = wrap ? wrap.querySelector(".dash-spark-empty") : null;
+        if (!labels.length) {
+            destroyChart(canvasKey);
+            canvas.style.visibility = "hidden";
+            if (wrap && !emptyNote) {
+                emptyNote = document.createElement("div");
+                emptyNote.className = "dash-spark-empty";
+                emptyNote.textContent = "No data for this period";
+                wrap.appendChild(emptyNote);
+            }
+            return;
+        }
+        canvas.style.visibility = "";
+        if (emptyNote) emptyNote.remove();
+        if (typeof Chart === "undefined") return;
         destroyChart(canvasKey);
         charts[canvasKey] = new Chart(canvas, {
             type: "line",

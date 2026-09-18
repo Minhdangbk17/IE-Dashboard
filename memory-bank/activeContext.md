@@ -1,6 +1,19 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-18 (bản ghi mới nhất) — 3 việc riêng biệt trong
+**Cập nhật lần cuối:** 2026-09-19 — 2 việc nhỏ trên Dyeing Hub Dashboard (mục -15/-16):
+(1) Xác nhận "%Tank Loading chưa thấy biểu đồ đường" KHÔNG phải bug — người dùng chưa
+upload Performance tháng 09, `performance_logs` rỗng nên không có gì để vẽ (Batch/Day vẫn
+vẽ được vì dùng nguồn `availability_logs` khác). Tiện thể thêm UX: sparkline rỗng giờ hiện
+"No data for this period" thay vì canvas trắng trơn im lặng (`dyeing_hub.js::
+renderSparkline()`). (2) Sửa layout ô "Downtime %": trước đây `justify-content:center`
+khiến cả khối (label/số/caption/link) bị dồn vào giữa ô theo chiều dọc thay vì label ở
+trên cùng và "View details" ở dưới cùng như các ô khác — bỏ `align-items/justify-content:
+center` khỏi `.dash-cell-downtime`, đổi `.dash-panel-link` (dùng chung mọi ô) sang
+`margin-top: auto` (đẩy xuống đáy khi có khoảng trống thừa, vô hại với các ô đã có sẵn
+phần tử `flex:1` — chỉ thực sự đổi hành vi ở ô Downtime, ô DUY NHẤT không có filler nào).
+Bản ghi trước đó (2026-09-18 — redesign Dashboard) giữ nguyên ở mục -15/-16 bên dưới.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-18 (bản ghi mới nhất) — 3 việc riêng biệt trong
 cùng 1 phiên làm việc, theo thứ tự: (1) **Bug thật + sửa**: `upsert_machine_config()`
 ("Batch Per Day by Machine", `reports/cleaning_matrix.py`) dùng "SELECT xem đã
 có chưa rồi INSERT hoặc UPDATE" KHÔNG nguyên tử — vì bảng `machines` mặc định
@@ -1045,6 +1058,17 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 8. Quality trong công thức OEE tạm giả định 100% (giữ nguyên, chưa đổi).
 
 ## Việc tiếp theo
+- **ĐÃ XÁC NHẬN** (2026-09-19): người dùng report "%Tank Loading chưa thấy biểu đồ đường"
+  — điều tra xác nhận KHÔNG phải bug code (đối chiếu công thức/filter Tank Loading giống
+  hệt Batch/Day, đã hoạt động đúng khi có dữ liệu). Nguyên nhân THẬT: **người dùng CHƯA
+  upload file Excel "Performance" của tháng 09** — `performance_logs` rỗng nên %Tank
+  Loading không có gì để vẽ, trong khi Batch/Day (nguồn `availability_logs`) đã có dữ liệu
+  nên vẫn vẽ được. Không cần sửa gì thêm — chỉ cần người dùng import Performance của tháng
+  09 qua "Import Data" trên Hub. Đã tiện thể thêm UX nhỏ: `renderSparkline()`
+  (`dyeing_hub.js`) giờ hiện rõ "No data for this period" thay vì để canvas trắng trơn im
+  lặng khi `labels` rỗng — tránh hiểu nhầm "trống trơn" là lỗi ở lần sau. Áp dụng cho CẢ
+  Hero Batch/Day lẫn %Tank Loading (RFT không qua đường này, đã có cơ chế "Đang chờ cấu
+  hình" riêng từ mục -16).
 - **CHỜ XÁC NHẬN**: ngưỡng tô màu chính thức cho Downtime% trên Dashboard (hiện đang tạm
   đặt <=8% xanh / <=15% vàng / >15% đỏ trong `dyeing_hub.js::downtimeColorFor()` — người
   dùng chưa xác nhận số cụ thể, đã hỏi nhưng chưa có câu trả lời trong phiên làm việc này).
