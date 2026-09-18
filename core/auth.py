@@ -17,7 +17,7 @@ from typing import Any, Callable, TypeVar
 import click
 from flask import Flask, current_app, flash, g, has_app_context, redirect, request, session, url_for
 
-from core.database import execute_one
+from core.database import DatabaseError, execute_one
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -53,7 +53,18 @@ def verify_password(raw_password: str, hashed: str) -> bool:
 
 
 def get_current_user() -> dict[str, Any] | None:
-    """Lấy thông tin user hiện tại từ session (cache trong `g` theo request)."""
+    """Lấy thông tin user hiện tại từ session (cache trong `g` theo request).
+
+    Nếu DB lỗi (vd Postgres/Supabase mất kết nối giữa chừng — `execute_one()` đã tự thử
+    lại 1 lần, xem `core/database.py::_discard_broken_connection()`), coi như "chưa đăng
+    nhập" cho request này thay vì để exception lan ra ngoài. **Bug thật đã gặp trên
+    production**: hàm này được gọi CẢ ở decorator phân quyền LẪN ở
+    `navigation.py::inject_nav_menu` (context processor chạy cho MỌI template, kể cả
+    `errors/500.html`) — nếu để lỗi lan ra, request lỗi DB gốc khiến Flask cố render trang
+    500 thân thiện, nhưng chính việc render đó lại gọi hàm này lần nữa và crash tiếp,
+    khiến người dùng không bao giờ thấy trang lỗi tử tế mà thấy lỗi thô của server. Chấp
+    nhận được vì đây chỉ là suy giảm tạm thời (session vẫn còn, request kế tiếp có kết nối
+    mới sẽ đăng nhập lại bình thường), không phải lỗ hổng bảo mật (KHÔNG cấp quyền gì)."""
     if "current_user" in g:
         return g.current_user  # type: ignore[no-any-return]
 
@@ -62,9 +73,14 @@ def get_current_user() -> dict[str, Any] | None:
         g.current_user = None
         return None
 
-    row = execute_one(
-        "SELECT id, username, full_name, role FROM users WHERE id = ?", (user_id,)
-    )
+    try:
+        row = execute_one(
+            "SELECT id, username, full_name, role FROM users WHERE id = ?", (user_id,)
+        )
+    except DatabaseError:
+        current_app.logger.exception("get_current_user(): loi DB, coi nhu chua dang nhap cho request nay")
+        g.current_user = None
+        return None
     g.current_user = dict(row) if row else None
     return g.current_user
 

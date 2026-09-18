@@ -213,6 +213,29 @@ def close_db(_exc: BaseException | None = None) -> None:
         db.close()
 
 
+def _discard_broken_connection() -> None:
+    """Bỏ (best-effort close) connection Postgres đang cache trong `g.db` sau khi phát
+    hiện nó đã hỏng (`OperationalError`/`InterfaceError` — vd Supabase pooler tự đóng 1
+    connection đang mở do idle timeout/quá tải). Lần `get_db()` tiếp theo TRONG CÙNG
+    request sẽ mở lại 1 connection MỚI thay vì tiếp tục dùng connection đã chết.
+
+    **Bug thật đã gặp trên production** (Vercel + Supabase): 1 request gặp
+    `OperationalError: SSL connection has been closed unexpectedly` ngay ở lệnh SELECT
+    đầu tiên (`get_current_user()`) — Flask bắt exception, cố render `errors/500.html`,
+    nhưng template đó lại chạy `context_processor` (`inject_nav_menu`) gọi
+    `get_current_user()` LẦN NỮA, DÙNG LẠI đúng `g.db` đã hỏng -> `InterfaceError:
+    connection already closed` -> trang lỗi thân thiện 500 KHÔNG BAO GIỜ render được,
+    người dùng thấy lỗi thô của server thay vì trang lỗi tử tế. Gọi hàm này ngay khi phát
+    hiện lỗi kết nối để các lệnh ĐỌC tiếp theo trong CÙNG request (kể cả từ template lỗi)
+    có cơ hội tự phục hồi bằng connection mới, xem `execute_query()`/`execute_one()`."""
+    db = g.pop("db", None)
+    if db is not None:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 def get_raw_connection(db_path: Path, pragmas: dict[str, str] | None = None) -> sqlite3.Connection:
     """
     Mở một connection SQLite độc lập, KHÔNG phụ thuộc Flask app context.
@@ -239,21 +262,55 @@ def get_raw_connection_for_app(app: Flask) -> Any:
 
 
 def execute_query(sql: str, params: Sequence[Any] = ()) -> list[Any]:
-    """Thực thi câu SELECT và trả về toàn bộ kết quả (list các row dict-like)."""
-    db = get_db()
-    cur = db.execute(sql, params)
-    rows = cur.fetchall()
-    cur.close()
-    return rows
+    """Thực thi câu SELECT và trả về toàn bộ kết quả (list các row dict-like).
+
+    Trên Postgres, nếu connection đã cache trong `g.db` bị đứt giữa chừng
+    (`OperationalError`/`InterfaceError` — xem `_discard_broken_connection()`), tự mở lại
+    connection MỚI và thử lại ĐÚNG 1 LẦN trước khi để lỗi lan ra ngoài. An toàn để retry vì
+    đây LUÔN LUÔN là câu SELECT thuần (không có side-effect nào bị lặp lại/mất mát)."""
+    try:
+        db = get_db()
+        cur = db.execute(sql, params)
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    except DatabaseError:
+        if get_dialect() != "postgres":
+            raise
+        _discard_broken_connection()
+        try:
+            db = get_db()
+            cur = db.execute(sql, params)
+            rows = cur.fetchall()
+            cur.close()
+            return rows
+        except DatabaseError:
+            _discard_broken_connection()
+            raise
 
 
 def execute_one(sql: str, params: Sequence[Any] = ()) -> Any:
-    """Thực thi câu SELECT và trả về một dòng duy nhất (hoặc None)."""
-    db = get_db()
-    cur = db.execute(sql, params)
-    row = cur.fetchone()
-    cur.close()
-    return row
+    """Thực thi câu SELECT và trả về một dòng duy nhất (hoặc None) — cùng cơ chế tự thử
+    lại 1 lần khi connection Postgres bị đứt giữa chừng như `execute_query()`."""
+    try:
+        db = get_db()
+        cur = db.execute(sql, params)
+        row = cur.fetchone()
+        cur.close()
+        return row
+    except DatabaseError:
+        if get_dialect() != "postgres":
+            raise
+        _discard_broken_connection()
+        try:
+            db = get_db()
+            cur = db.execute(sql, params)
+            row = cur.fetchone()
+            cur.close()
+            return row
+        except DatabaseError:
+            _discard_broken_connection()
+            raise
 
 
 def execute_write(sql: str, params: Sequence[Any] = ()) -> int:
