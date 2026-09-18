@@ -32,9 +32,12 @@
 </div></section>
 <div id="matrix-coverage-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
 <div id="matrix-kpis" class="d-flex flex-wrap mb-3" style="gap:12px"></div>
-<div class="Box p-3" style="overflow-x:auto"><table class="preview-table matrix-table" id="matrix-table"><thead><tr id="matrix-head"><th>Machine</th><th>MC brand</th><th>Tank</th><th>MC quantity</th><th>Tube no</th><th>Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th></tr></thead><tbody></tbody></table></div>
+<div class="Box p-3" style="overflow-x:auto">
+    <div class="d-flex flex-justify-end mb-2"><button id="toggle-mc-columns" class="btn btn-sm" type="button">Hide machine settings columns</button></div>
+    <table class="preview-table matrix-table" id="matrix-table"><thead><tr id="matrix-head"><th>Machine</th><th class="mc-config-col">MC brand</th><th class="mc-config-col">Tank</th><th class="mc-config-col">MC quantity</th><th class="mc-config-col">Tube no</th><th class="mc-config-col">Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th></tr></thead><tbody></tbody></table>
+</div>
 <div class="Box p-3 mt-3" style="overflow-x:auto"><h3 class="mt-0">Normal Dyeing Batches by Colour (per day)</h3><table class="preview-table matrix-table" id="color-summary-table"><thead><tr id="color-summary-head"></tr></thead><tbody></tbody></table></div>
-<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}</style>
+<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}</style>
 <script>
     window.REPORTS_CAN_EDIT_MACHINES = {{ "true" if current_user_can('dyeing', 'reports', 'edit') else "false" }};
     window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE = "{{ url_for('dyeing.reports.api_update_machine', machine_code='__MACHINE__') }}";
@@ -60,8 +63,8 @@
     function machineUpdateUrl(code) { return window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE.replace("__MACHINE__", encodeURIComponent(code)); }
     function renderMachineCell(row, field, rawValue) {
         const displayValue = rawValue === null || rawValue === undefined || rawValue === "" ? "-" : rawValue;
-        if (!window.REPORTS_CAN_EDIT_MACHINES || !row.machine_code) return `<td>${displayValue}</td>`;
-        return `<td><span class="case-note-cell" data-machine="${row.machine_code}" data-field="${field}">${displayValue}</span></td>`;
+        if (!window.REPORTS_CAN_EDIT_MACHINES || !row.machine_code) return `<td class="mc-config-col">${displayValue}</td>`;
+        return `<td class="mc-config-col"><span class="case-note-cell" data-machine="${row.machine_code}" data-field="${field}">${displayValue}</span></td>`;
     }
     function buildMachineCellSpan(machine, field, value) {
         const span = document.createElement("span");
@@ -89,26 +92,33 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ [field]: value }),
-        }).then((response) => {
-            if (!response.ok) throw new Error("save failed");
-            return response.json();
-        }).then(() => {
+        }).then((response) => response.json().catch(() => ({})).then((data) => {
+            if (!response.ok) throw new Error(data.error || "save failed");
+            inputEl.replaceWith(buildMachineCellSpan(machine, field, value));
             showToast(`${MACHINE_FIELD_LABELS[field]} saved.`, "success");
-            load();
-        }).catch(() => {
+            // CHỈ Capacity ảnh hưởng tới số liệu tính toán khác của báo cáo (Cleaning MC
+            // Ratio, danh sách filter Capacity — xem `get_cleaning_matrix()`), nên CHỈ field
+            // này mới cần load lại dữ liệu. MC brand/Tank/MC quantity/Tube no THUẦN mô tả,
+            // không ảnh hưởng phép tính nào khác -> cập nhật ngay tại ô (trên), không load
+            // lại cả bảng (tránh xoá mất ô khác đang gõ dở — bug đã sửa, xem
+            // `reloadPreservingOpenEdits()`).
+            if (field === "capacity_kg") reloadPreservingOpenEdits();
+        })).catch((err) => {
             inputEl.replaceWith(buildMachineCellSpan(machine, field, rawValue));
-            showToast(`Failed to save ${MACHINE_FIELD_LABELS[field]}.`, "error");
+            showToast(err && err.message ? err.message : `Failed to save ${MACHINE_FIELD_LABELS[field]}.`, "error");
         });
     }
-    function startEditingMachineCell(cell) {
+    function startEditingMachineCell(cell, overrideValue) {
         const machine = cell.dataset.machine;
         const field = cell.dataset.field;
         const currentText = cell.textContent.trim();
-        const currentValue = currentText === "-" ? "" : currentText;
+        const currentValue = overrideValue !== undefined ? overrideValue : (currentText === "-" ? "" : currentText);
         const input = document.createElement("input");
         input.type = (field === "mc_quantity" || field === "tube_no" || field === "capacity_kg") ? "number" : "text";
         if (field === "capacity_kg") input.step = "0.1";
         input.className = "case-note-input";
+        input.dataset.machine = machine;
+        input.dataset.field = field;
         input.value = currentValue;
         cell.replaceWith(input);
         input.focus();
@@ -121,6 +131,20 @@
             if (event.key === "Enter") { event.preventDefault(); input.blur(); }
             if (event.key === "Escape") { event.preventDefault(); cancel(); }
         });
+    }
+    // Reload lại dữ liệu (cần cho Capacity, xem `saveMachineField()`) nhưng KHÔNG xoá mất
+    // ô nào đang được gõ dở ở chỗ khác trên bảng: chụp lại danh sách (machine, field, giá
+    // trị đang gõ) TRƯỚC khi gọi load(), rồi mở lại ĐÚNG các ô đó với ĐÚNG giá trị dở dang
+    // sau khi bảng render xong (thay vì mất trắng như hành vi cũ — `load()` từng thay
+    // nguyên `innerHTML` của tbody, xoá luôn mọi <input> đang mở).
+    function reloadPreservingOpenEdits() {
+        const drafts = [];
+        document.querySelectorAll("#matrix-table tbody input.case-note-input").forEach((input) => {
+            if (input.dataset.machine && input.dataset.field) {
+                drafts.push({ machine: input.dataset.machine, field: input.dataset.field, value: input.value });
+            }
+        });
+        load(drafts);
     }
     document.querySelector("#matrix-table tbody").addEventListener("click", (event) => {
         const cell = event.target.closest(".case-note-cell");
@@ -190,7 +214,7 @@
     const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", [], load);
     const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", [], load);
 
-    function load() {
+    function load(preserveDrafts) {
         const params = new URLSearchParams({ from_date: document.getElementById("matrix-from").value, to_date: document.getElementById("matrix-to").value });
         capacityFilter.selected().forEach((value) => params.append("capacity", value));
         fabricTypeFilter.selected().forEach((value) => params.append("fabric_type", value));
@@ -200,6 +224,13 @@
             capacityFilter.setOptions((data.available_capacities || []).map(String));
             fabricTypeFilter.setOptions(data.available_fabric_types || []);
             brandProgramFilter.setOptions(data.available_brand_programs || []);
+            (preserveDrafts || []).forEach((draft) => {
+                document.querySelectorAll("#matrix-table tbody .case-note-cell").forEach((cell) => {
+                    if (cell.dataset.machine === draft.machine && cell.dataset.field === draft.field) {
+                        startEditingMachineCell(cell, draft.value);
+                    }
+                });
+            });
         });
     }
     function renderCoverageWarning(coverage) {
@@ -226,13 +257,38 @@
         const totalRow = `<tr class="total-row"><th>Total</th>${dayTotals.map((count) => `<td><strong>${count}</strong></td>`).join("")}<td><strong>${grandTotal}</strong></td></tr>`;
         body.innerHTML = rowsHtml + totalRow;
     }
-    function render(data) { renderCoverageWarning(data.color_data_coverage); renderColorSummary(data); document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join(""); const head = document.getElementById("matrix-head"); head.innerHTML = "<th>Machine</th><th>MC brand</th><th>Tank</th><th>MC quantity</th><th>Tube no</th><th>Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join(""); document.querySelector("#matrix-table tbody").innerHTML = data.matrix.map((row) => `<tr><td>${row.machine_code || "-"}</td>${renderMachineCell(row, "mc_brand", row.mc_brand)}${renderMachineCell(row, "tank_type", row.tank_type)}${renderMachineCell(row, "mc_quantity", row.mc_quantity)}${renderMachineCell(row, "tube_no", row.tube_no)}${renderMachineCell(row, "capacity_kg", row.capacity)}<td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${data.time_labels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${batch.color_code_display}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}${batch.brand_program ? ` | ${batch.brand} - ${batch.brand_program}` : ""}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`).join(""); }
+    function render(data) { renderCoverageWarning(data.color_data_coverage); renderColorSummary(data); document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join(""); const head = document.getElementById("matrix-head"); head.innerHTML = "<th>Machine</th><th class=\"mc-config-col\">MC brand</th><th class=\"mc-config-col\">Tank</th><th class=\"mc-config-col\">MC quantity</th><th class=\"mc-config-col\">Tube no</th><th class=\"mc-config-col\">Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join(""); document.querySelector("#matrix-table tbody").innerHTML = data.matrix.map((row) => `<tr><td>${row.machine_code || "-"}</td>${renderMachineCell(row, "mc_brand", row.mc_brand)}${renderMachineCell(row, "tank_type", row.tank_type)}${renderMachineCell(row, "mc_quantity", row.mc_quantity)}${renderMachineCell(row, "tube_no", row.tube_no)}${renderMachineCell(row, "capacity_kg", row.capacity)}<td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${data.time_labels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${batch.color_code_display}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}${batch.brand_program ? ` | ${batch.brand} - ${batch.brand_program}` : ""}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`).join(""); }
     function pad2(value) { return String(value).padStart(2, "0"); }
     function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
     const today = new Date();
     document.getElementById("matrix-from").value = formatDate(new Date(today.getFullYear(), today.getMonth(), 1));
     document.getElementById("matrix-to").value = formatDate(today);
     document.getElementById("matrix-load").addEventListener("click", load); load();
+
+    // Thu gọn/mở rộng tuỳ ý 5 cột cấu hình máy (MC brand/Tank/MC quantity/Tube no/
+    // Capacity) — bảng có thêm rất nhiều cột ngày bên phải, thu gọn nhóm cột này giúp
+    // đỡ phải cuộn ngang khi không cần sửa cấu hình máy. Trạng thái lưu localStorage
+    // (tiện ích hiển thị riêng của trình duyệt, không phải dữ liệu nghiệp vụ nên không
+    // cần lưu server) — bọc try/catch vì localStorage có thể bị chặn (private window...).
+    const MC_COLUMNS_COLLAPSED_KEY = "reports.cleaningMatrix.mcColumnsCollapsed";
+    function readMcColumnsCollapsed() {
+        try { return localStorage.getItem(MC_COLUMNS_COLLAPSED_KEY) === "1"; } catch (err) { return false; }
+    }
+    function writeMcColumnsCollapsed(collapsed) {
+        try { localStorage.setItem(MC_COLUMNS_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch (err) { /* ignore */ }
+    }
+    const matrixTableEl = document.getElementById("matrix-table");
+    const toggleMcColumnsBtn = document.getElementById("toggle-mc-columns");
+    function applyMcColumnsCollapsed(collapsed) {
+        matrixTableEl.classList.toggle("mc-columns-collapsed", collapsed);
+        toggleMcColumnsBtn.textContent = collapsed ? "Show machine settings columns" : "Hide machine settings columns";
+    }
+    applyMcColumnsCollapsed(readMcColumnsCollapsed());
+    toggleMcColumnsBtn.addEventListener("click", () => {
+        const collapsed = !matrixTableEl.classList.contains("mc-columns-collapsed");
+        applyMcColumnsCollapsed(collapsed);
+        writeMcColumnsCollapsed(collapsed);
+    });
 }());
 </script>
 {% endblock %}

@@ -480,10 +480,21 @@ def list_machine_configs() -> list[dict[str, Any]]:
 
 
 def upsert_machine_config(machine_code: str, fields: Mapping[str, Any]) -> dict[str, Any]:
-    """UPSERT 1 dòng `machines` theo mã máy (khớp `machine_id`/`machine_code` — bảng này
-    hiện rỗng hoàn toàn nên không có rủi ro đụng dữ liệu cũ). Chỉ ghi đè các field THỰC SỰ
-    có trong `fields` (partial update — cho phép sửa từng ô một, giống pattern Case Notes/
-    Target đã có ở Engine downtime)."""
+    """UPSERT 1 dòng `machines` theo mã máy (khớp `machine_id` — bảng này hiện rỗng hoàn
+    toàn nên không có rủi ro đụng dữ liệu cũ). Chỉ ghi đè các field THỰC SỰ có trong
+    `fields` (partial update — cho phép sửa từng ô một, giống pattern Case Notes đã có ở
+    Engine downtime).
+
+    Dùng 1 câu `INSERT ... ON CONFLICT(machine_id) DO UPDATE` NGUYÊN TỬ — KHÔNG phải
+    "SELECT xem đã có chưa, rồi INSERT hoặc UPDATE" ở 2 câu SQL riêng biệt như bản cũ.
+    **Bug thật đã phát hiện** (người dùng report "lưu lúc được lúc không"): vì `machines`
+    mặc định RỖNG, mọi máy CHƯA từng sửa lần nào đều rơi vào nhánh INSERT ở LẦN SỬA ĐẦU
+    TIÊN. Sửa liên tiếp nhiều field của CÙNG 1 máy (VD Tab qua MC brand -> Tank -> Qty)
+    bắn nhiều request gần như đồng thời — 2 request có thể CÙNG chạy xong bước SELECT
+    trước khi request nào kịp COMMIT INSERT, cả 2 CÙNG thấy "chưa có dòng" -> cả 2 CÙNG
+    INSERT -> request thua vi phạm `machine_id TEXT NOT NULL UNIQUE` (`init_db.py`) ->
+    lỗi 400. UPSERT nguyên tử loại bỏ hẳn khoảng hở race này (cùng nguyên tắc với
+    `upsert_case_note()` ở `downtime/service.py`)."""
     machine_code = machine_code.strip()
     if not machine_code:
         raise ValueError("Machine code không được rỗng.")
@@ -494,20 +505,16 @@ def upsert_machine_config(machine_code: str, fields: Mapping[str, Any]) -> dict[
 
     conn = get_db()
     _ensure_batch_details_columns(conn)
-    existing = conn.execute(
-        "SELECT id FROM machines WHERE lower(trim(COALESCE(machine_code, machine_id))) = lower(trim(?))",
-        (machine_code,),
-    ).fetchone()
-    if existing:
-        set_clause = ", ".join(f"{key} = ?" for key in updates)
-        conn.execute(f"UPDATE machines SET {set_clause} WHERE id = ?", (*updates.values(), existing["id"]))
-    else:
-        columns = ["machine_id", "machine_code", "machine_name", "domain", *updates.keys()]
-        placeholders = ",".join("?" for _ in columns)
-        conn.execute(
-            f"INSERT INTO machines ({','.join(columns)}) VALUES ({placeholders})",
-            (machine_code, machine_code, machine_code, "dyeing", *updates.values()),
-        )
+    columns = ["machine_id", "machine_code", "machine_name", "domain", *updates.keys()]
+    placeholders = ",".join("?" for _ in columns)
+    set_clause = ", ".join(f"{key} = excluded.{key}" for key in updates)
+    conn.execute(
+        f"""
+        INSERT INTO machines ({','.join(columns)}) VALUES ({placeholders})
+        ON CONFLICT (machine_id) DO UPDATE SET {set_clause}
+        """,
+        (machine_code, machine_code, machine_code, "dyeing", *updates.values()),
+    )
     conn.commit()
 
     affected_dates_rows = conn.execute(
