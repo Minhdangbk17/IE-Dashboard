@@ -164,7 +164,7 @@ def _empty_pivot(category: str, group_by: str) -> dict[str, Any]:
         "periods": [], "period_keys": [],
         "rows": [{"label": category, "values": [], "total": 0}],
         "total_row": [],
-        "chart": {"categories": [], "values": []},
+        "chart": {"categories": [], "values": [], "rate_values": []},
         "kpis": {"total_batches": 0, "category_batches": 0, "rate_pct": 0.0},
         "available_fabric_types": [], "available_brand_programs": [],
     }
@@ -220,6 +220,14 @@ def get_rft_pivot_data(
     labels = [value["label"] for _, value in ordered]
     period_keys = [key for key, _ in ordered]
     values = [value["count"] for _, value in ordered]
+    # Rate % THEO TỪNG KỲ (không phải chỉ tổng cả khoảng) — dùng cho widget dạng
+    # trend-line (VD Dyeing Hub Dashboard), khác `kpis.rate_pct` vốn chỉ tính 1 số
+    # tổng hợp cho CẢ khoảng ngày đã lọc. Chia theo đúng số mẻ CỦA KỲ ĐÓ (không phải
+    # `total_batches` toàn khoảng) để không bị lệch nếu số mẻ/kỳ không đều nhau.
+    rate_values = [
+        round(value["count"] / len(value["batches"]) * 100, 1) if value["batches"] else 0.0
+        for _, value in ordered
+    ]
     category_batches = sum(values)
 
     return {
@@ -231,7 +239,7 @@ def get_rft_pivot_data(
         "periods": labels, "period_keys": period_keys,
         "rows": [{"label": category, "values": values, "total": category_batches}],
         "total_row": values,
-        "chart": {"categories": labels, "values": values},
+        "chart": {"categories": labels, "values": values, "rate_values": rate_values},
         "kpis": {
             "total_batches": len(total_batches),
             "category_batches": category_batches,

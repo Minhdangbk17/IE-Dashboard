@@ -754,6 +754,24 @@
       `tank_loading/service.py` (KHÔNG import cross-engine từ `batch_matrix`)
       để giữ đúng Vertical Slice Architecture, dù giá trị giống hệt. Chi tiết
       đầy đủ + toàn bộ verify ở `activeContext.md` mục -14.
+- [x] **Viết lại Dyeing Hub (`/dyeing/`) thành 1 Dashboard tổng 8 widget biểu đồ**
+      (thay hoàn toàn 3 widget dạng bảng cũ) — Batch/Day (3 đường Cotton/CVC/
+      Polyester gộp 1 chart), gauge OEE nửa hình tròn có kim chỉ (tự viết bằng
+      Chart.js, không thêm thư viện ngoài), số % Downtime tháng hiện tại,
+      %Tank Loading (3 đường gộp 1 chart), 4 mini chart trend Rate% RFT (Lab
+      to Lab/Lab to Bulk/Bulk to Bulk/2nd Batch). KHÔNG thêm route mới nào
+      (trừ field `chart.rate_values` bổ sung cho RFT) — tái dùng nguyên các
+      API JSON đã có sẵn của từng Engine. Khoảng ngày tự tính (từ 15 lấy
+      tháng hiện tại tới hôm nay, trước 15 lấy trọn tháng trước) + filter
+      Capacity >= 500Kg cố định, dùng chung cho mọi widget. Phát hiện + sửa 2
+      bug thật qua verify Playwright TRƯỚC khi báo hoàn thành (thiếu thẻ
+      script Chart.js trên trang Hub; CSS Grid thiếu `grid-auto-rows` khiến
+      canvas cao 0px trong container flex:1/auto-height) — cả 2 đều IM LẶNG
+      hoàn toàn (không lỗi console), chỉ phát hiện được nhờ NHÌN ảnh chụp
+      thật. RFT hiện đường phẳng 0% (đúng, vì `classify_rft_category()` chưa
+      có quy tắc phân loại thật). Chi tiết đầy đủ + toàn bộ verify (DB tạm
+      seed dữ liệu mẫu, Flask server thật, Playwright cả Light/Dark Mode) ở
+      `activeContext.md` mục -15.
 
 ## Backlog (Phase 2+)
 - [ ] **Quy tắc phân loại 6 nhóm của `rft`** (Lab to Lab/Lab to Bulk/Bulk to

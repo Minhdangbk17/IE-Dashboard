@@ -44,9 +44,16 @@ dưới. (7) **Tinh chỉnh UI**: đổi cả 2 báo cáo (5)+(6) từ "1 chart 
 màu khác nhau" sang "3 chart RIÊNG BIỆT đặt cạnh nhau" (trái=Cotton,
 giữa=CVC, phải=Polyester, theo yêu cầu người dùng) — mỗi chart giờ chỉ có 1
 đường số liệu + 1 đường Target của ĐÚNG loại đó, ẩn hẳn legend (không cần
-phân biệt màu nữa vì đã có tiêu đề riêng từng chart). Bản ghi trước đó
-(2026-09-18 sáng — bug Batch/Day Trend `recompute_all()`) giữ nguyên ở mục
--11.
+phân biệt màu nữa vì đã có tiêu đề riêng từng chart). (8) **Tính năng lớn**:
+viết lại HOÀN TOÀN trang "Dyeing Hub" (`/dyeing/`) từ 3 widget dạng bảng
+thành 1 Dashboard 8 ô biểu đồ (Batch/Day 3 đường gộp 1 chart, gauge OEE nửa
+hình tròn có kim chỉ, số % Downtime tháng hiện tại, %Tank Loading 3 đường
+gộp 1 chart, 4 mini chart trend Rate% của RFT: Lab to Lab/Lab to Bulk/Bulk
+to Bulk/2nd Batch) — TẤT CẢ dùng chung 1 khoảng ngày tự tính (từ ngày 15 lấy
+tháng hiện tại tới hôm nay, trước ngày 15 lấy TRỌN tháng trước) + filter
+Capacity >= 500Kg cố định — xem chi tiết đầy đủ ở mục -15 bên dưới. Bản ghi
+trước đó (2026-09-18 sáng — bug Batch/Day Trend `recompute_all()`) giữ
+nguyên ở mục -11.
 
 **Cập nhật lần cuối (bản ghi cũ):** 2026-09-17 — Thêm 2 filter mới (Fabric Type, Brand
 Program) vào TẤT CẢ 5 báo cáo của Dyeing Hub (Downtime, Batch/Day — cả 2 tab,
@@ -178,6 +185,96 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-15. **Viết lại Dyeing Hub thành Dashboard tổng 8 widget biểu đồ** (2026-09-18, theo yêu
+   cầu người dùng — hỏi rõ 1 câu về kiểu chart cho 4 widget RFT trước khi code: line chart
+   trend theo ngày, giống Batch/Day/Tank Loading, thay vì gauge như OEE).
+
+   **Bố cục** (`modules/dyeing/templates/dyeing_hub.html`, CSS Grid `.dash-grid`
+   3 cột, `grid-auto-rows: minmax(320px, auto)` — xem bài học ở mục "Bug thật" bên dưới):
+   Hàng 1 = Batch/Day (trái) / OEE gauge (giữa) / Downtime % (phải). Hàng 2 = %Tank
+   Loading + 4 mini-chart RFT (Lab to Lab, Lab to Bulk, Bulk to Bulk, 2nd Batch — ĐÚNG
+   thứ tự người dùng nêu, bỏ qua Rework/Adjust Color).
+
+   **KHÔNG thêm route mới nào** (trừ 1 field bổ sung) — Dashboard hoàn toàn tái dùng các
+   API JSON đã có sẵn của từng Engine (`batch_matrix.api_batch_day_trend`,
+   `oee.api_calculate`, `downtime.api_summary`, `tank_loading.api_summary`,
+   `rft.api_summary`), gọi song song bằng `Promise.all()` từ `dyeing_hub.js` — ĐÚNG kiến
+   trúc widget cũ (fetch async độc lập từng Engine), chỉ đổi CÁCH RENDER (chart thay vì
+   bảng) và THÊM tham số ngày/capacity dùng chung.
+
+   **Quy tắc khoảng ngày** (tính ở `dyeing_hub.js::dashboardWindow()`, client-side, không
+   cần route mới): `today.getDate() >= 15` → từ ngày 1 tháng hiện tại tới hôm nay
+   (month-to-date); ngược lại → TRỌN tháng trước (`new Date(year, month, 0)` = ngày cuối
+   tháng trước, cách lấy "ngày 0" kinh điển trong JS Date). Filter Capacity CỐ ĐỊNH
+   `"500,600,1200,2400"` — CHÍNH LÀ tập giá trị Capacity >= 500Kg thật có trong dữ liệu
+   (7 mức toàn hệ thống: 25/50/300/500/600/1200/2400), TRÙNG với default đã dùng sẵn ở
+   Downtime/Batch Matrix/RFT/Tank Loading — không phải danh sách suy đoán riêng.
+
+   **Batch/Day + %Tank Loading trên Dashboard**: GỘP LẠI thành 1 chart/3 đường màu khác
+   nhau (KHÁC trang report riêng của 2 báo cáo này — đã tách thành 3 chart cạnh nhau ở
+   mục -13/-14 theo yêu cầu TRƯỚC — ở đây là widget tóm tắt trên Hub nên gộp lại cho gọn
+   không gian, đúng yêu cầu người dùng lần này "biểu đồ gồm 3 đường").
+
+   **RFT — thêm field mới `chart.rate_values`** (`modules/dyeing/engines/rft/service.py::
+   get_rft_pivot_data()`): API cũ chỉ có `chart.values` (SỐ ĐẾM mẻ đã phân loại/kỳ, không
+   phải %) và `kpis.rate_pct` (1 số % duy nhất cho CẢ khoảng ngày, không theo từng kỳ) —
+   không đủ để vẽ 1 đường trend Rate% theo ngày. Thêm `rate_values` = tính riêng
+   `count/len(batches)*100` cho TỪNG kỳ (không dùng `total_batches` toàn khoảng, tránh
+   lệch nếu số mẻ/kỳ không đều) — bổ sung THUẦN TUÝ (field mới, không đổi/xoá field cũ),
+   trang report RFT gốc (`rft_view.html`/`rft.js`) không bị ảnh hưởng gì. **Lưu ý quan
+   trọng đã biết trước**: `classify_rft_category()` LUÔN trả `None` (chưa có quy tắc phân
+   loại thật, xem mục "Đang làm" phần RFT phía trên) — 4 chart RFT trên Dashboard sẽ HIỆN
+   ĐƯỜNG PHẲNG 0% cho tới khi có quy tắc, đây là HÀNH VI ĐÚNG chứ không phải bug Dashboard.
+
+   **OEE gauge — nửa hình tròn + kim chỉ, tự viết bằng Chart.js (KHÔNG thêm thư viện
+   ngoài)**: dùng chart `type: "doughnut"` với `rotation: -90, circumference: 180,
+   cutout: "72%"` (công thức "rainbow gauge" kinh điển — tâm vòng cung rơi vào CẠNH DƯỚI
+   `chartArea`, không phải giữa). Kim chỉ vẽ bằng 1 Chart.js plugin tự viết
+   (`gaugeNeedlePlugin`, đăng ký namespace riêng `options.plugins.gaugeNeedle` — ĐÚNG API
+   plugin chuẩn Chart.js v4, không đụng state nội bộ của Chart instance). Góc kim quét
+   TUYẾN TÍNH 180°(trái,0%) -> 270°(thẳng đứng,50%) -> 360°/0°(phải,100%). Giá trị lấy từ
+   `oee.api_calculate?days=<độ dài khoảng ngày Dashboard>` — **CHÚ THÍCH RÕ "Definition
+   pending"** dưới gauge vì người dùng xác nhận "OEE sẽ định nghĩa sau"; giá trị hiện tại
+   chỉ là kết quả công thức CŨ (`Availability x Performance x Quality`, Quality giả định
+   100%) đọc từ `machine_telemetry` — bảng này KHÔNG có khái niệm Capacity nên KHÔNG áp
+   được filter Capacity >= 500Kg của Dashboard (giữ nguyên hạn chế đã biết, chờ định nghĩa
+   OEE mới).
+
+   **BUG THẬT tự phát hiện + sửa qua Playwright TRƯỚC KHI báo hoàn thành** (không phải
+   người dùng report — quy trình bắt buộc "test UI trong browser trước khi báo xong" đã
+   bắt được 2 lỗi): (1) **Quên thêm `<script src=".../chart.js@4.4.4/...">` vào
+   `dyeing_hub.html`** — trang Hub trước giờ CHƯA BAO GIỜ dùng Chart.js (chỉ có bảng), nên
+   không có sẵn thẻ script như các trang report khác — mọi hàm vẽ chart return sớm ở
+   `typeof Chart === "undefined"`, khiến TOÀN BỘ 6 canvas trống trơn và gauge OEE không
+   bao giờ cập nhật giá trị (kẹt ở "--%") — im lặng, KHÔNG lỗi console. (2) **CSS Grid +
+   flex:1 trong container auto-height = canvas cao 0px**: `.dash-grid` (CSS Grid) không
+   có `grid-auto-rows` cố định, nên chiều cao mỗi hàng grid = "auto" (theo nội dung) —
+   `.dash-chart-wrap{flex:1}` bên trong `.widget-card{display:flex;flex-direction:column}`
+   không có "khoảng trống còn lại" nào để giãn ra (vòng lặp phụ thuộc kinh điển của
+   flexbox trong container auto-height), canvas render với chiều cao 0. Sửa bằng thêm
+   `grid-auto-rows: minmax(320px, auto)` vào `.dash-grid` — cho mỗi hàng 1 chiều cao TỐI
+   THIỂU cụ thể, phá vòng lặp phụ thuộc. **Bài học quy trình**: cả 2 lỗi này hoàn toàn IM
+   LẶNG (không throw exception, không lỗi console) — chỉ phát hiện được nhờ chụp ảnh
+   THẬT qua Playwright rồi NHÌN vào ảnh, không thể phát hiện chỉ bằng cách đọc code hay
+   kiểm tra response API trả JSON đúng (JSON data hoàn toàn đúng, lỗi nằm 100% ở tầng
+   render phía trình duyệt).
+
+   **Verify đầy đủ**: sau khi sửa 2 bug trên, dựng lại DB SQLite tạm (copy từ DB dev,
+   KHÔNG đụng file thật — đã xác nhận `availability_logs`/`performance_logs` DB dev thật
+   vẫn nguyên 0 dòng sau khi verify xong) và chèn dữ liệu mẫu Cotton/CVC/Polyester trải
+   14 ngày, chạy `flask rebuild-summaries`, khởi động server THẬT (port riêng, tránh đúng
+   1 sự cố môi trường Windows đã gặp: nhiều tiến trình `python app.py` cũ từ các lần verify
+   trước ĐỀU bind thành công vào cùng port 5000 — khác POSIX, Windows cho phép nhiều
+   socket cùng LISTEN 1 port do ngữ nghĩa `SO_REUSEADDR` lỏng hơn — khiến request bị route
+   nhầm vào server cũ trỏ DB rỗng, dễ nhầm tưởng là bug code; đã dọn sạch toàn bộ tiến
+   trình `python.exe` cũ trước khi verify lại). Chụp ảnh Playwright CẢ Light lẫn Dark Mode
+   (đúng nút toggle `.theme-toggle-btn` thật, không phải suy đoán) — xác nhận: 2 chart 3
+   đường Cotton/CVC/Polyester vẽ đúng, gauge OEE vẽ đúng vị trí kim + đổi màu theo ngưỡng
+   (67.4% ra màu vàng), 4 chart RFT hiện đúng đường phẳng 0% (đúng hành vi đã biết trước),
+   không có lỗi console nào, cả 2 theme đều đọc đúng token màu (`--text-primary` cho kim
+   chỉ, `--text-secondary` cho trục). Re-run `tests/test_permission_model.py` — PASS
+   100%, không regression.
+
 -14. **Báo cáo "%Tank Loading" — áp dụng LẠI đúng pattern "3 loại vải cố định + Target +
    đường nét đứt" vừa làm cho Batch/Day Trend (mục -13)** (2026-09-18, theo yêu cầu người
    dùng).

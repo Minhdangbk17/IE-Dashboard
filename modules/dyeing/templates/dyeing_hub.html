@@ -1,5 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Dyeing Hub{% endblock %}
+{% block extra_head %}<style>
+    .dash-grid { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); grid-auto-rows: minmax(320px, auto); gap: 16px; }
+    .dash-grid .widget-card { margin-bottom: 0; display: flex; flex-direction: column; }
+    .dash-chart-wrap { position: relative; flex: 1; min-height: 180px; }
+    .dash-gauge-wrap { position: relative; height: 180px; }
+    .dash-gauge-value { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-family: var(--font-display); font-size: 26px; font-weight: 700; }
+    .dash-stat-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+    .dash-stat-wrap .stat-value { font-size: 48px; }
+    @media (max-width: 900px) { .dash-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); } }
+    @media (max-width: 600px) { .dash-grid { grid-template-columns: 1fr; } }
+</style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-4">
     <div>
@@ -14,47 +25,67 @@
     {% endif %}
 </div>
 
-<!-- ============ WIDGETS (nạp song song bằng fetch async) ============ -->
-<div id="hub-widgets" class="d-flex flex-wrap" style="gap:16px;"
-     data-oee-url="{{ url_for('dyeing.oee.api_calculate') }}"
+<!-- ============ DASHBOARD (nạp song song bằng fetch async) ============ -->
+<!-- Khoảng ngày: từ 15 trở đi trong tháng lấy tháng hiện tại (đầu tháng -> hôm nay); trước
+     ngày 15 lấy TRỌN tháng trước (tính ở dyeing_hub.js::dashboardWindow()). Capacity luôn
+     lọc >= 500Kg (500/600/1200/2400 — đúng tập giá trị Capacity thật >= 500 trong dữ liệu). -->
+<div id="hub-dashboard" class="dash-grid mb-4"
+    data-batch-day-trend-url="{{ url_for('dyeing.batch_matrix.api_batch_day_trend') }}"
+    data-oee-url="{{ url_for('dyeing.oee.api_calculate') }}"
     data-downtime-url="{{ url_for('dyeing.downtime.api_summary') }}"
-    data-batch-matrix-url="{{ url_for('dyeing.batch_matrix.api_matrix') }}">
+    data-tank-loading-url="{{ url_for('dyeing.tank_loading.api_summary') }}"
+    data-rft-url="{{ url_for('dyeing.rft.api_summary') }}">
 
-    <div class="widget-card" style="flex:1; min-width:280px;">
-        <h3>Average OEE (7 days)</h3>
-        <div class="stat-value" id="oee-value">--</div>
-        <div style="overflow-x:auto;">
-            <table class="preview-table mt-2" id="oee-table">
-                <thead><tr><th>Machine</th><th>OEE</th></tr></thead>
-                <tbody><tr><td colspan="2" class="color-fg-muted">Loading...</td></tr></tbody>
-            </table>
-        </div>
+    <div class="widget-card">
+        <h3>Batch/Day</h3>
+        <div class="dash-chart-wrap"><canvas id="dash-batch-day-chart" aria-label="Batch/Day — Cotton, CVC, Polyester"></canvas></div>
+        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.batch_matrix.view') }}">View details &rarr;</a>
+    </div>
+
+    <div class="widget-card">
+        <h3>OEE</h3>
+        <div class="dash-gauge-wrap"><canvas id="dash-oee-gauge" aria-label="OEE gauge"></canvas><div class="dash-gauge-value" id="dash-oee-value">--%</div></div>
+        <span class="f6 color-fg-muted" style="text-align:center;display:block;">Definition pending</span>
         <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.oee.view') }}">View details &rarr;</a>
     </div>
 
-    <div class="widget-card" style="flex:1; min-width:280px;">
-        <h3>Top Downtime Reasons (7 days)</h3>
-        <div class="stat-value" id="downtime-total">-- min</div>
-        <div style="overflow-x:auto;">
-            <table class="preview-table mt-2" id="downtime-table">
-                <thead><tr><th>Reason</th><th>Minutes</th></tr></thead>
-                <tbody><tr><td colspan="2" class="color-fg-muted">Loading...</td></tr></tbody>
-            </table>
+    <div class="widget-card">
+        <h3>Downtime %</h3>
+        <div class="dash-stat-wrap">
+            <div class="stat-value" id="dash-downtime-value">--%</div>
+            <span class="f6 color-fg-muted">current period</span>
         </div>
         <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.downtime.view') }}">View details &rarr;</a>
     </div>
 
-    <div class="widget-card" style="flex:1; min-width:280px;">
-        <h3>Batch/Day</h3>
-        <div class="stat-value" id="batch-matrix-value">--</div>
-        <span class="f6 color-fg-muted">batches/machine (Grand Total)</span>
-        <div style="overflow-x:auto;">
-            <table class="preview-table mt-2" id="batch-matrix-table">
-                <thead><tr><th>Fabric Type</th><th>Total</th></tr></thead>
-                <tbody><tr><td colspan="2" class="color-fg-muted">Loading...</td></tr></tbody>
-            </table>
-        </div>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.batch_matrix.view') }}">View details &rarr;</a>
+    <div class="widget-card">
+        <h3>%Tank Loading</h3>
+        <div class="dash-chart-wrap"><canvas id="dash-tank-loading-chart" aria-label="Tank Loading — Cotton, CVC, Polyester"></canvas></div>
+        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.tank_loading.view') }}">View details &rarr;</a>
+    </div>
+
+    <div class="widget-card">
+        <h3>RFT — Lab to Lab</h3>
+        <div class="dash-chart-wrap"><canvas id="dash-rft-lab_to_lab" aria-label="RFT Lab to Lab rate trend"></canvas></div>
+        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
+    </div>
+
+    <div class="widget-card">
+        <h3>RFT — Lab to Bulk</h3>
+        <div class="dash-chart-wrap"><canvas id="dash-rft-lab_to_bulk" aria-label="RFT Lab to Bulk rate trend"></canvas></div>
+        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
+    </div>
+
+    <div class="widget-card">
+        <h3>RFT — Bulk to Bulk</h3>
+        <div class="dash-chart-wrap"><canvas id="dash-rft-bulk_to_bulk" aria-label="RFT Bulk to Bulk rate trend"></canvas></div>
+        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
+    </div>
+
+    <div class="widget-card">
+        <h3>RFT — 2nd Batch</h3>
+        <div class="dash-chart-wrap"><canvas id="dash-rft-second_batch" aria-label="RFT 2nd Batch rate trend"></canvas></div>
+        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
     </div>
 </div>
 
@@ -190,6 +221,7 @@
 </div>
 {% endif %}
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('dyeing.excel_import.static', filename='raw_data_drawer.js') }}"></script>
 <script src="{{ url_for('dyeing.excel_import.static', filename='import_handler.js') }}"></script>
 <script src="{{ url_for('dyeing.static', filename='dyeing_hub.js') }}"></script>
