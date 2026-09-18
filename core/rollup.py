@@ -25,19 +25,23 @@ from core.production_time import normalize_production_date, production_date_sql_
 
 
 def trigger_recompute(affected_dates: set[date]) -> None:
-    """Gọi `engine.recompute_daily(d, conn)` cho MỌI Engine đã auto-load (Engine nào
-    không override thì no-op mặc định) — với từng `production_date` trong `affected_dates`.
+    """Gọi `engine.recompute_all(affected_dates, conn)` cho MỌI Engine đã auto-load (Engine
+    nào không override thì mặc định lặp `recompute_daily()` từng ngày — xem
+    `core/engine_base.py::BaseEngine.recompute_all()`).
 
     Gọi ngay sau khi một lần import Excel commit thành công, chỉ truyền các
-    production_date thực sự bị ảnh hưởng bởi batch dữ liệu vừa import.
+    production_date thực sự bị ảnh hưởng bởi batch dữ liệu vừa import. Gọi
+    `recompute_all()` 1 LẦN cho CẢ TẬP `affected_dates` (thay vì lặp
+    `recompute_daily()` theo từng ngày rồi mới lặp Engine) để Engine nào có thuật toán tốn
+    kém khi lặp theo ngày (VD `batch_matrix.batch_day_trend`, carry-forward cần quét lại
+    lịch sử máy) có cơ hội tự tối ưu cho CẢ TẬP ngày cùng lúc.
     """
     if not affected_dates:
         return
     conn = get_db()
     engines = discover_engines()
-    for production_date in sorted(affected_dates):
-        for engine in engines:
-            engine.recompute_daily(production_date, conn)
+    for engine in engines:
+        engine.recompute_all(affected_dates, conn)
     conn.commit()
 
 

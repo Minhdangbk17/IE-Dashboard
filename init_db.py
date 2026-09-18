@@ -267,10 +267,12 @@ CREATE INDEX IF NOT EXISTS idx_performance_start_time ON performance_logs (start
 CREATE TABLE IF NOT EXISTS downtime_daily_summary (
     production_date TEXT NOT NULL,
     capacity_kg REAL NOT NULL,
+    fabric_type TEXT NOT NULL DEFAULT '',
+    brand_program TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL,
     hours REAL NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (production_date, capacity_kg, category)
+    PRIMARY KEY (production_date, capacity_kg, fabric_type, brand_program, category)
 );
 CREATE INDEX IF NOT EXISTS idx_downtime_daily_summary_date ON downtime_daily_summary (production_date);
 

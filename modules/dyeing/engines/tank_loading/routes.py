@@ -27,6 +27,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         try:
             data = service.get_tank_loading_pivot_data(
                 capacities=request.args.get("capacities") or None,
+                fabric_types=request.args.get("fabric_types") or None,
+                brand_programs=request.args.get("brand_programs") or None,
                 from_date=request.args.get("from_date") or None,
                 to_date=request.args.get("to_date") or None,
                 group_by=request.args.get("group_by", "date"),

@@ -15,7 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
+from typing import Any, Iterable
 
 from flask import Blueprint
 
@@ -77,6 +77,21 @@ class BaseEngine(ABC):
         `core/rollup.py::trigger_recompute()` gọi commit một lần cho cả batch xử lý.
         """
         return None
+
+    def recompute_all(self, dates: Iterable[date], conn: Any) -> None:
+        """Biến thể HÀNG LOẠT của `recompute_daily()` — gọi khi cần tính lại NHIỀU
+        `production_date` cùng lúc (`flask rebuild-summaries`, hoặc import ảnh hưởng nhiều
+        ngày). MẶC ĐỊNH: lặp gọi `recompute_daily()` cho từng ngày (giữ nguyên hành vi cũ,
+        ĐÚNG với mọi Engine mà việc tính 1 ngày không phụ thuộc dữ liệu của ngày khác).
+
+        OVERRIDE hàm này khi Engine có thuật toán mà gọi `recompute_daily()` LẶP LẠI cho N
+        ngày sẽ tính toán TRÙNG LẶP tốn kém (VD `batch_matrix.batch_day_trend`: carry-forward
+        cần quét lại TOÀN BỘ lịch sử của 1 máy — gọi theo từng ngày riêng lẻ sẽ fetch+sort lại
+        y hệt lịch sử đó N lần, cực chậm qua kết nối DB remote). Khi override, PHẢI cho ra
+        kết quả GIỐNG HỆT như gọi `recompute_daily()` cho từng ngày trong `dates` — chỉ khác
+        ở HIỆU NĂNG, không phải ở kết quả."""
+        for production_date in sorted(dates):
+            self.recompute_daily(production_date, conn)
 
     @property
     def blueprint(self) -> Blueprint:

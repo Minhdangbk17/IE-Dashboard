@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect, sql_datetime
 from core.production_time import normalize_production_date, production_date_sql_expr
 
@@ -44,6 +45,36 @@ ACHIEVEMENT_COLUMNS = {
     "pH Check": "ach_ph", "Chemical": "ach_chemical", "Color": "ach_color",
 }
 INVALID_FABRIC_TYPES = ("Unknow", "Unknown", "All", "")
+
+# Nhãn "Brand - Program" suy từ batch/dyelot -> greige_code -> brand_program_mapping (cùng
+# cơ chế `reports/cleaning_matrix.py`) — alias bpm/bpm_bd CỐ ĐỊNH dùng ở mọi hàm bên dưới.
+_BRAND_PROGRAM_LABEL_SQL = "CASE WHEN COALESCE(bpm.brand, '') <> '' AND COALESCE(bpm.brand_program, '') <> '' THEN bpm.brand || ' - ' || bpm.brand_program ELSE '' END"
+
+
+def _brand_program_join(batch_expr: str) -> str:
+    """LEFT JOIN batch_details + brand_program_mapping để suy Brand Program từ mã batch
+    (khoá batch -> dyelot -> greige_code -> brand_program). `batch_expr` là biểu thức SQL
+    đã alias trỏ đúng cột batch của `availability_logs` (vd `a."Batch"`)."""
+    return (
+        f'LEFT JOIN batch_details bpm_bd ON lower(trim(bpm_bd.dyelot)) = lower(trim({batch_expr})) '
+        "LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(bpm_bd.greige_code))"
+    )
+
+
+def _parse_text_filter(value: str | list[str] | None) -> list[str]:
+    """Parse fabric_types=/brand_programs= query param (CSV hoặc list) — rỗng/'ALL' nghĩa
+    là không lọc theo chiều đó, cùng quy ước với `_parse_capacities()`."""
+    if not value:
+        return []
+    values = value if isinstance(value, list) else str(value).split(",")
+    result: list[str] = []
+    for item in values:
+        text = str(item).strip()
+        if not text or text.upper() == "ALL":
+            return []
+        if text not in result:
+            result.append(text)
+    return result
 
 
 def _ensure_targets_table(conn: Any) -> None:
@@ -181,7 +212,7 @@ def _empty_result(group_by: str) -> dict[str, Any]:
     datasets_hours = {category: [] for category in CATEGORIES}
     datasets_hours["Total Rate"] = []
     return {
-        "filters": {"capacity": None, "from_date": None, "to_date": None, "group_by": group_by},
+        "filters": {"capacity": None, "fabric_types": [], "brand_programs": [], "from_date": None, "to_date": None, "group_by": group_by},
         "periods": [], "period_keys": [], "time_labels": [], "rows": rows, "rows_hours": rows, "total_row": [], "total_row_hours": [], "chart": {"categories": [], "series": []},
         "labels": [], "datasets": datasets, "datasets_hours": datasets_hours,
         "kpis": {"planned_hours": 0.0, "downtime_hours": 0.0, "downtime_rate_pct": 0.0, "valid_batches": 0, "achievement_rate_pct": 0.0},
@@ -198,19 +229,59 @@ def _ensure_summary_table(conn: Any) -> None:
     """Tự tạo bảng nếu chưa có — CHỈ chạy DDL này ở SQLite (cú pháp `datetime('now')` là
     SQLite-only). Ở Postgres, bảng đã được tạo trước qua `supabase/schema.sql` (migration
     quản lý riêng, không lazy-create như SQLite) — chỉ cần đảm bảo index tồn tại, và
-    `CREATE INDEX IF NOT EXISTS` hợp lệ ở cả 2 dialect."""
+    `CREATE INDEX IF NOT EXISTS` hợp lệ ở cả 2 dialect.
+
+    **Grain đã mở rộng (2026-09-17)**: thêm `fabric_type`/`brand_program` vào PRIMARY KEY để
+    hỗ trợ 2 filter mới (trước đây grain chỉ (production_date, capacity_kg, category)) — xem
+    `_migrate_summary_table_columns()` cho DB SQLite CŨ đã có bảng theo schema trước đó, và
+    `supabase/migrate_downtime_summary_brand_fabric.sql` cho Postgres production."""
     if get_dialect() == "sqlite":
         conn.execute("""
             CREATE TABLE IF NOT EXISTS downtime_daily_summary (
                 production_date TEXT NOT NULL,
                 capacity_kg REAL NOT NULL,
+                fabric_type TEXT NOT NULL DEFAULT '',
+                brand_program TEXT NOT NULL DEFAULT '',
                 category TEXT NOT NULL,
                 hours REAL NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                PRIMARY KEY (production_date, capacity_kg, category)
+                PRIMARY KEY (production_date, capacity_kg, fabric_type, brand_program, category)
             )
         """)
+        _migrate_summary_table_columns(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_downtime_daily_summary_date ON downtime_daily_summary (production_date)")
+
+
+def _migrate_summary_table_columns(conn: Any) -> None:
+    """Bổ sung cột `fabric_type`/`brand_program` cho bảng SQLite ĐÃ TỒN TẠI TỪ TRƯỚC (PK cũ
+    KHÔNG có 2 cột này). SQLite không cho ALTER đổi PRIMARY KEY tại chỗ -> dựng lại bảng
+    (cùng pattern `_migrate_case_notes_context_column()`): đổi tên bảng cũ, tạo bảng mới
+    đúng schema, copy dữ liệu cũ với fabric_type=''/brand_program='' (dữ liệu tổng theo
+    category vẫn đúng cho trường hợp KHÔNG lọc — Total = All, chỉ mất khả năng tách theo
+    Fabric Type/Brand Program cho tới khi `flask rebuild-summaries` chạy lại), xoá bảng cũ.
+    Idempotent: return ngay nếu bảng chưa tồn tại hoặc đã có cột `fabric_type` rồi."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(downtime_daily_summary)").fetchall()}
+    if not columns or "fabric_type" in columns:
+        return
+    conn.execute("ALTER TABLE downtime_daily_summary RENAME TO downtime_daily_summary_pre_fabric_brand")
+    conn.execute("""
+        CREATE TABLE downtime_daily_summary (
+            production_date TEXT NOT NULL,
+            capacity_kg REAL NOT NULL,
+            fabric_type TEXT NOT NULL DEFAULT '',
+            brand_program TEXT NOT NULL DEFAULT '',
+            category TEXT NOT NULL,
+            hours REAL NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (production_date, capacity_kg, fabric_type, brand_program, category)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO downtime_daily_summary (production_date, capacity_kg, fabric_type, brand_program, category, hours, updated_at)
+        SELECT production_date, capacity_kg, '', '', category, hours, updated_at FROM downtime_daily_summary_pre_fabric_brand
+    """)
+    conn.execute("DROP TABLE downtime_daily_summary_pre_fabric_brand")
+    conn.commit()
 
 
 def recompute_daily(production_date: date, conn: Any) -> None:
@@ -224,33 +295,46 @@ def recompute_daily(production_date: date, conn: Any) -> None:
     if columns is None:
         return
 
-    record_time = 'COALESCE("end_time", "start_time")'
+    ensure_brand_program_table(conn)
+
+    record_time = 'COALESCE(a."end_time", a."start_time")'
     shifted_date = production_date_sql_expr(record_time)
-    select_parts = [_quote(columns["capacity"]) + " AS capacity"]
+    select_parts = [
+        "a." + _quote(columns["capacity"]) + " AS capacity",
+        "a." + _quote(columns["fabric_type"]) + " AS fabric_type",
+        _BRAND_PROGRAM_LABEL_SQL + " AS brand_program",
+    ]
     for category_columns in CATEGORY_COLUMNS.values():
         for column in category_columns:
-            select_parts.append(_quote(columns[column]) + " AS " + _quote(column))
-    sql = f"SELECT {', '.join(select_parts)} FROM availability_logs WHERE {shifted_date} = ?"
+            select_parts.append("a." + _quote(columns[column]) + " AS " + _quote(column))
+    join_sql = _brand_program_join("a." + _quote(columns["batch"]))
+    sql = f"SELECT {', '.join(select_parts)} FROM availability_logs a {join_sql} WHERE {shifted_date} = ?"
     rows = conn.execute(sql, (day_str,)).fetchall()
     if not rows:
         return
 
-    totals: dict[tuple[float, str], float] = {}
+    totals: dict[tuple[float, str, str, str], float] = {}
     for row in rows:
         capacity = round(float(row["capacity"] or 0), 2)
+        fabric_type = str(row["fabric_type"] or "").strip()
+        brand_program = str(row["brand_program"] or "").strip()
         for category, category_columns in CATEGORY_COLUMNS.items():
-            key = (capacity, category)
+            key = (capacity, fabric_type, brand_program, category)
             totals[key] = totals.get(key, 0.0) + sum(float(row[column] or 0) for column in category_columns)
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.executemany(
-        "INSERT INTO downtime_daily_summary (production_date, capacity_kg, category, hours, updated_at) VALUES (?, ?, ?, ?, ?)",
-        [(day_str, capacity, category, hours, now_str) for (capacity, category), hours in totals.items() if hours],
+        "INSERT INTO downtime_daily_summary (production_date, capacity_kg, fabric_type, brand_program, category, hours, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (day_str, capacity, fabric_type, brand_program, category, hours, now_str)
+            for (capacity, fabric_type, brand_program, category), hours in totals.items() if hours
+        ],
     )
 
 
 def _hours_by_period_from_summary(
     selected_capacities: list[float], from_date: str | None, to_date: str | None,
+    selected_fabric_types: list[str] | None = None, selected_brand_programs: list[str] | None = None,
 ) -> dict[str, dict[str, float]]:
     """{production_date: {category: hours}} từ bảng đã tổng hợp sẵn — KHÔNG quét raw data."""
     sql = "SELECT production_date, category, SUM(hours) AS hours FROM downtime_daily_summary WHERE 1=1"
@@ -265,6 +349,14 @@ def _hours_by_period_from_summary(
         placeholders = ", ".join("?" for _ in selected_capacities)
         sql += f" AND capacity_kg IN ({placeholders})"
         params.extend(selected_capacities)
+    if selected_fabric_types:
+        placeholders = ", ".join("?" for _ in selected_fabric_types)
+        sql += f" AND fabric_type IN ({placeholders})"
+        params.extend(selected_fabric_types)
+    if selected_brand_programs:
+        placeholders = ", ".join("?" for _ in selected_brand_programs)
+        sql += f" AND brand_program IN ({placeholders})"
+        params.extend(selected_brand_programs)
     sql += " GROUP BY production_date, category"
     try:
         rows = execute_query(sql, params)
@@ -278,28 +370,41 @@ def _hours_by_period_from_summary(
 
 def _daily_planned_and_achievement(
     columns: dict[str, str], selected_capacities: list[float], start_timestamp: str | None, end_timestamp: str | None,
+    selected_fabric_types: list[str] | None = None, selected_brand_programs: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """{production_date: {"planned": float, "achievement": {name: [evaluated, passed]}}}.
 
     SUM/COUNT cờ 0-1 cộng dồn tuyến tính AN TOÀN qua nhiều ngày — query nhẹ trực tiếp
     trên `availability_logs`, KHÔNG cần bảng rollup riêng (đã rẻ sẵn nhờ GROUP BY SQL).
     """
-    record_time = 'COALESCE("end_time", "start_time")'
+    need_join = bool(selected_brand_programs)
+    alias = "a." if need_join else ""
+    record_time = f'COALESCE({alias}"end_time", {alias}"start_time")'
     shifted_date = production_date_sql_expr(record_time)
     achievement_select = ", ".join(
-        f"SUM(CASE WHEN {_quote(field)} IS NOT NULL THEN 1 ELSE 0 END) AS evaluated_{index}, "
-        f"SUM(COALESCE({_quote(field)}, 0)) AS passed_{index}"
+        f"SUM(CASE WHEN {alias}{_quote(field)} IS NOT NULL THEN 1 ELSE 0 END) AS evaluated_{index}, "
+        f"SUM(COALESCE({alias}{_quote(field)}, 0)) AS passed_{index}"
         for index, field in enumerate(ACHIEVEMENT_COLUMNS.values())
     )
+    join_sql = _brand_program_join(alias + _quote(columns["batch"])) if need_join else ""
+    from_clause = f'availability_logs {"a" if need_join else ""} {join_sql}'.strip()
     sql = f"""
-        SELECT {shifted_date} AS production_date, SUM({_quote(columns['planned'])}) AS planned, {achievement_select}
-        FROM availability_logs WHERE 1=1
+        SELECT {shifted_date} AS production_date, SUM({alias}{_quote(columns['planned'])}) AS planned, {achievement_select}
+        FROM {from_clause} WHERE 1=1
     """
     params: list[Any] = []
     if selected_capacities:
         placeholders = ", ".join("?" for _ in selected_capacities)
-        sql += f" AND CAST({_quote(columns['capacity'])} AS REAL) IN ({placeholders})"
+        sql += f" AND CAST({alias}{_quote(columns['capacity'])} AS REAL) IN ({placeholders})"
         params.extend(selected_capacities)
+    if selected_fabric_types:
+        placeholders = ", ".join("?" for _ in selected_fabric_types)
+        sql += f" AND {alias}{_quote(columns['fabric_type'])} IN ({placeholders})"
+        params.extend(selected_fabric_types)
+    if selected_brand_programs:
+        placeholders = ", ".join("?" for _ in selected_brand_programs)
+        sql += f" AND {_BRAND_PROGRAM_LABEL_SQL} IN ({placeholders})"
+        params.extend(selected_brand_programs)
     if start_timestamp:
         sql += f" AND {sql_datetime(record_time)} >= {sql_datetime('?')}"
         params.append(start_timestamp)
@@ -321,25 +426,38 @@ def _daily_planned_and_achievement(
 
 def _daily_batches(
     columns: dict[str, str], selected_capacities: list[float], start_timestamp: str | None, end_timestamp: str | None,
+    selected_fabric_types: list[str] | None = None, selected_brand_programs: list[str] | None = None,
 ) -> dict[str, set[str]]:
     """{production_date: {batch, ...}} — CHỈ lấy batch có FabricType hợp lệ, dùng để đếm
     DISTINCT theo từng kỳ (date/week/month) ở tầng Python. KHÔNG cộng dồn số lượng theo
     ngày (đã xác minh: 290 mã batch thật xuất hiện ở nhiều production_date khác nhau —
     cộng dồn distinct-count theo ngày sẽ đếm dư)."""
-    record_time = 'COALESCE("end_time", "start_time")'
+    need_join = bool(selected_brand_programs)
+    alias = "a." if need_join else ""
+    record_time = f'COALESCE({alias}"end_time", {alias}"start_time")'
     shifted_date = production_date_sql_expr(record_time)
+    join_sql = _brand_program_join(alias + _quote(columns["batch"])) if need_join else ""
+    from_clause = f'availability_logs {"a" if need_join else ""} {join_sql}'.strip()
     sql = f"""
-        SELECT DISTINCT {shifted_date} AS production_date, {_quote(columns['batch'])} AS batch
-        FROM availability_logs
-        WHERE {_quote(columns['batch'])} IS NOT NULL AND TRIM(CAST({_quote(columns['batch'])} AS TEXT)) <> ''
-          AND {_quote(columns['fabric_type'])} IS NOT NULL
-          AND LOWER(TRIM(CAST({_quote(columns['fabric_type'])} AS TEXT))) NOT IN (?, ?, ?, ?)
+        SELECT DISTINCT {shifted_date} AS production_date, {alias}{_quote(columns['batch'])} AS batch
+        FROM {from_clause}
+        WHERE {alias}{_quote(columns['batch'])} IS NOT NULL AND TRIM(CAST({alias}{_quote(columns['batch'])} AS TEXT)) <> ''
+          AND {alias}{_quote(columns['fabric_type'])} IS NOT NULL
+          AND LOWER(TRIM(CAST({alias}{_quote(columns['fabric_type'])} AS TEXT))) NOT IN (?, ?, ?, ?)
     """
     params: list[Any] = [value.lower() for value in INVALID_FABRIC_TYPES]
     if selected_capacities:
         placeholders = ", ".join("?" for _ in selected_capacities)
-        sql += f" AND CAST({_quote(columns['capacity'])} AS REAL) IN ({placeholders})"
+        sql += f" AND CAST({alias}{_quote(columns['capacity'])} AS REAL) IN ({placeholders})"
         params.extend(selected_capacities)
+    if selected_fabric_types:
+        placeholders = ", ".join("?" for _ in selected_fabric_types)
+        sql += f" AND {alias}{_quote(columns['fabric_type'])} IN ({placeholders})"
+        params.extend(selected_fabric_types)
+    if selected_brand_programs:
+        placeholders = ", ".join("?" for _ in selected_brand_programs)
+        sql += f" AND {_BRAND_PROGRAM_LABEL_SQL} IN ({placeholders})"
+        params.extend(selected_brand_programs)
     if start_timestamp:
         sql += f" AND {sql_datetime(record_time)} >= {sql_datetime('?')}"
         params.append(start_timestamp)
@@ -356,10 +474,46 @@ def _daily_batches(
     return result
 
 
+def _available_fabric_types_and_brand_programs(
+    columns: dict[str, str], selected_capacities: list[float], start_timestamp: str | None, end_timestamp: str | None,
+) -> tuple[list[str], list[str]]:
+    """Danh sách Fabric Type/Brand Program THỰC SỰ có mặt trong dữ liệu đang lọc theo
+    Capacity+khoảng ngày (KHÔNG lọc theo chính 2 chiều này) — dùng để render option cho 2
+    dropdown filter mới, cùng cách `reports/cleaning_matrix.py` tính `available_capacities`/
+    `available_brand_programs` từ chính tập rows đã truy vấn."""
+    record_time = 'COALESCE(a."end_time", a."start_time")'
+    join_sql = _brand_program_join("a." + _quote(columns["batch"]))
+    sql = f"""
+        SELECT DISTINCT a.{_quote(columns['fabric_type'])} AS fabric_type, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
+        FROM availability_logs a {join_sql}
+        WHERE 1=1
+    """
+    params: list[Any] = []
+    if selected_capacities:
+        placeholders = ", ".join("?" for _ in selected_capacities)
+        sql += f" AND CAST(a.{_quote(columns['capacity'])} AS REAL) IN ({placeholders})"
+        params.extend(selected_capacities)
+    if start_timestamp:
+        sql += f" AND {sql_datetime(record_time)} >= {sql_datetime('?')}"
+        params.append(start_timestamp)
+    if end_timestamp:
+        sql += f" AND {sql_datetime(record_time)} < {sql_datetime('?')}"
+        params.append(end_timestamp)
+    try:
+        rows = execute_query(sql, params)
+    except DatabaseError:
+        return [], []
+    fabric_types = sorted({str(row["fabric_type"]).strip() for row in rows if row["fabric_type"] and str(row["fabric_type"]).strip()})
+    brand_programs = sorted({str(row["brand_program"]).strip() for row in rows if row["brand_program"] and str(row["brand_program"]).strip()})
+    return fabric_types, brand_programs
+
+
 def get_downtime_pivot_data(
     capacity: str | None = None, from_date: str | None = None,
     to_date: str | None = None, group_by: str = "date",
     capacities: str | list[str] | None = None,
+    fabric_types: str | list[str] | None = None,
+    brand_programs: str | list[str] | None = None,
 ) -> dict[str, Any]:
     """Tính tỷ lệ Downtime theo nhóm, kỳ thời gian và bộ lọc đã chọn.
 
@@ -372,15 +526,21 @@ def get_downtime_pivot_data(
         return _empty_result(group_by)
 
     selected_capacities = _parse_capacities(capacities if capacities is not None else capacity)
+    selected_fabric_types = _parse_text_filter(fabric_types)
+    selected_brand_programs = _parse_text_filter(brand_programs)
     start_timestamp, end_timestamp = operational_bounds(from_date, to_date)
 
-    hours_by_day = _hours_by_period_from_summary(selected_capacities, from_date, to_date)
-    daily_extra = _daily_planned_and_achievement(columns, selected_capacities, start_timestamp, end_timestamp)
-    daily_batches = _daily_batches(columns, selected_capacities, start_timestamp, end_timestamp)
+    available_fabric_types, available_brand_programs = _available_fabric_types_and_brand_programs(columns, selected_capacities, start_timestamp, end_timestamp)
+    hours_by_day = _hours_by_period_from_summary(selected_capacities, from_date, to_date, selected_fabric_types, selected_brand_programs)
+    daily_extra = _daily_planned_and_achievement(columns, selected_capacities, start_timestamp, end_timestamp, selected_fabric_types, selected_brand_programs)
+    daily_batches = _daily_batches(columns, selected_capacities, start_timestamp, end_timestamp, selected_fabric_types, selected_brand_programs)
 
     all_days = set(hours_by_day) | set(daily_extra) | set(daily_batches)
     if not all_days:
-        return _empty_result(group_by)
+        empty = _empty_result(group_by)
+        empty["available_fabric_types"] = available_fabric_types
+        empty["available_brand_programs"] = available_brand_programs
+        return empty
 
     periods: dict[str, dict[str, Any]] = {}
     for day_str in all_days:
@@ -428,7 +588,7 @@ def get_downtime_pivot_data(
     # (`totals[category]`) chia cho SỐ MẺ HỢP LỆ DUY NHẤT của CẢ khoảng (`valid_batches`,
     # cùng nguồn `get_daily_batch_count()` đã dùng cho KPI — COUNT DISTINCT thật sự, không
     # tính trùng batch xuất hiện ở nhiều kỳ).
-    valid_batches = get_daily_batch_count(capacity, from_date, to_date, capacities=selected_capacities)
+    valid_batches = get_daily_batch_count(capacity, from_date, to_date, capacities=selected_capacities, fabric_types=selected_fabric_types, brand_programs=selected_brand_programs)
     rows = [
         {
             "category": category, "values": percentages[category], "values_hours": category_hours[category],
@@ -449,7 +609,8 @@ def get_downtime_pivot_data(
     all_passed = sum(value["achievement"][name][1] for _, value in ordered for name in ACHIEVEMENT_COLUMNS)
     achievement_rate = round(all_passed / all_evaluated * 100, 1) if all_evaluated else 0.0
     return {
-        "filters": {"capacities": selected_capacities or "all", "from_date": from_date, "to_date": to_date, "group_by": group_by},
+        "filters": {"capacities": selected_capacities or "all", "fabric_types": selected_fabric_types or "all", "brand_programs": selected_brand_programs or "all", "from_date": from_date, "to_date": to_date, "group_by": group_by},
+        "available_fabric_types": available_fabric_types, "available_brand_programs": available_brand_programs,
         "periods": labels, "period_keys": period_keys, "time_labels": labels, "rows": rows, "rows_hours": [{"category": category, "values": category_hours[category]} for category in CATEGORIES], "total_row": total_rates, "total_row_hours": total_hours,
         "chart": {"categories": labels, "series": [{"name": category, "data": percentages[category]} for category in CATEGORIES]},
         "labels": labels, "datasets": datasets, "datasets_hours": datasets_hours,
@@ -463,20 +624,40 @@ def get_downtime_pivot_data(
     }
 
 
-def get_daily_batch_count(capacity: str | None = None, from_date: str | None = None, to_date: str | None = None, capacities: str | list[str] | None = None) -> int:
+def get_daily_batch_count(
+    capacity: str | None = None, from_date: str | None = None, to_date: str | None = None,
+    capacities: str | list[str] | None = None,
+    fabric_types: list[str] | None = None, brand_programs: list[str] | None = None,
+) -> int:
     """Đếm Batch duy nhất, loại Fabric Type không hợp lệ."""
     columns = _availability_columns()
     if columns is None:
         return 0
-    sql = "SELECT COUNT(DISTINCT " + _quote(columns["batch"]) + ") AS total FROM availability_logs WHERE " + _quote(columns["batch"]) + " IS NOT NULL AND TRIM(CAST(" + _quote(columns["batch"]) + " AS TEXT)) <> '' AND " + _quote(columns["fabric_type"]) + " IS NOT NULL AND LOWER(TRIM(CAST(" + _quote(columns["fabric_type"]) + " AS TEXT))) NOT IN (?, ?, ?, ?)"
+    need_join = bool(brand_programs)
+    alias = "a." if need_join else ""
+    join_sql = _brand_program_join(alias + _quote(columns["batch"])) if need_join else ""
+    from_clause = f'availability_logs {"a" if need_join else ""} {join_sql}'.strip()
+    sql = (
+        "SELECT COUNT(DISTINCT " + alias + _quote(columns["batch"]) + ") AS total FROM " + from_clause
+        + " WHERE " + alias + _quote(columns["batch"]) + " IS NOT NULL AND TRIM(CAST(" + alias + _quote(columns["batch"]) + " AS TEXT)) <> '' AND "
+        + alias + _quote(columns["fabric_type"]) + " IS NOT NULL AND LOWER(TRIM(CAST(" + alias + _quote(columns["fabric_type"]) + " AS TEXT))) NOT IN (?, ?, ?, ?)"
+    )
     params: list[Any] = [value.lower() for value in INVALID_FABRIC_TYPES]
     selected_capacities = _parse_capacities(capacities if capacities is not None else capacity)
     if selected_capacities:
         placeholders = ", ".join("?" for _ in selected_capacities)
-        sql += " AND CAST(" + _quote(columns["capacity"]) + f" AS REAL) IN ({placeholders})"
+        sql += " AND CAST(" + alias + _quote(columns["capacity"]) + f" AS REAL) IN ({placeholders})"
         params.extend(selected_capacities)
+    if fabric_types:
+        placeholders = ", ".join("?" for _ in fabric_types)
+        sql += " AND " + alias + _quote(columns["fabric_type"]) + f" IN ({placeholders})"
+        params.extend(fabric_types)
+    if brand_programs:
+        placeholders = ", ".join("?" for _ in brand_programs)
+        sql += f" AND {_BRAND_PROGRAM_LABEL_SQL} IN ({placeholders})"
+        params.extend(brand_programs)
     start_timestamp, end_timestamp = operational_bounds(from_date, to_date)
-    record_time = 'COALESCE("end_time", "start_time")'
+    record_time = f'COALESCE({alias}"end_time", {alias}"start_time")'
     if start_timestamp:
         sql += " AND " + sql_datetime(record_time) + " >= " + sql_datetime("?")
         params.append(start_timestamp)
@@ -525,6 +706,7 @@ def _period_date_range(period: str, group_by: str) -> tuple[str | None, str | No
 
 def get_top_batches_for_category(
     period: str, group_by: str, category: str, capacities: str | list[str] | None = None, limit: int = 10,
+    fabric_types: str | list[str] | None = None, brand_programs: str | list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Top N mẻ (mặc định 10) có giờ Downtime CATEGORY lớn nhất trong 1 kỳ (Day/Week/Month),
     sắp xếp giảm dần — dùng để double-check khi bấm vào 1 ô số trên bảng pivot Downtime.
@@ -541,21 +723,35 @@ def get_top_batches_for_category(
         return []
 
     start_timestamp, end_timestamp = operational_bounds(date_from, date_to)
-    record_time = 'COALESCE("end_time", "start_time")'
-    category_sum = " + ".join(f"COALESCE({_quote(columns[col])}, 0)" for col in CATEGORY_COLUMNS[category])
+    selected_fabric_types = _parse_text_filter(fabric_types)
+    selected_brand_programs = _parse_text_filter(brand_programs)
+    need_join = bool(selected_brand_programs)
+    alias = "a." if need_join else ""
+    record_time = f'COALESCE({alias}"end_time", {alias}"start_time")'
+    category_sum = " + ".join(f"COALESCE({alias}{_quote(columns[col])}, 0)" for col in CATEGORY_COLUMNS[category])
+    join_sql = _brand_program_join(alias + _quote(columns["batch"])) if need_join else ""
+    from_clause = f'availability_logs {"a" if need_join else ""} {join_sql}'.strip()
     sql = f"""
-        SELECT "id" AS availability_log_id, {_quote(columns['batch'])} AS batch, "machine" AS machine,
-               {_quote(columns['capacity'])} AS capacity_kg, "start_time" AS start_time, "end_time" AS end_time,
+        SELECT {alias}"id" AS availability_log_id, {alias}{_quote(columns['batch'])} AS batch, {alias}"machine" AS machine,
+               {alias}{_quote(columns['capacity'])} AS capacity_kg, {alias}"start_time" AS start_time, {alias}"end_time" AS end_time,
                ({category_sum}) AS category_hours
-        FROM availability_logs
+        FROM {from_clause}
         WHERE 1=1
     """
     params: list[Any] = []
     selected_capacities = _parse_capacities(capacities)
     if selected_capacities:
         placeholders = ", ".join("?" for _ in selected_capacities)
-        sql += f" AND CAST({_quote(columns['capacity'])} AS REAL) IN ({placeholders})"
+        sql += f" AND CAST({alias}{_quote(columns['capacity'])} AS REAL) IN ({placeholders})"
         params.extend(selected_capacities)
+    if selected_fabric_types:
+        placeholders = ", ".join("?" for _ in selected_fabric_types)
+        sql += f" AND {alias}{_quote(columns['fabric_type'])} IN ({placeholders})"
+        params.extend(selected_fabric_types)
+    if selected_brand_programs:
+        placeholders = ", ".join("?" for _ in selected_brand_programs)
+        sql += f" AND {_BRAND_PROGRAM_LABEL_SQL} IN ({placeholders})"
+        params.extend(selected_brand_programs)
     if start_timestamp:
         sql += f" AND {sql_datetime(record_time)} >= {sql_datetime('?')}"
         params.append(start_timestamp)
@@ -755,11 +951,12 @@ ABNORMAL_POINT_LABELS = {"loading": "Cases Loading = 0", "unloading": "Cases Unl
 
 def _abnormal_point_filters(
     columns: dict[str, str], selected_capacities: list[float], start_timestamp: str | None, end_timestamp: str | None,
+    selected_fabric_types: list[str] | None = None, selected_brand_programs: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
-    """SQL điều kiện dùng chung capacity + operational_bounds — ĐÚNG bộ lọc đang áp dụng
-    trên trang Downtime (dùng chung `record_time` có alias `a.` vì hàm gọi có JOIN sang
-    `batch_details`, bảng này cũng có cột `start_time`/`end_time`/`machine` trùng tên, nếu
-    không alias sẽ bị SQLite báo lỗi ambiguous column)."""
+    """SQL điều kiện dùng chung capacity/fabric_type/brand_program + operational_bounds —
+    ĐÚNG bộ lọc đang áp dụng trên trang Downtime (dùng chung `record_time` có alias `a.` vì
+    hàm gọi có JOIN sang `batch_details`, bảng này cũng có cột `start_time`/`end_time`/
+    `machine` trùng tên, nếu không alias sẽ bị SQLite báo lỗi ambiguous column)."""
     record_time = 'COALESCE(a."end_time", a."start_time")'
     clause = ""
     params: list[Any] = []
@@ -767,6 +964,14 @@ def _abnormal_point_filters(
         placeholders = ", ".join("?" for _ in selected_capacities)
         clause += f" AND CAST(a.{_quote(columns['capacity'])} AS REAL) IN ({placeholders})"
         params.extend(selected_capacities)
+    if selected_fabric_types:
+        placeholders = ", ".join("?" for _ in selected_fabric_types)
+        clause += f" AND a.{_quote(columns['fabric_type'])} IN ({placeholders})"
+        params.extend(selected_fabric_types)
+    if selected_brand_programs:
+        placeholders = ", ".join("?" for _ in selected_brand_programs)
+        clause += f" AND {_BRAND_PROGRAM_LABEL_SQL} IN ({placeholders})"
+        params.extend(selected_brand_programs)
     if start_timestamp:
         clause += f" AND {sql_datetime(record_time)} >= {sql_datetime('?')}"
         params.append(start_timestamp)
@@ -786,32 +991,37 @@ def _abnormal_point_fabric_filter(fabric_col: str) -> tuple[str, list[Any]]:
 
 def get_abnormal_point_pivot(
     capacities: str | list[str] | None = None, from_date: str | None = None, to_date: str | None = None, group_by: str = "date",
+    fabric_types: str | list[str] | None = None, brand_programs: str | list[str] | None = None,
 ) -> dict[str, Any]:
-    """Bảng Abnormal Point theo Day/Week/Month — CÙNG bộ lọc capacity/date range/group_by
-    như bảng "Downtime by category". Query nhẹ trực tiếp `availability_logs`
-    (SUM CASE WHEN = 0, cộng dồn tuyến tính an toàn — không phải COUNT DISTINCT nên không
-    dính bài học rủi ro cộng trùng ở systemPatterns.md mục 6.2), group theo ngày ở SQL rồi
-    gộp lại theo Day/Week/Month ở Python (cùng cách `_daily_planned_and_achievement()` làm).
-    KHÔNG qua `downtime_daily_summary` — bảng rollup không lưu chi tiết = 0 theo mẻ."""
+    """Bảng Abnormal Point theo Day/Week/Month — CÙNG bộ lọc capacity/fabric_type/
+    brand_program/date range/group_by như bảng "Downtime by category". Query nhẹ trực tiếp
+    `availability_logs` (SUM CASE WHEN = 0, cộng dồn tuyến tính an toàn — không phải COUNT
+    DISTINCT nên không dính bài học rủi ro cộng trùng ở systemPatterns.md mục 6.2), group
+    theo ngày ở SQL rồi gộp lại theo Day/Week/Month ở Python (cùng cách
+    `_daily_planned_and_achievement()` làm). KHÔNG qua `downtime_daily_summary` — bảng
+    rollup không lưu chi tiết = 0 theo mẻ."""
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
     columns = _availability_columns()
     if columns is None:
         return {"periods": [], "period_keys": [], "rows": [], "total_row": []}
     selected_capacities = _parse_capacities(capacities)
+    selected_fabric_types = _parse_text_filter(fabric_types)
+    selected_brand_programs = _parse_text_filter(brand_programs)
     start_timestamp, end_timestamp = operational_bounds(from_date, to_date)
-    filter_clause, filter_params = _abnormal_point_filters(columns, selected_capacities, start_timestamp, end_timestamp)
+    filter_clause, filter_params = _abnormal_point_filters(columns, selected_capacities, start_timestamp, end_timestamp, selected_fabric_types, selected_brand_programs)
     fabric_col = _quote(columns["fabric_type"])
     fabric_clause, fabric_params = _abnormal_point_fabric_filter(fabric_col)
     record_time = 'COALESCE(a."end_time", a."start_time")'
     shifted_date = production_date_sql_expr(record_time)
     load_col = _quote(columns["load_hour"])
     unload_col = _quote(columns["unload_hour"])
+    join_sql = _brand_program_join("a." + _quote(columns["batch"]))
 
     sql = f"""
         SELECT {shifted_date} AS production_date,
                SUM(CASE WHEN a.{load_col} = 0 THEN 1 ELSE 0 END) AS loading_zero,
                SUM(CASE WHEN a.{unload_col} = 0 THEN 1 ELSE 0 END) AS unloading_zero
-        FROM availability_logs a
+        FROM availability_logs a {join_sql}
         WHERE 1=1{fabric_clause}{filter_clause}
         GROUP BY {shifted_date}
     """
@@ -849,6 +1059,7 @@ def get_abnormal_point_pivot(
 def get_abnormal_point_batches(
     field: str, capacities: str | list[str] | None = None, from_date: str | None = None, to_date: str | None = None,
     period: str | None = None, group_by: str = "date", limit: int | None = None,
+    fabric_types: str | list[str] | None = None, brand_programs: str | list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Danh sách mẻ có `load_hour`/`unload_hour` = 0 (drill-down khi bấm vào 1 ô trên bảng
     Data Quality) — `field` in {"loading", "unloading"}. Truyền `period` (+ `group_by`)
@@ -876,8 +1087,10 @@ def get_abnormal_point_batches(
             return []
         from_date, to_date = period_from, period_to
     selected_capacities = _parse_capacities(capacities)
+    selected_fabric_types = _parse_text_filter(fabric_types)
+    selected_brand_programs = _parse_text_filter(brand_programs)
     start_timestamp, end_timestamp = operational_bounds(from_date, to_date)
-    filter_clause, filter_params = _abnormal_point_filters(columns, selected_capacities, start_timestamp, end_timestamp)
+    filter_clause, filter_params = _abnormal_point_filters(columns, selected_capacities, start_timestamp, end_timestamp, selected_fabric_types, selected_brand_programs)
     record_time = 'COALESCE(a."end_time", a."start_time")'
     shifted_date = production_date_sql_expr(record_time)
     batch_col = _quote(columns["batch"])
@@ -897,6 +1110,7 @@ def get_abnormal_point_batches(
                b.customer AS customer, b.colour_no AS colour_no
         FROM availability_logs a
         LEFT JOIN batch_details b ON lower(trim(a.{batch_col})) = lower(trim(b.dyelot))
+        LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(b.greige_code))
         WHERE a.{zero_col} = 0{fabric_clause}{filter_clause}
         ORDER BY {shifted_date} DESC, a."machine"
     """

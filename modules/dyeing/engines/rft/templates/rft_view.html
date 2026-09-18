@@ -32,6 +32,16 @@
                 {% endfor %}
             </div>
         </div>
+        <div class="form-group mb-0 mr-3 capacity-dropdown">
+            <label for="fabric-type-toggle">Fabric Type</label>
+            <button id="fabric-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All fabric types</button>
+            <div id="fabric-type-menu" class="capacity-menu" hidden></div>
+        </div>
+        <div class="form-group mb-0 mr-3 capacity-dropdown">
+            <label for="brand-program-toggle">Brand Program</label>
+            <button id="brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
+            <div id="brand-program-menu" class="capacity-menu" hidden></div>
+        </div>
         <div class="form-group mb-0 mr-3"><label for="from-date">From Date</label><input id="from-date" class="form-control" type="date"></div>
         <div class="form-group mb-0 mr-3"><label for="to-date">To Date</label><input id="to-date" class="form-control" type="date"></div>
         <div class="form-group mb-0"><label for="group-by">Group By</label><select id="group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>

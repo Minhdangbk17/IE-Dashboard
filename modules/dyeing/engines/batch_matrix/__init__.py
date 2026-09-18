@@ -7,7 +7,7 @@ Color Group x Ngày sản xuất), dữ liệu từ `batch_details`.
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Iterable
 
 from flask import Blueprint
 
@@ -42,6 +42,17 @@ class BatchMatrixEngine(BaseEngine):
     def recompute_daily(self, production_date: date, conn: Any) -> None:
         service.recompute_daily(production_date, conn)
         batch_day_trend.recompute_daily(production_date, conn)
+
+    def recompute_all(self, dates: Iterable[date], conn: Any) -> None:
+        """Override bản mặc định (lặp `recompute_daily()` từng ngày) vì
+        `batch_day_trend.recompute_all()` có đường tính HÀNG LOẠT hiệu quả hơn nhiều cho
+        thuật toán carry-forward (xem docstring `batch_day_trend.recompute_all()`) —
+        `service.recompute_daily()` (Fabric/Color Matrix) vẫn lặp theo ngày vì mỗi ngày độc
+        lập, không có chi phí lặp lại tốn kém."""
+        dates = list(dates)
+        for production_date in sorted(dates):
+            service.recompute_daily(production_date, conn)
+        batch_day_trend.recompute_all(dates, conn)
 
 
 engine = BatchMatrixEngine()

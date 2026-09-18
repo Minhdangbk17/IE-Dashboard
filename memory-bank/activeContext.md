@@ -1,6 +1,31 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-14 — Thêm cột Target (admin-only) vào báo cáo
+**Cập nhật lần cuối:** 2026-09-18 — **Bug thật phát hiện + sửa trên production**:
+tab "Batch/Day Trend" (`batch_matrix`) không tính ra số liệu dù dữ liệu đã
+upload đủ tới ngày hiện tại — nguyên nhân là `flask rebuild-summaries` gọi
+`recompute_daily()` RIÊNG LẺ cho từng ngày, mà thuật toán carry-forward của
+Engine này BẮT BUỘC quét lại TOÀN BỘ lịch sử 1 máy mỗi lần gọi -> hàng trăm
+ngày = hàng trăm lần fetch+sort lại y hệt lịch sử đó qua kết nối Postgres
+remote, đủ chậm để tiến trình bị ngắt giữa chừng (chỉ backfill được 6 ngày
+ĐẦU TIÊN theo thứ tự tăng dần trước khi "treo"). Đã thêm
+`BaseEngine.recompute_all(dates, conn)` (mặc định lặp `recompute_daily()`
+như cũ, Engine nào cần thì override) + `batch_day_trend.recompute_all()`
+(tính 1 LẦN cho mỗi máy thay vì N lần) — xem chi tiết đầy đủ ở mục -11 bên
+dưới. Bản ghi trước đó (2026-09-17 — thêm filter Fabric Type/Brand Program +
+chuẩn hoá UI dropdown) giữ nguyên ở mục -10.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-17 — Thêm 2 filter mới (Fabric Type, Brand
+Program) vào TẤT CẢ 5 báo cáo của Dyeing Hub (Downtime, Batch/Day — cả 2 tab,
+Batch Per Day by Machine, Right First Time, %Tank Loading) + chuẩn hoá cách
+trình bày mọi filter dropdown giống hệt Downtime (dropdown "N selected"/"All
+..." + checkbox "Select All" — trước đó "Batch Per Day by Machine" hiển thị
+kiểu liệt kê ngang "300kg, 500kg, 600kg, 1200kg, 2400kg" trong nút bấm, khác
+hẳn Downtime). Chi tiết đầy đủ ở mục -10 bên dưới (rủi ro kỹ thuật quan trọng
+nhất: bug COUNT-DISTINCT-dạng-giờ suýt tái diễn ở `batch_matrix`, đã tránh
+bằng đường tính riêng). Bản ghi trước đó (2026-09-14 — cột Target Downtime by
+Category + 2 bug Postgres/Vercel) vẫn giữ nguyên ở mục -9.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-14 — Thêm cột Target (admin-only) vào báo cáo
 "Downtime by Category": bảng `downtime_targets` (khoá `category`, 2 giá trị
 `target_pct`/`target_hours` độc lập), API `GET/POST /dyeing/downtime/api/
 targets`, và UI inline-edit đầu tiên trong dự án cho kiểu Target (trước đó
@@ -18,10 +43,10 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 ## Đang làm
 - Khung Phase 1 (Application Factory, Auto-loader 2 cấp, SQLite WAL, Graphify,
   Memory Bank) đã ổn định, không đổi.
-- Domain `dyeing` hiện có 7 Engine: `oee`, `downtime`, `excel_import`,
-  `manual_entry`, `reports`, `batch_matrix`, `rft` (bản ghi cũ của file này
-  từng chỉ liệt kê 3/6 — lưu ý cập nhật lại mỗi khi thêm Engine mới, đừng để
-  lệch).
+- Domain `dyeing` hiện có 8 Engine: `oee`, `downtime`, `excel_import`,
+  `manual_entry`, `reports`, `batch_matrix`, `rft`, `tank_loading` (bản ghi cũ
+  của file này từng chỉ liệt kê 3/6 rồi 7/7 — lưu ý cập nhật lại mỗi khi thêm
+  Engine mới, đừng để lệch).
 - **Engine `rft` (Right First Time) — MỚI THÊM 2026-09-13, mới ở dạng KHUNG
   SƯỜN (scaffold), CHƯA có quy tắc phân loại thật**: báo cáo 6 bảng (tab)
   phân loại mẻ nhuộm theo loại lần chạy — Lab to Lab, Lab to Bulk, Bulk to
@@ -119,6 +144,156 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-11. **BUG THẬT phát hiện + sửa trên production: "Batch/Day Trend" không tính ra
+   số liệu dù dữ liệu đã upload đủ tới ngày hiện tại** (2026-09-18, người dùng
+   report trực tiếp sau khi dùng thử tính năng filter mới ở mục -10).
+
+   **Quy trình điều tra** (không đoán, xác nhận từng bước qua người dùng):
+   (1) Nghi ngờ đầu tiên — bảng rollup `batch_day_trend_daily_summary` chưa
+   được tạo/backfill trên Postgres (Engine này MỚI thêm, có sẵn
+   `supabase/migrate_batch_day_trend.sql` cảnh báo đúng tình huống này) — ĐÃ
+   LOẠI TRỪ sau khi người dùng chạy migration + `flask rebuild-summaries`
+   nhưng vẫn rỗng. (2) Yêu cầu người dùng chạy SQL đếm trực tiếp trên
+   Supabase: `trend_rows=652, matrix_rows=3151, avail_rows=9839` — xác nhận
+   bảng KHÔNG rỗng (652 dòng có thật), nên không phải lỗi "chưa tính". (3)
+   Yêu cầu mở rộng khoảng ngày filter trên UI — người dùng xác nhận 652 dòng
+   đó CHỈ nằm trong 6 ngày ĐẦU TIÊN của tháng 6/2026, dù `availability_logs`
+   (9839 dòng) có dữ liệu tới ngày hiện tại (giữa tháng 9/2026).
+
+   **Nguyên nhân gốc**: `core/rollup.py::trigger_recompute()` (dùng bởi CẢ
+   `flask rebuild-summaries` LẪN hook sau mỗi import) lặp
+   `for production_date in sorted(affected_dates): for engine in engines:
+   engine.recompute_daily(production_date, conn)`. Với HẦU HẾT Engine (downtime,
+   batch_matrix's Fabric/Color Matrix, cleaning_matrix), việc tính 1 ngày là
+   độc lập/rẻ (SQL aggregate có WHERE theo đúng ngày đó). NHƯNG thuật toán
+   carry-forward của `batch_day_trend.py` (mẻ FabricType không hợp lệ cộng
+   dồn giờ sang mẻ THẬT kế tiếp CÙNG MÁY, xem module docstring) về bản chất
+   PHỤ THUỘC THỨ TỰ THỜI GIAN xuyên suốt lịch sử — để tính ĐÚNG 1 ngày D,
+   `recompute_daily(D)` phải fetch + sort lại TOÀN BỘ lịch sử của MỌI máy có
+   liên quan (`_machine_records()`, không giới hạn theo ngày). Gọi hàm này
+   LẶP LẠI cho hàng trăm ngày (dữ liệu nhiều tháng) khiến CÙNG 1 lịch sử máy
+   bị fetch + sort lại hàng trăm lần — mỗi lần là 2 round-trip mạng khi DB là
+   Postgres remote (Supabase) — đủ chậm để CLI/tiến trình có vẻ "treo" và bị
+   ngắt (timeout/đóng terminal) giữa chừng, chỉ kịp xử lý xong vài ngày ĐẦU
+   TIÊN theo thứ tự `sorted()` (tăng dần — khớp CHÍNH XÁC triệu chứng "chỉ có
+   6 ngày đầu tháng 6", đây là những ngày CŨ NHẤT trong tập `affected_dates`
+   khi backfill toàn bộ lịch sử).
+
+   **Giải pháp**: thêm method MỚI, TUỲ CHỌN vào `core/engine_base.py::
+   BaseEngine`: `recompute_all(dates: Iterable[date], conn)` — mặc định lặp
+   `recompute_daily()` cho từng ngày (GIỮ NGUYÊN hành vi cũ cho mọi Engine
+   không override, không rủi ro regression). `core/rollup.py::
+   trigger_recompute()` đổi từ lặp lồng nhau (ngày ngoài, Engine trong) sang
+   gọi `engine.recompute_all(affected_dates, conn)` MỘT LẦN cho mỗi Engine
+   (Engine tự quyết định cách xử lý hiệu quả cho CẢ tập ngày). `batch_matrix`
+   Engine (`__init__.py`) override `recompute_all()`: `service.recompute_daily()`
+   (Fabric/Color Matrix) vẫn lặp theo ngày như cũ (rẻ, không cần đổi), nhưng
+   gọi `batch_day_trend.recompute_all()` MỚI — hàm này (1) hợp TẬP MÁY liên
+   quan tới BẤT KỲ ngày nào trong `dates` (union qua `_find_candidate_machines()`
+   cho từng ngày), (2) với MỖI máy, fetch + sort lịch sử ĐÚNG 1 LẦN (thay vì N
+   lần), chạy carry-forward 1 lần xuyên suốt, giữ lại mọi bản ghi resolve vào
+   ĐÚNG 1 ngày nằm trong `dates`, (3) DELETE + INSERT 1 LẦN cho toàn bộ `dates`
+   liên quan thay vì lặp theo từng ngày. Về mặt TOÁN HỌC cho kết quả GIỐNG HỆT
+   gọi `recompute_daily()` lặp từng ngày (cùng thứ tự sort, cùng state
+   `carry_hours` xuyên suốt lịch sử máy — chỉ khác là quyết định "ngày nào
+   được INSERT" dựa trên tập `dates` thay vì so sánh với 1 `day_str` duy nhất),
+   chỉ khác ở SỐ LẦN fetch+sort (đúng 1 lần/máy thay vì N lần/máy).
+
+   Verify: `tests/test_batch_day_trend_recompute_all.py` (MỚI) — 3 kịch bản:
+   (1) `recompute_all({3 ngày})` cho kết quả GIỐNG HỆT (từng field) với
+   `recompute_daily()` gọi lặp 3 lần trên 1 DB riêng biệt, dữ liệu có carry-
+   forward XUYÊN NGÀY (máy M1: Unknown 2h -> Real A ngày 1 hấp thụ carry ->
+   Unknown 3h -> Real B ngày 2 hấp thụ carry -> Real C ngày 3 không carry);
+   (2) xác nhận giá trị cụ thể đúng theo tay tính (6h/7h/5h); (3) gọi
+   `recompute_all()` với SUBSET ngày (bỏ ngày 2 giữa) — xác nhận chỉ ngày
+   được yêu cầu mới xuất hiện trong kết quả, không "rò rỉ" ngày khác. PASS
+   100%, cùng toàn bộ 8 test suite cũ (bao gồm `verify_rollup_parity.py`,
+   `test_permission_model.py`) không regression sau khi đổi
+   `core/rollup.py::trigger_recompute()`.
+
+   **Việc tiếp theo cho người dùng**: chạy lại `flask rebuild-summaries` trên
+   production (đường mới sẽ nhanh hơn NHIỀU — không còn re-fetch lịch sử máy
+   lặp lại theo từng ngày) để backfill đầy đủ Batch/Day Trend từ đầu lịch sử
+   dữ liệu tới hiện tại — 652 dòng hiện có (chỉ 6 ngày đầu 06/2026) sẽ bị xoá
+   và tính lại đúng cho TOÀN BỘ khoảng ngày.
+
+-10. **Thêm filter Fabric Type + Brand Program vào TẤT CẢ 5 báo cáo Dyeing +
+   chuẩn hoá UI filter dropdown theo mẫu Downtime** (2026-09-17, theo yêu cầu
+   người dùng — đã hỏi rõ phạm vi trước khi code: "tất cả 5 báo cáo" thay vì
+   chỉ 3 báo cáo được nhắc tên, và "mở rộng bảng rollup" thay vì "tính trực
+   tiếp khi có filter" cho riêng Downtime).
+
+   **UI**: mọi Capacity/Fabric Type/Brand Program filter giờ dùng CHUNG 1 mẫu
+   dropdown (nút hiện nhãn gọn "All ..."/"N selected" + panel xổ xuống có
+   checkbox "Select All" ở đầu) — factory JS `makeMultiSelectDropdown()` viết
+   riêng cho từng file JS của từng Engine (dự án không có module JS dùng
+   chung giữa các Engine, đúng Vertical Slice Architecture, nên copy-paste có
+   chủ đích, không phải trùng lặp ngoài ý muốn). Trước đây "Batch Per Day by
+   Machine" (`cleaning_matrix.py`) hiển thị SAI kiểu — nút bấm liệt kê NGANG
+   toàn bộ giá trị đã chọn (VD "300kg, 500kg, 600kg, 1200kg, 2400kg") thay vì
+   nhãn gọn — đây CHÍNH LÀ điều người dùng mô tả là "xổ ngang" khác "xổ
+   xuống" của Downtime, đã xác nhận bằng screenshot Playwright trước khi sửa.
+
+   **Rủi ro kỹ thuật quan trọng nhất (đã lường trước, không phải bug phát
+   sinh)**: `batch_matrix_daily_summary` (rollup của tab "Fabric/Color
+   Matrix") lưu `operating_hours` = giờ hoạt động CẢ NGÀY của 1 máy — khác
+   hẳn `downtime_daily_summary`/`cleaning_mc_daily_summary`/
+   `batch_day_trend_daily_summary` (SUM giá trị ĐO ĐƯỢC theo từng dòng/mẻ, có
+   thể chia nhỏ theo bất kỳ chiều nào an toàn). Ban đầu định thêm
+   `brand_program` vào PRIMARY KEY của bảng này giống `capacity_kg` — SAI:
+   1 máy có thể chạy NHIỀU brand_program trong CÙNG 1 ngày (khác capacity_kg,
+   đã verify 0 máy có >1 capacity_kg cố định), nên bucket theo brand_program
+   rồi SUM operating_hours qua các bucket sẽ tái diễn ĐÚNG bug COUNT DISTINCT
+   đã tốn 3 lần sửa ở "Mẫu số" (xem `systemPatterns.md` mục 6.2) — chỉ khác
+   "giờ" thay vì "đếm máy", và khác machine-hours thay vì brand_program. Đã
+   PHÁT HIỆN RA trước khi merge (không phải sau khi có bug thật) nhờ tự đặt
+   câu hỏi "tính chất SUM theo dòng hay theo tài nguyên dùng chung" cho từng
+   bảng rollup trước khi copy pattern `capacity_kg` sang `brand_program`. Đã
+   REVERT lại schema gốc, viết đường tính RIÊNG: `_raw_matrix_rows()` +
+   `_aggregate_raw_rows()` (`batch_matrix/service.py`) — khi có Brand Program
+   filter, TOÀN BỘ ma trận (cả dòng "data" lẫn Total(Fabric)/Grand Total)
+   tính TRỰC TIẾP từ raw data với tập máy khử trùng đúng cấp, TÁI DÙNG đúng
+   `cell_value_dedup()`/`total_value_dedup()` đã có sẵn cho Total/Grand Total
+   — khi KHÔNG lọc Brand Program (mặc định), code path CŨ giữ NGUYÊN 100%
+   (đọc từ rollup, không query raw data thêm), không đổi hiệu năng đường mặc
+   định. Verify bằng `tests/test_batch_matrix_brand_fabric_filters.py`
+   (kịch bản bẫy đúng: máy M1 chạy 2 mẻ CÙNG ngày/Fabric/Color/Capacity
+   nhưng khác Brand Program — xác nhận lọc theo 1 brand vẫn tính ĐỦ giờ CẢ
+   NGÀY của M1, không chỉ giờ phần mẻ khớp brand đó) — PASS toàn bộ, cùng
+   `tests/test_batch_matrix_formula.py` (regression 3 kịch bản cũ) vẫn PASS
+   100% sau khi sửa.
+
+   **Các rollup AN TOÀN mở rộng trực tiếp** (grain = 1 dòng/1 bản ghi đo
+   được, không phải machine-hours dùng chung): `downtime_daily_summary` (thêm
+   `fabric_type`+`brand_program` vào PRIMARY KEY — mỗi dòng là SUM giờ CỦA
+   CHÍNH mẻ đó, cộng dồn theo bất kỳ chiều nào cũng an toàn),
+   `cleaning_mc_daily_summary` (thêm cột `fabric_type`, PK không đổi — grain
+   sẵn là 1 dòng/1 mẻ), `batch_day_trend_daily_summary` (thêm cột
+   `brand_program`, PK không đổi — grain sẵn là 1 dòng/1 mẻ đã resolve).
+   `rft`/`tank_loading` chưa có rollup (query trực tiếp) nên thêm filter chỉ
+   là JOIN + WHERE/lọc Python thông thường, không có rủi ro gì.
+
+   **Migration Postgres production** (CHƯA CHẠY, cần admin tự áp qua Supabase
+   SQL Editor rồi chạy `flask rebuild-summaries` — xem "Việc tiếp theo"):
+   `supabase/migrate_downtime_summary_brand_fabric.sql` (đổi PRIMARY KEY),
+   `supabase/migrate_cleaning_matrix_fabric_type.sql`,
+   `supabase/migrate_batch_day_trend_brand_program.sql` (2 file sau chỉ ADD
+   COLUMN, không đổi PK). `supabase/schema.sql` đã cập nhật cho lần cài mới.
+
+   **Brand Program suy từ đâu**: mọi Engine đều JOIN
+   `batch_details.greige_code -> brand_program_mapping.greige_code` (khác
+   nhau ở cách nối tới `greige_code`: `downtime`/`batch_matrix`/`rft` qua
+   `availability_logs.batch = batch_details.dyelot`;
+   `tank_loading` qua `performance_logs.dyelot = batch_details.dyelot` trực
+   tiếp, không qua alias `batch`/`batch_ref_no` như availability_logs).
+
+   Test mới: `tests/test_downtime_brand_fabric_filters.py`,
+   `tests/test_batch_matrix_brand_fabric_filters.py`. Đã re-run toàn bộ test
+   suite cũ (`test_batch_matrix_formula.py`, `verify_rollup_parity.py`,
+   `test_permission_model.py`, `test_production_date.py`,
+   `test_postgres_shim_translation.py`, `test_downtime_case_notes_context.py`)
+   — PASS 100%, không có regression.
+
 -9. **Thêm cột Target (admin-only) vào báo cáo "Downtime by Category" + 2 bug
    thật phát hiện khi test import trên Postgres/Vercel** (2026-09-14, theo
    yêu cầu người dùng). **Target**: bảng `downtime_targets` mới (khoá
@@ -399,6 +574,16 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 8. Quality trong công thức OEE tạm giả định 100% (giữ nguyên, chưa đổi).
 
 ## Việc tiếp theo
+- **CHỜ XÁC NHẬN**: chạy 3 migration mới cho filter Fabric Type/Brand Program
+  (2026-09-17) qua Supabase SQL Editor trên DB production, rồi chạy lại
+  `flask rebuild-summaries` để backfill dữ liệu lịch sử theo đúng 2 chiều mới:
+  `supabase/migrate_downtime_summary_brand_fabric.sql`,
+  `supabase/migrate_cleaning_matrix_fabric_type.sql`,
+  `supabase/migrate_batch_day_trend_brand_program.sql`. Trước khi chạy, app
+  vẫn hoạt động đúng (2 filter mới trả "All" cho dữ liệu cũ, không lỗi) vì
+  code đã tự gate theo `get_dialect()`/cột tồn tại — chỉ là CHƯA lọc được
+  đúng theo Fabric Type/Brand Program cho dữ liệu lịch sử trên Postgres cho
+  tới khi áp migration.
 - **CHỜ XÁC NHẬN**: chạy `supabase/migrate_case_notes_context.sql` qua Supabase SQL
   Editor trên DB production (thêm cột `context` + đổi UNIQUE constraint cho
   `downtime_case_notes`) — CHƯA chạy, cần admin tự thực hiện vì app không có quyền

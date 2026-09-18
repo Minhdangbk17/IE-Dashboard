@@ -50,7 +50,7 @@ def _init_schema(db_path: str) -> None:
     """)
     conn.execute("""
         CREATE TABLE batch_details (
-            dyelot TEXT PRIMARY KEY, shade TEXT, colour_no TEXT, batch_type TEXT
+            dyelot TEXT PRIMARY KEY, shade TEXT, colour_no TEXT, batch_type TEXT, greige_code TEXT
         )
     """)
     conn.commit()

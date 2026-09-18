@@ -651,6 +651,55 @@
       normalize_production_date()`, áp dụng ở mọi nơi đọc production_date từ
       kết quả SQL computed expression.
 
+- [x] **Filter Fabric Type + Brand Program cho TẤT CẢ 5 báo cáo Dyeing +
+      chuẩn hoá UI dropdown theo mẫu Downtime (2026-09-17)**: Downtime,
+      Batch/Day (Fabric/Color Matrix + Batch/Day Trend), Batch Per Day by
+      Machine, Right First Time, %Tank Loading giờ có ĐỦ Capacity/Fabric
+      Type/Brand Program, trình bày CÙNG 1 kiểu dropdown ("All ..."/"N
+      selected" + checkbox "Select All") — trước đó "Batch Per Day by
+      Machine" hiển thị SAI kiểu (liệt kê ngang toàn bộ giá trị đã chọn
+      trong nút bấm). Rủi ro kỹ thuật chính đã tránh: PHÁT HIỆN TRƯỚC KHI
+      MERGE rằng thêm `brand_program` vào PRIMARY KEY của
+      `batch_matrix_daily_summary` (giống `capacity_kg`) sẽ tái diễn bug
+      COUNT DISTINCT dạng "giờ" (1 máy chạy nhiều brand_program/ngày, SUM
+      operating_hours qua các bucket con sẽ đếm trùng giờ máy) — đã REVERT,
+      viết đường tính riêng `_raw_matrix_rows()`/`_aggregate_raw_rows()`
+      dùng CHỈ khi có Brand Program filter, tái dùng
+      `cell_value_dedup()`/`total_value_dedup()` có sẵn; đường mặc định
+      (không lọc Brand Program) giữ nguyên 100% hiệu năng rollup cũ. 3 rollup
+      khác (`downtime_daily_summary`, `cleaning_mc_daily_summary`,
+      `batch_day_trend_daily_summary`) an toàn mở rộng trực tiếp vì grain là
+      1 dòng/1 bản ghi đo được (không phải machine-hours dùng chung).
+      Migration Postgres mới (CHƯA CHẠY, xem `activeContext.md` mục "Việc
+      tiếp theo"): `supabase/migrate_downtime_summary_brand_fabric.sql`,
+      `supabase/migrate_cleaning_matrix_fabric_type.sql`,
+      `supabase/migrate_batch_day_trend_brand_program.sql`. Test mới
+      `tests/test_downtime_brand_fabric_filters.py`,
+      `tests/test_batch_matrix_brand_fabric_filters.py` (bẫy đúng kịch bản
+      máy đa brand_program/ngày) — PASS 100%, cùng toàn bộ 6 test suite cũ
+      không regression. Chi tiết đầy đủ ở `activeContext.md` mục -10.
+
+- [x] **Sửa bug thật: "Batch/Day Trend" không tính ra số liệu trên production dù
+      dữ liệu đã upload đủ tới ngày hiện tại (2026-09-18)**: nguyên nhân —
+      `flask rebuild-summaries`/hook sau import gọi `recompute_daily()` RIÊNG
+      LẺ cho từng ngày, mà thuật toán carry-forward của `batch_day_trend.py`
+      phải fetch + sort lại TOÀN BỘ lịch sử mỗi máy MỖI LẦN gọi — hàng trăm
+      ngày = hàng trăm lần fetch+sort lại y hệt lịch sử đó qua kết nối
+      Postgres remote, đủ chậm để tiến trình bị ngắt giữa chừng (chỉ backfill
+      được 6 ngày ĐẦU TIÊN theo thứ tự tăng dần — khớp đúng triệu chứng thật:
+      DB chỉ có dữ liệu cho 6 ngày đầu 06/2026 dù `availability_logs` có dữ
+      liệu tới giữa 09/2026). Đã thêm `BaseEngine.recompute_all(dates, conn)`
+      (method TUỲ CHỌN mới, mặc định lặp `recompute_daily()` — không đổi hành
+      vi Engine nào không override) + `batch_matrix` Engine override để gọi
+      `batch_day_trend.recompute_all()` MỚI (tính CHỈ 1 LẦN cho mỗi máy liên
+      quan, bất kể số ngày cần backfill) thay vì lặp `recompute_daily()` theo
+      từng ngày. `core/rollup.py::trigger_recompute()` đổi từ vòng lặp lồng
+      (ngày ngoài, Engine trong) sang gọi `engine.recompute_all()` 1 lần/Engine.
+      Verify: `tests/test_batch_day_trend_recompute_all.py` (3 kịch bản, bao
+      gồm carry-forward xuyên nhiều ngày + subset ngày) PASS 100%, cùng 8 test
+      suite cũ không regression sau khi đổi cơ chế dispatch rollup. Chi tiết
+      đầy đủ ở `activeContext.md` mục -11.
+
 ## Backlog (Phase 2+)
 - [ ] **Quy tắc phân loại 6 nhóm của `rft`** (Lab to Lab/Lab to Bulk/Bulk to
       Bulk/2nd Batch/Rework/Adjust Color) — CHỜ người dùng cung cấp chi tiết,

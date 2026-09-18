@@ -177,6 +177,7 @@ def _ensure_summary_table(conn: Any) -> None:
                 program TEXT,
                 brand_program TEXT,
                 brand TEXT,
+                fabric_type TEXT,
                 badge TEXT NOT NULL,
                 is_rework INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -184,7 +185,7 @@ def _ensure_summary_table(conn: Any) -> None:
             )
         """)
         existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(cleaning_mc_daily_summary)")}
-        for column in ("brand_program", "brand"):
+        for column in ("brand_program", "brand", "fabric_type"):
             if column not in existing_cols:
                 conn.execute(f"ALTER TABLE cleaning_mc_daily_summary ADD COLUMN {column} TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cleaning_mc_daily_summary_date ON cleaning_mc_daily_summary (production_date)")
@@ -209,7 +210,8 @@ def _orphan_batch_rows(conn: Any, day_str: str, batch_columns: set[str]) -> list
              COALESCE(b.is_rework, 0) AS is_rework,
              COALESCE(m.machine_code, b.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
              m.capacity_kg AS configured_capacity_kg,
-             COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand
+             COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand,
+             {('COALESCE(b.fabric_type, \'\')' if 'fabric_type' in batch_columns else "''")} AS fabric_type
         FROM batch_details b
         LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(b.machine))
         LEFT JOIN brand_program_mapping bp ON lower(trim(bp.greige_code)) = lower(trim(b.greige_code))
@@ -254,7 +256,8 @@ def recompute_daily(production_date: date, conn: Any) -> None:
              COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref,
              COALESCE(m.machine_code, a.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
              COALESCE(m.capacity_kg, a.capacity_kg) AS configured_capacity_kg,
-             COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand
+             COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand,
+             COALESCE(a.fabric_type, '') AS fabric_type
         FROM availability_logs a
         LEFT JOIN batch_details b ON lower(trim(b.dyelot)) = lower(trim(a.batch_ref_no)) OR lower(trim(b.dyelot)) = lower(trim(a.batch))
         LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(a.machine))
@@ -286,7 +289,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, row["availability_log_id"], row["machine"], float(row["capacity_kg"] or 0), row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["sequence_order"], batch_no, row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], badge, int(is_rework), now_str,
+            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), now_str,
         ))
 
     # `availability_log_id` âm (-1, -2, ...) đánh dấu mẻ "mồ côi" (không có availability_logs.id
@@ -310,7 +313,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, -index, row["machine"], capacity_value, row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["start_time"], row["dyelot_ref"], row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], badge, int(is_rework), now_str,
+            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), now_str,
         ))
 
     conn.executemany(
@@ -319,14 +322,17 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             production_date, availability_log_id, machine, capacity_kg, configured_capacity_kg,
             machine_code, mc_brand, tank_type, mc_quantity, tube_no,
             sequence_order, batch_no, dyelot_ref, shade_raw, colour_no, batch_type,
-            start_time, end_time, program, brand_program, brand, badge, is_rework, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         inserts,
     )
 
 
-def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None, brand_programs: list[str] | None = None) -> dict[str, Any]:
+def get_cleaning_matrix(
+    from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None,
+    brand_programs: list[str] | None = None, fabric_types: list[str] | None = None,
+) -> dict[str, Any]:
     conn = get_db()
     _ensure_summary_table(conn)
 
@@ -342,7 +348,7 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
     try:
         rows = execute_query(sql, params)
     except Exception as exc:
-        return {"time_labels": [], "daily_sequence": {}, "error": str(exc), "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}}}
+        return {"time_labels": [], "daily_sequence": {}, "error": str(exc), "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "available_fabric_types": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}}}
 
     # Quét toàn bộ mức Capacity thực tế có trong dữ liệu (trước khi áp filter) để làm nguồn cho bộ lọc.
     available_capacities = sorted({round(float(row["configured_capacity_kg"]), 2) for row in rows if row["configured_capacity_kg"] not in (None, "")})
@@ -352,6 +358,8 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
     # có brand/brand_program rỗng, KHÔNG xuất hiện trong danh sách lọc, luôn hiện khi không lọc.
     available_brand_programs = sorted({f"{row['brand']} - {row['brand_program']}" for row in rows if row["brand"] and row["brand_program"]})
     brand_program_filter = set(brand_programs) if brand_programs else None
+    available_fabric_types = sorted({row["fabric_type"] for row in rows if row["fabric_type"]})
+    fabric_type_filter = set(fabric_types) if fabric_types else None
 
     machines: dict[tuple[str, float], dict[str, Any]] = {}
     normal = cleaning_count = rework = 0
@@ -372,6 +380,8 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
             row_brand_program = f"{row['brand']} - {row['brand_program']}" if row["brand"] and row["brand_program"] else None
             if row_brand_program not in brand_program_filter:
                 continue
+        if fabric_type_filter is not None and row["fabric_type"] not in fabric_type_filter:
+            continue
         machine_key = (row["machine"], float(row["capacity_kg"] or 0))
         normalized_batch_type = str(row["batch_type"] or "").strip().lower()
         if not normalized_batch_type:
@@ -426,6 +436,7 @@ def get_cleaning_matrix(from_date: str | None = None, to_date: str | None = None
         "matrix": matrix,
         "available_capacities": available_capacities,
         "available_brand_programs": available_brand_programs,
+        "available_fabric_types": available_fabric_types,
         "color_summary": color_summary,
         "color_data_coverage": {
             "present": color_source_present,

@@ -7,6 +7,67 @@
     const capacityCheckboxes = [...document.querySelectorAll(".capacity-checkbox")];
     let chart = null;
 
+    function escAttr(value) {
+        return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    }
+    function escHtml(value) {
+        return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // Dropdown multi-select DATA-DRIVEN (cùng cách trình bày với Capacity ở trên, nhưng
+    // option list lấy từ response API) — dùng cho Fabric Type/Brand Program.
+    function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, onChange) {
+        const toggle = document.getElementById(toggleId);
+        const menu = document.getElementById(menuId);
+        let selected = new Set();
+        let options = [];
+        function updateLabel() {
+            if (selected.size === 0) toggle.textContent = defaultLabel;
+            else if (selected.size === 1) toggle.textContent = [...selected][0];
+            else toggle.textContent = `${selected.size} selected`;
+        }
+        function render() {
+            menu.innerHTML = options.length
+                ? `<label class="capacity-option"><input type="checkbox" class="ms-all-option" ${selected.size === 0 ? "checked" : ""}> All</label><div class="border-top my-1"></div>` +
+                  options.map((value) => `<label class="capacity-option"><input type="checkbox" class="ms-option" value="${escAttr(value)}" ${selected.has(value) ? "checked" : ""}> ${escHtml(value)}</label>`).join("")
+                : `<span class="f6 color-fg-muted" style="padding:6px 8px;display:block;">No data</span>`;
+            const allBox = menu.querySelector(".ms-all-option");
+            if (allBox) allBox.addEventListener("change", () => {
+                if (allBox.checked) { selected.clear(); render(); updateLabel(); onChange(); }
+                else { allBox.checked = true; }
+            });
+            menu.querySelectorAll(".ms-option").forEach((box) => box.addEventListener("change", () => {
+                if (box.checked) selected.add(box.value); else selected.delete(box.value);
+                render();
+                updateLabel();
+                onChange();
+            }));
+        }
+        toggle.addEventListener("click", (event) => {
+            event.stopPropagation();
+            menu.hidden = !menu.hidden;
+            toggle.setAttribute("aria-expanded", String(!menu.hidden));
+        });
+        document.addEventListener("click", (event) => {
+            if (!toggle.parentElement.contains(event.target)) {
+                menu.hidden = true;
+                toggle.setAttribute("aria-expanded", "false");
+            }
+        });
+        updateLabel();
+        return {
+            selected: () => [...selected],
+            setOptions(newOptions) {
+                options = newOptions || [];
+                selected = new Set([...selected].filter((value) => options.includes(value)));
+                render();
+                updateLabel();
+            },
+        };
+    }
+    const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", load);
+    const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", load);
+
     function pad2(value) { return String(value).padStart(2, "0"); }
     function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
     function mondayOf(d) {
@@ -42,6 +103,8 @@
     function filters() {
         return new URLSearchParams({
             capacities: selectedCapacities().join(","),
+            fabric_types: fabricTypeFilter.selected().join(","),
+            brand_programs: brandProgramFilter.selected().join(","),
             from_date: document.getElementById("from-date").value,
             to_date: document.getElementById("to-date").value,
             group_by: document.getElementById("group-by").value,
@@ -90,6 +153,8 @@
         const response = await fetch(`${window.TANK_LOADING_API_URL}?${filters()}`);
         if (!response.ok) return;
         const data = await response.json();
+        fabricTypeFilter.setOptions(data.available_fabric_types || []);
+        brandProgramFilter.setOptions(data.available_brand_programs || []);
         document.querySelector(".kpi-tank-loading-pct").textContent = `${data.kpis.tank_loading_pct.toFixed(1)}%`;
         document.querySelector(".kpi-total-output").textContent = data.kpis.total_output_kgh.toLocaleString();
         document.querySelector(".kpi-total-max-load").textContent = data.kpis.total_max_load_kgh.toLocaleString();

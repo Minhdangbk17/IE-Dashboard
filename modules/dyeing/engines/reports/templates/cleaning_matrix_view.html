@@ -1,9 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Batch Per Day by Machine{% endblock %}
+{% block extra_head %}<style>
+    .capacity-dropdown { position: relative; min-width: 170px; }
+    .capacity-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--color-canvas-overlay, #161b22); border: 1px solid var(--color-border-default, #30363d); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); max-height: 260px; overflow-y: auto; }
+    .capacity-menu[hidden] { display: none; }
+    .capacity-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+    .capacity-option:hover { background: var(--color-neutral-muted, rgba(110, 118, 129, .15)); }
+</style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Batch Per Day by Machine</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
 <section class="Box p-3 mb-3"><h3 class="mt-0">Color Legend</h3><div class="legend-row">{% for code, label in [("CM", "Cleaning machine"), ("B", "Black colour"), ("D", "Dark colour"), ("M", "Middle colour"), ("L", "Light colour"), ("W", "White colour"), ("BR", "Black rework"), ("DR", "Dark rework"), ("MR", "Middle rework"), ("LR", "Light rework"), ("WR", "White rework")] %}<span class="legend-item"><span class="badge-code code-{{ code }}">{{ code }}</span>{{ label }}</span>{% endfor %}</div></section>
-<section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px"><div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div><div class="form-group mb-0"><label for="matrix-to">To Date</label><input id="matrix-to" class="form-control" type="date"></div><div class="form-group mb-0" style="position:relative"><label for="capacity-filter-btn">Capacity (Kg)</label><button type="button" id="capacity-filter-btn" class="form-control text-left" style="min-width:170px;cursor:pointer">All</button><div id="capacity-filter-panel" class="Box p-2" style="display:none;position:absolute;top:100%;left:0;z-index:20;min-width:170px;max-height:240px;overflow-y:auto;margin-top:2px"></div></div><div class="form-group mb-0" style="position:relative"><label for="brand-program-filter-btn">Brand Program</label><button type="button" id="brand-program-filter-btn" class="form-control text-left" style="min-width:200px;cursor:pointer">All</button><div id="brand-program-filter-panel" class="Box p-2" style="display:none;position:absolute;top:100%;left:0;z-index:20;min-width:220px;max-height:240px;overflow-y:auto;margin-top:2px"></div></div><button id="matrix-load" class="btn btn-primary">Load Matrix</button></div></section>
+<section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px">
+    <div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div>
+    <div class="form-group mb-0"><label for="matrix-to">To Date</label><input id="matrix-to" class="form-control" type="date"></div>
+    <div class="form-group mb-0 capacity-dropdown">
+        <label for="capacity-toggle">Capacity (Kg)</label>
+        <button id="capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All capacities</button>
+        <div id="capacity-menu" class="capacity-menu" hidden></div>
+    </div>
+    <div class="form-group mb-0 capacity-dropdown">
+        <label for="fabric-type-toggle">Fabric Type</label>
+        <button id="fabric-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All fabric types</button>
+        <div id="fabric-type-menu" class="capacity-menu" hidden></div>
+    </div>
+    <div class="form-group mb-0 capacity-dropdown">
+        <label for="brand-program-toggle">Brand Program</label>
+        <button id="brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
+        <div id="brand-program-menu" class="capacity-menu" hidden></div>
+    </div>
+    <button id="matrix-load" class="btn btn-primary">Load Matrix</button>
+</div></section>
 <div id="matrix-coverage-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
 <div id="matrix-kpis" class="d-flex flex-wrap mb-3" style="gap:12px"></div>
 <div class="Box p-3" style="overflow-x:auto"><table class="preview-table matrix-table" id="matrix-table"><thead><tr id="matrix-head"><th>Machine</th><th>MC brand</th><th>Tank</th><th>MC quantity</th><th>Tube no</th><th>Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th></tr></thead><tbody></tbody></table></div>
@@ -15,6 +41,12 @@
 </script>
 <script>
 (function () { "use strict"; const endpoint = "{{ url_for('dyeing.reports.api_cleaning_matrix') }}";
+    function escAttr(value) {
+        return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    }
+    function escHtml(value) {
+        return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
     function showToast(message, kind) {
         let container = document.querySelector(".toast-container");
         if (!container) { container = document.createElement("div"); container.className = "toast-container"; document.body.appendChild(container); }
@@ -97,57 +129,79 @@
     });
     const formatRatio = (value) => value === null || value === undefined ? "-" : Number(value).toFixed(2);
     const ratioClass = (value) => value === null || value === undefined ? "" : value >= 50 ? "ratio-good" : value <= 5 ? "ratio-warning" : "";
-    const selectedCapacities = new Set([300, 500, 600, 1200, 2400]);
-    const capacityBtn = document.getElementById("capacity-filter-btn");
-    const capacityPanel = document.getElementById("capacity-filter-panel");
-    function updateCapacityButtonLabel() { capacityBtn.textContent = selectedCapacities.size ? [...selectedCapacities].sort((a, b) => a - b).map((value) => `${value}kg`).join(", ") : "All"; }
-    function renderCapacityOptions(capacities) {
-        // "All" = bỏ lọc Capacity hoàn toàn (selectedCapacities rỗng) — cần thiết vì máy MỚI
-        // chưa được cấu hình Capacity (configured_capacity_kg = null) sẽ bị ẩn khỏi bảng nếu
-        // bộ lọc mặc định (300/500/600/1200/2400) đang bật, khiến không có dòng nào để bấm
-        // sửa Capacity cho máy đó — chọn "All" là cách duy nhất để thấy lại các máy này.
-        const allOption = `<label class="d-block" style="white-space:nowrap;font-weight:600;padding-bottom:4px;margin-bottom:4px;border-bottom:1px solid var(--border-default)"><input type="checkbox" id="capacity-all-checkbox" ${selectedCapacities.size === 0 ? "checked" : ""}> All (kể cả máy chưa cấu hình Capacity)</label>`;
-        const options = capacities.length ? capacities.map((value) => `<label class="d-block" style="white-space:nowrap;font-weight:normal"><input type="checkbox" class="capacity-checkbox" value="${value}" ${selectedCapacities.has(value) ? "checked" : ""}> ${value} kg</label>`).join("") : `<span class="f6 color-fg-muted">No capacity data</span>`;
-        capacityPanel.innerHTML = allOption + options;
-        document.getElementById("capacity-all-checkbox").addEventListener("change", (event) => {
-            if (event.target.checked) {
-                selectedCapacities.clear();
-                renderCapacityOptions(capacities);
-                updateCapacityButtonLabel();
-                load();
-            } else {
-                event.target.checked = true; // bỏ chọn "All" phải qua việc tick 1 mốc cụ thể, không để lại trạng thái rỗng-không-checkbox-nào-được-chọn
+
+    // Dropdown multi-select CHUẨN (cùng cách trình bày với báo cáo Downtime): nút hiện nhãn
+    // gọn ("All ..."/"N selected") + panel xổ xuống có checkbox "Select All" ở đầu — trước
+    // đây nút hiện LIỆT KÊ hết giá trị đã chọn (VD "300kg, 500kg, 600kg, 1200kg, 2400kg"),
+    // khiến trông "xổ ngang" khác hẳn Downtime dù cùng là dropdown.
+    function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, initialSelected, onChange) {
+        const toggle = document.getElementById(toggleId);
+        const menu = document.getElementById(menuId);
+        let selected = new Set(initialSelected || []);
+        let options = [];
+        function updateLabel() {
+            if (selected.size === 0) toggle.textContent = defaultLabel;
+            else if (selected.size === 1) toggle.textContent = [...selected][0];
+            else toggle.textContent = `${selected.size} selected`;
+        }
+        function render() {
+            menu.innerHTML = options.length
+                ? `<label class="capacity-option"><input type="checkbox" class="ms-all-option" ${selected.size === 0 ? "checked" : ""}> All</label><div class="border-top my-1"></div>` +
+                  options.map((value) => `<label class="capacity-option"><input type="checkbox" class="ms-option" value="${escAttr(value)}" ${selected.has(value) ? "checked" : ""}> ${escHtml(value)}</label>`).join("")
+                : `<span class="f6 color-fg-muted" style="padding:6px 8px;display:block;">No data</span>`;
+            const allBox = menu.querySelector(".ms-all-option");
+            if (allBox) allBox.addEventListener("change", () => {
+                if (allBox.checked) { selected.clear(); render(); updateLabel(); onChange(); }
+                else { allBox.checked = true; }
+            });
+            menu.querySelectorAll(".ms-option").forEach((box) => box.addEventListener("change", () => {
+                if (box.checked) selected.add(box.value); else selected.delete(box.value);
+                render();
+                updateLabel();
+                onChange();
+            }));
+        }
+        toggle.addEventListener("click", (event) => {
+            event.stopPropagation();
+            menu.hidden = !menu.hidden;
+            toggle.setAttribute("aria-expanded", String(!menu.hidden));
+        });
+        document.addEventListener("click", (event) => {
+            if (!toggle.parentElement.contains(event.target)) {
+                menu.hidden = true;
+                toggle.setAttribute("aria-expanded", "false");
             }
         });
-        capacityPanel.querySelectorAll(".capacity-checkbox").forEach((box) => box.addEventListener("change", () => {
-            const value = Number(box.value);
-            if (box.checked) { selectedCapacities.add(value); } else { selectedCapacities.delete(value); }
-            renderCapacityOptions(capacities);
-            updateCapacityButtonLabel();
-            load();
-        }));
-        updateCapacityButtonLabel();
+        updateLabel();
+        return {
+            selected: () => [...selected],
+            setOptions(newOptions) {
+                options = newOptions || [];
+                selected = new Set([...selected].filter((value) => options.includes(value)));
+                render();
+                updateLabel();
+            },
+        };
     }
-    capacityBtn.addEventListener("click", (event) => { event.stopPropagation(); capacityPanel.style.display = capacityPanel.style.display === "none" ? "block" : "none"; });
-    document.addEventListener("click", (event) => { if (!capacityPanel.contains(event.target) && event.target !== capacityBtn) { capacityPanel.style.display = "none"; } });
 
-    const selectedBrandPrograms = new Set();
-    const brandProgramBtn = document.getElementById("brand-program-filter-btn");
-    const brandProgramPanel = document.getElementById("brand-program-filter-panel");
-    function updateBrandProgramButtonLabel() { brandProgramBtn.textContent = selectedBrandPrograms.size ? [...selectedBrandPrograms].sort().join(", ") : "All"; }
-    function renderBrandProgramOptions(brandPrograms) {
-        brandProgramPanel.innerHTML = brandPrograms.length ? brandPrograms.map((value) => `<label class="d-block" style="white-space:nowrap;font-weight:normal"><input type="checkbox" class="brand-program-checkbox" value="${value}" ${selectedBrandPrograms.has(value) ? "checked" : ""}> ${value}</label>`).join("") : `<span class="f6 color-fg-muted">No Brand Program mapped yet</span>`;
-        brandProgramPanel.querySelectorAll(".brand-program-checkbox").forEach((box) => box.addEventListener("change", () => {
-            if (box.checked) { selectedBrandPrograms.add(box.value); } else { selectedBrandPrograms.delete(box.value); }
-            updateBrandProgramButtonLabel();
-            load();
-        }));
-        updateBrandProgramButtonLabel();
+    // Mặc định Capacity = 300/500/600/1200/2400 (giữ nguyên hành vi cũ) — "All" (bỏ chọn
+    // hết) vẫn cần thiết để thấy máy MỚI chưa cấu hình Capacity (configured_capacity_kg=null).
+    const capacityFilter = makeMultiSelectDropdown("capacity-toggle", "capacity-menu", "All capacities", ["300", "500", "600", "1200", "2400"], load);
+    const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", [], load);
+    const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", [], load);
+
+    function load() {
+        const params = new URLSearchParams({ from_date: document.getElementById("matrix-from").value, to_date: document.getElementById("matrix-to").value });
+        capacityFilter.selected().forEach((value) => params.append("capacity", value));
+        fabricTypeFilter.selected().forEach((value) => params.append("fabric_type", value));
+        brandProgramFilter.selected().forEach((value) => params.append("brand_program", value));
+        fetch(`${endpoint}?${params}`).then((response) => response.json()).then((data) => {
+            render(data);
+            capacityFilter.setOptions((data.available_capacities || []).map(String));
+            fabricTypeFilter.setOptions(data.available_fabric_types || []);
+            brandProgramFilter.setOptions(data.available_brand_programs || []);
+        });
     }
-    brandProgramBtn.addEventListener("click", (event) => { event.stopPropagation(); brandProgramPanel.style.display = brandProgramPanel.style.display === "none" ? "block" : "none"; });
-    document.addEventListener("click", (event) => { if (!brandProgramPanel.contains(event.target) && event.target !== brandProgramBtn) { brandProgramPanel.style.display = "none"; } });
-
-    function load() { const params = new URLSearchParams({from_date: document.getElementById("matrix-from").value, to_date: document.getElementById("matrix-to").value}); selectedCapacities.forEach((value) => params.append("capacity", value)); selectedBrandPrograms.forEach((value) => params.append("brand_program", value)); fetch(`${endpoint}?${params}`).then((response) => response.json()).then((data) => { render(data); renderCapacityOptions(data.available_capacities || []); renderBrandProgramOptions(data.available_brand_programs || []); }); }
     function renderCoverageWarning(coverage) {
         const el = document.getElementById("matrix-coverage-warning");
         if (!coverage || !coverage.missing || coverage.missing_pct < 20) { el.style.display = "none"; return; }

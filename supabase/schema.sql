@@ -268,10 +268,12 @@ create index if not exists idx_performance_start_time on performance_logs (start
 create table if not exists downtime_daily_summary (
     production_date text not null,
     capacity_kg double precision not null,
+    fabric_type text not null default '',
+    brand_program text not null default '',
     category text not null,
     hours double precision not null default 0,
     updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
-    primary key (production_date, capacity_kg, category)
+    primary key (production_date, capacity_kg, fabric_type, brand_program, category)
 );
 create index if not exists idx_downtime_daily_summary_date on downtime_daily_summary (production_date);
 
@@ -347,6 +349,7 @@ create table if not exists batch_day_trend_daily_summary (
     start_time text not null,
     fabric_type text not null,
     capacity_kg double precision,
+    brand_program text not null default '',
     hours double precision not null default 0,
     is_valid integer not null default 0,
     updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
@@ -380,6 +383,7 @@ create table if not exists cleaning_mc_daily_summary (
     program text,
     brand_program text,
     brand text,
+    fabric_type text,
     badge text not null,
     is_rework integer not null default 0,
     updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),

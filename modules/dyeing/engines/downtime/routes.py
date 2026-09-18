@@ -27,6 +27,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         try:
             data = service.get_downtime_pivot_data(
                 capacities=request.args.get("capacities") or None,
+                fabric_types=request.args.get("fabric_types") or None,
+                brand_programs=request.args.get("brand_programs") or None,
                 from_date=request.args.get("from_date") or None,
                 to_date=request.args.get("to_date") or None,
                 group_by=request.args.get("group_by", "date"),
@@ -44,8 +46,10 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         if not period or not category:
             return jsonify({"error": "Missing period/category."}), 400
         capacities = request.args.get("capacities") or None
+        fabric_types = request.args.get("fabric_types") or None
+        brand_programs = request.args.get("brand_programs") or None
         try:
-            data = service.get_top_batches_for_category(period, group_by, category, capacities)
+            data = service.get_top_batches_for_category(period, group_by, category, capacities, fabric_types=fabric_types, brand_programs=brand_programs)
             return jsonify(data)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
@@ -55,6 +59,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
     def api_abnormal_point() -> Any:
         data = service.get_abnormal_point_pivot(
             capacities=request.args.get("capacities") or None,
+            fabric_types=request.args.get("fabric_types") or None,
+            brand_programs=request.args.get("brand_programs") or None,
             from_date=request.args.get("from_date") or None,
             to_date=request.args.get("to_date") or None,
             group_by=request.args.get("group_by", "date"),
@@ -66,12 +72,14 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
     def api_abnormal_point_batches() -> Any:
         field = request.args.get("field") or ""
         capacities = request.args.get("capacities") or None
+        fabric_types = request.args.get("fabric_types") or None
+        brand_programs = request.args.get("brand_programs") or None
         from_date = request.args.get("from_date") or None
         to_date = request.args.get("to_date") or None
         period = request.args.get("period") or None
         group_by = request.args.get("group_by", "date")
         try:
-            data = service.get_abnormal_point_batches(field, capacities, from_date, to_date, period, group_by)
+            data = service.get_abnormal_point_batches(field, capacities, from_date, to_date, period, group_by, fabric_types=fabric_types, brand_programs=brand_programs)
             return jsonify(data)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400

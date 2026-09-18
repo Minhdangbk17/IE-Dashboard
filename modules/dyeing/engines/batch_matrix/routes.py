@@ -44,7 +44,9 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         date_from = request.args.get("date_from") or None
         date_to = request.args.get("date_to") or None
         capacities = request.args.getlist("capacity") or None
-        data = service.build_matrix(date_from, date_to, capacities)
+        fabric_types = request.args.get("fabric_types") or None
+        brand_programs = request.args.get("brand_programs") or None
+        data = service.build_matrix(date_from, date_to, capacities, fabric_types=fabric_types, brand_programs=brand_programs)
         return jsonify(data)
 
     @bp.route("/api/day-batches")
@@ -56,7 +58,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         if not production_date or not fabric_type or not color_group:
             return jsonify({"error": "Missing date/fabric_type/color_group."}), 400
         capacities = request.args.getlist("capacity") or None
-        return jsonify(service.get_day_batches(production_date, fabric_type, color_group, capacities))
+        brand_programs = request.args.get("brand_programs") or None
+        return jsonify(service.get_day_batches(production_date, fabric_type, color_group, capacities, brand_programs=brand_programs))
 
     @bp.route("/api/batch-day-trend")
     @permission_required("dyeing", "batch_matrix", "view")
@@ -64,6 +67,7 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         data = get_batch_day_trend(
             capacities=request.args.get("capacities") or None,
             fabric_types=request.args.get("fabric_types") or None,
+            brand_programs=request.args.get("brand_programs") or None,
             from_date=request.args.get("from_date") or None,
             to_date=request.args.get("to_date") or None,
             group_by=request.args.get("group_by", "date"),
