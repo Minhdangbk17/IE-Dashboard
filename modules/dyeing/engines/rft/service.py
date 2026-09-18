@@ -101,12 +101,22 @@ def _period(day: date, group_by: str) -> tuple[str, str]:
     return day.isoformat(), day.strftime("%d %b %Y")
 
 
+# Cờ báo cho UI (Dyeing Hub Dashboard) biết `classify_rft_category()` đã có quy tắc phân
+# loại THẬT hay vẫn là khung sườn luôn trả None — khi False, mọi Rate% đều = 0 KHÔNG PHẢI
+# vì nhà máy không đạt chuẩn, mà vì chưa có logic phân loại. Dashboard dựa vào cờ này để
+# hiện trạng thái "đang chờ cấu hình" thay vì đường phẳng 0% (dễ hiểu nhầm là dữ liệu thật
+# xấu). **Đổi cờ này thành True NGAY KHI thay xong nội dung `classify_rft_category()`** —
+# cùng 1 lần sửa, đừng quên bước này.
+RFT_CLASSIFICATION_READY = False
+
+
 def classify_rft_category(row: dict[str, Any]) -> str | None:
     """Phân loại 1 mẻ (dict đã JOIN đủ cột `availability_logs`+`batch_details`) vào
     ĐÚNG 1 trong 6 nhóm `RFT_CATEGORIES`, hoặc `None` nếu chưa xác định được nhóm.
 
     TODO (chờ người dùng cung cấp quy tắc chi tiết cho từng bảng — hiện luôn trả
-    `None`, xem docstring đầu file để biết các cột `batch_details` khả dụng)."""
+    `None`, xem docstring đầu file để biết các cột `batch_details` khả dụng). Nhớ đổi
+    `RFT_CLASSIFICATION_READY = True` ở trên khi thay xong."""
     return None
 
 
@@ -167,6 +177,7 @@ def _empty_pivot(category: str, group_by: str) -> dict[str, Any]:
         "chart": {"categories": [], "values": [], "rate_values": []},
         "kpis": {"total_batches": 0, "category_batches": 0, "rate_pct": 0.0},
         "available_fabric_types": [], "available_brand_programs": [],
+        "classification_ready": RFT_CLASSIFICATION_READY,
     }
 
 
@@ -246,4 +257,5 @@ def get_rft_pivot_data(
             "rate_pct": round(category_batches / len(total_batches) * 100, 1) if total_batches else 0.0,
         },
         "available_fabric_types": available_fabric_types, "available_brand_programs": available_brand_programs,
+        "classification_ready": RFT_CLASSIFICATION_READY,
     }

@@ -1,18 +1,82 @@
 {% extends "base.html" %}
 {% block title %}Dyeing Hub{% endblock %}
+{% block body_class %}page-dyeing-hub{% endblock %}
 {% block extra_head %}<style>
-    .dash-grid { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); grid-auto-rows: minmax(320px, auto); gap: 16px; }
-    .dash-grid .widget-card { margin-bottom: 0; display: flex; flex-direction: column; }
-    .dash-chart-wrap { position: relative; flex: 1; min-height: 180px; }
-    .dash-gauge-wrap { position: relative; height: 180px; }
-    .dash-gauge-value { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-family: var(--font-display); font-size: 26px; font-weight: 700; }
-    .dash-stat-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
-    .dash-stat-wrap .stat-value { font-size: 48px; }
-    @media (max-width: 900px) { .dash-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); } }
-    @media (max-width: 600px) { .dash-grid { grid-template-columns: 1fr; } }
+    /* Trang này KHÔNG được cuộn — toàn bộ Dashboard phải luôn vừa khít vùng nhìn thấy,
+       bất kể tỉ lệ màn hình. `.app-main` (định nghĩa trong base.html, dùng chung mọi
+       trang) được ép cao đúng 100vh CHỈ khi có class `page-dyeing-hub` trên <body> —
+       không đụng hành vi cuộn bình thường của MỌI trang khác. */
+    body.page-dyeing-hub .app-main { height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
+    .dash-header-row { flex-shrink: 0; }
+
+    /* "Sân khấu" (stage) chứa toàn bộ 5 khối Dashboard, thiết kế ở ĐÚNG 1 độ phân giải
+       tham chiếu cố định (1600x900, tỉ lệ 16:9 — khớp đa số màn hình/TV) rồi co giãn
+       ĐỀU (transform: scale, tính ở dyeing_hub.js) để luôn vừa khít phần không gian còn
+       lại, dù màn hình thật to/nhỏ/tỉ lệ khác nhau thế nào. Chấp nhận có dải trống 2 bên
+       hoặc trên/dưới khi tỉ lệ màn hình lệch 16:9 — ĐỔI LẠI mọi thứ bên trong LUÔN đúng
+       tỉ lệ tuyệt đối với nhau, không bao giờ bị co kéo méo lệch khi đổi cỡ màn hình. */
+    .dash-stage-outer { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .dash-stage {
+        width: 1600px; height: 900px; flex-shrink: 0;
+        transform-origin: center center;
+        display: grid;
+        grid-template-columns: 640px 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        gap: 16px;
+    }
+    .dash-panel {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-lg);
+        padding: 24px 28px;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        min-width: 0;
+    }
+    .dash-panel-label { font-family: var(--font-body); font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); flex-shrink: 0; }
+    .dash-panel-link { align-self: flex-start; margin-top: 8px; font-size: 13px; color: var(--accent); text-decoration: none; flex-shrink: 0; }
+    .dash-panel-link:hover { text-decoration: underline; }
+
+    /* --- Hero: Batch/Day (khối trội nhất Dashboard — "nhịp tim" ca sản xuất) --- */
+    .dash-hero { grid-column: 1; grid-row: 1 / span 2; }
+    .dash-hero-value { font-family: var(--font-display); font-size: 168px; font-weight: 700; line-height: 1; color: var(--text-primary); margin-top: 4px; }
+    .dash-hero-unit { font-size: 28px; font-weight: 500; color: var(--text-secondary); margin-left: 10px; }
+    .dash-hero-sub { display: flex; gap: 28px; margin-top: 18px; flex-shrink: 0; flex-wrap: wrap; }
+    .dash-hero-sub-item { display: flex; align-items: baseline; gap: 8px; font-size: 20px; color: var(--text-secondary); }
+    .dash-hero-sub-item b { font-size: 26px; font-weight: 700; color: var(--text-primary); }
+    .dash-hero-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 2px; }
+    .dash-hero-spark-wrap { position: relative; flex: 1; min-height: 0; margin-top: 20px; }
+
+    /* --- 4 ô phụ bên phải (2x2) --- */
+    .dash-cell-oee { grid-column: 2; grid-row: 1; align-items: center; }
+    .dash-gauge-wrap { position: relative; flex: 1; min-height: 0; width: 100%; }
+    .dash-gauge-value { position: absolute; bottom: 4%; left: 0; right: 0; text-align: center; font-family: var(--font-display); font-size: 44px; font-weight: 700; }
+    .dash-gauge-caption { text-align: center; font-size: 14px; color: var(--text-tertiary); flex-shrink: 0; }
+
+    .dash-cell-downtime { grid-column: 3; grid-row: 1; align-items: center; justify-content: center; }
+    .dash-downtime-value { font-family: var(--font-display); font-size: 96px; font-weight: 700; line-height: 1; }
+    .dash-downtime-caption { font-size: 15px; color: var(--text-tertiary); margin-top: 8px; }
+
+    .dash-cell-tankloading { grid-column: 2; grid-row: 2; }
+    .dash-tankloading-value { font-family: var(--font-display); font-size: 64px; font-weight: 700; line-height: 1; margin-top: 2px; }
+    .dash-tankloading-sub { display: flex; gap: 16px; margin-top: 8px; flex-shrink: 0; flex-wrap: wrap; }
+    .dash-tankloading-sub-item { display: flex; align-items: baseline; gap: 6px; font-size: 14px; color: var(--text-secondary); }
+    .dash-tankloading-sub-item b { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+    .dash-tankloading-spark-wrap { position: relative; flex: 1; min-height: 0; margin-top: 10px; }
+
+    /* --- RFT: 1 card gộp 4 nhóm (2x2 nội bộ) --- */
+    .dash-cell-rft { grid-column: 3; grid-row: 2; position: relative; }
+    .dash-rft-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .dash-rft-cell { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
+    .dash-rft-cell-label { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dash-rft-cell-value { font-family: var(--font-display); font-size: 26px; font-weight: 700; line-height: 1.3; }
+    .dash-rft-cell-spark { position: relative; flex: 1; min-height: 0; }
+    .dash-cell-rft.is-pending .dash-rft-cell-value { color: var(--text-tertiary); }
+    .dash-rft-pending-note { position: absolute; left: 28px; right: 28px; bottom: 10px; text-align: center; font-size: 12px; color: var(--text-tertiary); font-style: italic; }
 </style>{% endblock %}
 {% block content %}
-<div class="d-flex flex-justify-between flex-items-center mb-4">
+<div class="dash-header-row d-flex flex-justify-between flex-items-center mb-3">
     <div>
         <h2>Dyeing Hub</h2>
         <p class="color-fg-muted f6">Aggregated data from the OEE and Downtime Engines.</p>
@@ -28,65 +92,83 @@
 <!-- ============ DASHBOARD (nạp song song bằng fetch async) ============ -->
 <!-- Khoảng ngày: từ 15 trở đi trong tháng lấy tháng hiện tại (đầu tháng -> hôm nay); trước
      ngày 15 lấy TRỌN tháng trước (tính ở dyeing_hub.js::dashboardWindow()). Capacity luôn
-     lọc >= 500Kg (500/600/1200/2400 — đúng tập giá trị Capacity thật >= 500 trong dữ liệu). -->
-<div id="hub-dashboard" class="dash-grid mb-4"
+     lọc >= 500Kg (500/600/1200/2400 — đúng tập giá trị Capacity thật >= 500 trong dữ liệu).
+     Toàn bộ 5 khối bên trong `#dash-stage` co giãn ĐỀU theo 1 hệ số duy nhất (xem CSS
+     `.dash-stage` + `dyeing_hub.js::rescaleStage()`) — KHÔNG phải 1 lưới responsive thông
+     thường, đây là 1 "sân khấu" kích thước cố định (1600x900) được thu/phóng như 1 khối. -->
+<div class="dash-stage-outer" id="dash-stage-outer">
+<div id="dash-stage" class="dash-stage"
     data-batch-day-trend-url="{{ url_for('dyeing.batch_matrix.api_batch_day_trend') }}"
     data-oee-url="{{ url_for('dyeing.oee.api_calculate') }}"
     data-downtime-url="{{ url_for('dyeing.downtime.api_summary') }}"
     data-tank-loading-url="{{ url_for('dyeing.tank_loading.api_summary') }}"
     data-rft-url="{{ url_for('dyeing.rft.api_summary') }}">
 
-    <div class="widget-card">
-        <h3>Batch/Day</h3>
-        <div class="dash-chart-wrap"><canvas id="dash-batch-day-chart" aria-label="Batch/Day — Cotton, CVC, Polyester"></canvas></div>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.batch_matrix.view') }}">View details &rarr;</a>
-    </div>
-
-    <div class="widget-card">
-        <h3>OEE</h3>
-        <div class="dash-gauge-wrap"><canvas id="dash-oee-gauge" aria-label="OEE gauge"></canvas><div class="dash-gauge-value" id="dash-oee-value">--%</div></div>
-        <span class="f6 color-fg-muted" style="text-align:center;display:block;">Definition pending</span>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.oee.view') }}">View details &rarr;</a>
-    </div>
-
-    <div class="widget-card">
-        <h3>Downtime %</h3>
-        <div class="dash-stat-wrap">
-            <div class="stat-value" id="dash-downtime-value">--%</div>
-            <span class="f6 color-fg-muted">current period</span>
+    <div class="dash-panel dash-hero">
+        <div class="dash-panel-label">Batch/Day</div>
+        <div><span class="dash-hero-value" id="dash-hero-value">--</span><span class="dash-hero-unit">batches/machine</span></div>
+        <div class="dash-hero-sub">
+            <span class="dash-hero-sub-item"><i class="dash-hero-dot" style="background:#3fb950"></i>Cotton <b id="dash-hero-cotton">--</b></span>
+            <span class="dash-hero-sub-item"><i class="dash-hero-dot" style="background:#2862d7"></i>CVC <b id="dash-hero-cvc">--</b></span>
+            <span class="dash-hero-sub-item"><i class="dash-hero-dot" style="background:#f778ba"></i>Polyester <b id="dash-hero-polyester">--</b></span>
         </div>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.downtime.view') }}">View details &rarr;</a>
+        <div class="dash-hero-spark-wrap"><canvas id="dash-hero-spark" aria-label="Batch/Day trend — Cotton, CVC, Polyester"></canvas></div>
+        <a class="dash-panel-link" href="{{ url_for('dyeing.batch_matrix.view') }}">View details &rarr;</a>
     </div>
 
-    <div class="widget-card">
-        <h3>%Tank Loading</h3>
-        <div class="dash-chart-wrap"><canvas id="dash-tank-loading-chart" aria-label="Tank Loading — Cotton, CVC, Polyester"></canvas></div>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.tank_loading.view') }}">View details &rarr;</a>
+    <div class="dash-panel dash-cell-oee">
+        <div class="dash-panel-label" style="align-self:flex-start;">OEE</div>
+        <div class="dash-gauge-wrap"><canvas id="dash-oee-gauge" aria-label="OEE gauge"></canvas><div class="dash-gauge-value" id="dash-oee-value">--%</div></div>
+        <div class="dash-gauge-caption">Definition pending</div>
+        <a class="dash-panel-link" href="{{ url_for('dyeing.oee.view') }}">View details &rarr;</a>
     </div>
 
-    <div class="widget-card">
-        <h3>RFT — Lab to Lab</h3>
-        <div class="dash-chart-wrap"><canvas id="dash-rft-lab_to_lab" aria-label="RFT Lab to Lab rate trend"></canvas></div>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
+    <div class="dash-panel dash-cell-downtime">
+        <div class="dash-panel-label" style="align-self:flex-start;">Downtime %</div>
+        <div class="dash-downtime-value" id="dash-downtime-value">--%</div>
+        <div class="dash-downtime-caption">current period</div>
+        <a class="dash-panel-link" href="{{ url_for('dyeing.downtime.view') }}">View details &rarr;</a>
     </div>
 
-    <div class="widget-card">
-        <h3>RFT — Lab to Bulk</h3>
-        <div class="dash-chart-wrap"><canvas id="dash-rft-lab_to_bulk" aria-label="RFT Lab to Bulk rate trend"></canvas></div>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
+    <div class="dash-panel dash-cell-tankloading">
+        <div class="dash-panel-label">%Tank Loading</div>
+        <div class="dash-tankloading-value" id="dash-tankloading-value">--%</div>
+        <div class="dash-tankloading-sub">
+            <span class="dash-tankloading-sub-item"><i class="dash-hero-dot" style="background:#3fb950;width:8px;height:8px;"></i>Cotton <b id="dash-tank-cotton">--</b></span>
+            <span class="dash-tankloading-sub-item"><i class="dash-hero-dot" style="background:#2862d7;width:8px;height:8px;"></i>CVC <b id="dash-tank-cvc">--</b></span>
+            <span class="dash-tankloading-sub-item"><i class="dash-hero-dot" style="background:#f778ba;width:8px;height:8px;"></i>Polyester <b id="dash-tank-polyester">--</b></span>
+        </div>
+        <div class="dash-tankloading-spark-wrap"><canvas id="dash-tankloading-spark" aria-label="Tank Loading trend — Cotton, CVC, Polyester"></canvas></div>
+        <a class="dash-panel-link" href="{{ url_for('dyeing.tank_loading.view') }}">View details &rarr;</a>
     </div>
 
-    <div class="widget-card">
-        <h3>RFT — Bulk to Bulk</h3>
-        <div class="dash-chart-wrap"><canvas id="dash-rft-bulk_to_bulk" aria-label="RFT Bulk to Bulk rate trend"></canvas></div>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
+    <div class="dash-panel dash-cell-rft" id="dash-rft-card">
+        <div class="dash-panel-label">Right First Time</div>
+        <div class="dash-rft-grid">
+            <div class="dash-rft-cell" data-rft-cell="lab_to_lab">
+                <div class="dash-rft-cell-label">Lab to Lab</div>
+                <div class="dash-rft-cell-value">--</div>
+                <div class="dash-rft-cell-spark"><canvas></canvas></div>
+            </div>
+            <div class="dash-rft-cell" data-rft-cell="lab_to_bulk">
+                <div class="dash-rft-cell-label">Lab to Bulk</div>
+                <div class="dash-rft-cell-value">--</div>
+                <div class="dash-rft-cell-spark"><canvas></canvas></div>
+            </div>
+            <div class="dash-rft-cell" data-rft-cell="bulk_to_bulk">
+                <div class="dash-rft-cell-label">Bulk to Bulk</div>
+                <div class="dash-rft-cell-value">--</div>
+                <div class="dash-rft-cell-spark"><canvas></canvas></div>
+            </div>
+            <div class="dash-rft-cell" data-rft-cell="second_batch">
+                <div class="dash-rft-cell-label">2nd Batch</div>
+                <div class="dash-rft-cell-value">--</div>
+                <div class="dash-rft-cell-spark"><canvas></canvas></div>
+            </div>
+        </div>
+        <a class="dash-panel-link" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
     </div>
-
-    <div class="widget-card">
-        <h3>RFT — 2nd Batch</h3>
-        <div class="dash-chart-wrap"><canvas id="dash-rft-second_batch" aria-label="RFT 2nd Batch rate trend"></canvas></div>
-        <a class="btn btn-sm mt-2" href="{{ url_for('dyeing.rft.view') }}">View details &rarr;</a>
-    </div>
+</div>
 </div>
 
 {% if has_excel_import %}

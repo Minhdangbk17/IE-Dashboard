@@ -29,7 +29,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
     {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
 <div class="app-shell">
     <button type="button" id="sidebar-toggle-btn" class="sidebar-edge-toggle" onclick="toggleSidebar()" aria-label="Collapse navigation" title="Collapse navigation">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

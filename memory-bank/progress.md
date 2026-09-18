@@ -772,6 +772,26 @@
       có quy tắc phân loại thật). Chi tiết đầy đủ + toàn bộ verify (DB tạm
       seed dữ liệu mẫu, Flask server thật, Playwright cả Light/Dark Mode) ở
       `activeContext.md` mục -15.
+- [x] **Redesign Dashboard Dyeing Hub theo review UI/UX chuyên gia MES/Andon** —
+      Batch/Day thành hero DUY NHẤT (số 168px thay vì 1-trong-8-ô-bằng-nhau);
+      gộp 4 ô RFT thành 1 card lưới 2x2 nội bộ, hiện "Đang chờ cấu hình" thay
+      vì đường phẳng 0% (dùng cờ mới `RFT_CLASSIFICATION_READY`); Downtime%
+      tô màu theo ngưỡng tạm (xanh/vàng/đỏ, chưa có số chính thức từ người
+      dùng). Quan trọng nhất: Dashboard giờ là 1 "sân khấu" kích thước cố
+      định 1600x900 co giãn ĐỀU (`transform: scale`, đo bằng `ResizeObserver`)
+      để LUÔN vừa khít màn hình — KHÔNG BAO GIỜ cuộn trang, chấp nhận dải
+      trống (letterbox) khi tỉ lệ màn hình lệch 16:9, chuẩn bị cho mục tiêu
+      treo TV Andon trong xưởng. Phát hiện + sửa 1 bug thật ẢNH HƯỞNG TOÀN
+      APP (không chỉ Dyeing Hub): `.app-sidebar` dùng `min-height:100vh` thay
+      vì `height`, khiến menu dài hơn viewport kéo cả trang cuộn theo dù nội
+      dung chính đã ép đúng 100vh — sửa xong sidebar tự cuộn nội bộ đúng như
+      thiết kế sẵn có (`.sidebar-body{overflow-y:auto}` vốn đã tồn tại nhưng
+      chưa từng được kích hoạt). Thêm `{% block body_class %}{% endblock %}`
+      vào `base.html` (mặc định rỗng, không đổi trang nào khác) để scope CSS
+      riêng cho trang này. Verify bằng Playwright ở 4 tỉ lệ màn hình khác
+      nhau (16:9, ultrawide, laptop phổ biến, vuông) + đo `scrollHeight` thật
+      bằng JS — xác nhận không cuộn ở tỉ lệ nào. Chi tiết đầy đủ ở
+      `activeContext.md` mục -16.
 
 ## Backlog (Phase 2+)
 - [ ] **Quy tắc phân loại 6 nhóm của `rft`** (Lab to Lab/Lab to Bulk/Bulk to

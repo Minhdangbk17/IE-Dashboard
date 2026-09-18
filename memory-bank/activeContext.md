@@ -51,9 +51,21 @@ hình tròn có kim chỉ, số % Downtime tháng hiện tại, %Tank Loading 3 
 gộp 1 chart, 4 mini chart trend Rate% của RFT: Lab to Lab/Lab to Bulk/Bulk
 to Bulk/2nd Batch) — TẤT CẢ dùng chung 1 khoảng ngày tự tính (từ ngày 15 lấy
 tháng hiện tại tới hôm nay, trước ngày 15 lấy TRỌN tháng trước) + filter
-Capacity >= 500Kg cố định — xem chi tiết đầy đủ ở mục -15 bên dưới. Bản ghi
-trước đó (2026-09-18 sáng — bug Batch/Day Trend `recompute_all()`) giữ
-nguyên ở mục -11.
+Capacity >= 500Kg cố định — xem chi tiết đầy đủ ở mục -15 bên dưới. (9)
+**Redesign UI/UX Dashboard theo review chuyên gia MES/Andon** (người dùng
+đóng vai "nhà phê bình thiết kế" tự đánh giá bản (8), rồi cùng thống nhất 3
+quyết định qua hỏi-đáp trước khi code): Batch/Day là hero DUY NHẤT (số cực
+lớn, không còn là 1-trong-8-ô-bằng-nhau); gộp 4 ô RFT thành 1 card duy nhất
+(lưới 2x2 nội bộ) hiện trạng thái "Đang chờ cấu hình" thay vì đường phẳng 0%
+gây hiểu nhầm; và quan trọng nhất — toàn bộ Dashboard giờ là 1 "sân khấu"
+(stage) kích thước cố định 1600x900 co giãn ĐỀU (transform: scale) để LUÔN
+vừa khít màn hình, KHÔNG BAO GIỜ cuộn trang, chấp nhận dải trống
+(letterbox) khi tỉ lệ màn hình lệch 16:9 — chuẩn bị cho mục tiêu treo TV
+Andon thật trong xưởng. Phát hiện + sửa thêm 1 bug thật liên quan (sidebar
+có thể ép cả trang cuộn dọc trên viewport thấp — sửa `--app-sidebar` global
+trong `app.css`, ẢNH HƯỞNG MỌI TRANG, không chỉ Dyeing Hub). Xem chi tiết
+đầy đủ ở mục -16 bên dưới. Bản ghi trước đó (2026-09-18 sáng — bug Batch/Day
+Trend `recompute_all()`) giữ nguyên ở mục -11.
 
 **Cập nhật lần cuối (bản ghi cũ):** 2026-09-17 — Thêm 2 filter mới (Fabric Type, Brand
 Program) vào TẤT CẢ 5 báo cáo của Dyeing Hub (Downtime, Batch/Day — cả 2 tab,
@@ -185,6 +197,96 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-16. **Redesign lại Dashboard Dyeing Hub (mục -15) theo review UI/UX chuyên gia MES/Andon**
+   (2026-09-18, người dùng yêu cầu tôi đóng vai "nhà phê bình thiết kế" tự chấm bản (8) đầu
+   tiên theo 4 tiêu chí: Hero Metric / Tinh giản / Exception-based / Quy tắc 3 giây — review
+   KHÔNG viết code, chỉ phân tích, rồi hỏi lại người dùng 3 câu trước khi thống nhất hướng).
+
+   **Tự phê bình bản đầu (mục -15) phát hiện**: Batch/Day tuy đúng vị trí góc trên-trái
+   nhưng cùng kích thước/trọng số thị giác với 7 ô khác — không phải "hero" thật; 4 ô RFT
+   (đang luôn 0% vì `classify_rft_category()` chưa xong) chiếm nguyên 50% diện tích cho dữ
+   liệu chưa sẵn sàng; Downtime%/Batch/Day không có tô màu theo ngưỡng (exception-based
+   yếu, trừ gauge OEE); biểu đồ 3 đường + chú giải đòi hỏi bước tra cứu, không đạt "3 giây".
+
+   **3 quyết định người dùng chốt qua hỏi-đáp** (không đoán, hỏi rõ từng cái):
+   1. Batch/Day là hero **DUY NHẤT** (không chia sẻ vị trí nổi bật với %Tank Loading).
+   2. Giữ nguyên 4 ô RFT (không ẩn) để không phải bố trí lại layout sau này khi có dữ liệu
+      thật — nhưng cần tránh trông "như lỗi hệ thống" trong lúc chờ.
+   3. Dashboard sẽ treo TV lớn trong xưởng (Andon thật) — nhưng người dùng CHỦ ĐỘNG đơn
+      giản hoá yêu cầu: bỏ qua các chi tiết "khoảng cách xem/chế độ kiosk", chỉ cần ĐÚNG 1
+      ràng buộc kỹ thuật: **toàn bộ Dashboard luôn vừa khít màn hình, không bao giờ cuộn,
+      dù tỉ lệ khung hình nào** — "gom tất cả widget vào 1 widget tổng, cân tỉ lệ ngầm".
+      Khi được hỏi về đánh đổi dải trống (letterbox) ở màn hình lệch tỉ lệ, người dùng chọn
+      **chấp nhận dải trống, đổi lại mọi widget luôn đúng tỉ lệ tuyệt đối** (không co kéo méo).
+
+   **Thiết kế lại** (`modules/dyeing/templates/dyeing_hub.html`,
+   `modules/dyeing/static/dyeing_hub.js`):
+   - **Cơ chế "sân khấu co giãn"**: `#dash-stage` (chứa toàn bộ 5 khối) có kích thước CỐ
+     ĐỊNH 1600x900 (16:9) khai báo bằng CSS thường (không phải %), rồi `dyeing_hub.js::
+     rescaleStage()` đo kích thước thật của `#dash-stage-outer` (vùng còn trống sau khi trừ
+     sidebar + tiêu đề trang), tính `scale = min(availW/1600, availH/900)`, áp
+     `transform: scale(...)` lên `#dash-stage` — CHÍNH XÁC kỹ thuật "canvas cố định + co
+     giãn đều" dùng phổ biến cho màn hình kiosk/digital signage, khác hẳn responsive web
+     thông thường (chỉ phản ứng theo chiều rộng, cho phép cuộn dọc tự do). Dùng
+     `ResizeObserver` quan sát `#dash-stage-outer` (không cần biết RIÊNG lý do đổi kích
+     thước — window resize hay sidebar thu/phóng đều tự kích hoạt tính lại).
+   - **Bố cục 5 khối** (không còn 8 ô bằng nhau): cột trái (640px, cao suốt 900px) = Hero
+     Batch/Day; cột phải (960px) chia lưới 2x2 = OEE / Downtime% / %Tank Loading / RFT
+     (RFT giờ là 1 card DUY NHẤT chứa lưới 2x2 nội bộ cho 4 category, không phải 4 ô cấp
+     cao ngang hàng như bản -15 — vừa đúng yêu cầu "giữ 4 ô" vừa gọn không gian hơn).
+   - **Hero Batch/Day**: số lớn 168px (tổng gộp 3 loại vải, lấy từ `kpis.batch_per_day` có
+     sẵn) thay vì biểu đồ 3 đường làm trọng tâm; 3 số phụ Cotton/CVC/Polyester (kèm chấm
+     màu, không cần chú giải riêng vì màu đặt cạnh ngay tên) lấy từ `rows[i].total`; sparkline
+     mờ (ẩn hẳn trục/lưới/chú giải/tooltip — chỉ giữ HÌNH DẠNG đường, đúng tinh thần "giảm
+     chart chrome cho màn hình đọc từ xa") lấy từ `rows[i].values`. %Tank Loading dùng lại
+     ĐÚNG pattern này nhưng ở quy mô nhỏ hơn (ô phụ, không phải hero).
+   - **RFT gộp 1 card, dùng cờ `classification_ready`** (thêm ở mục -15's tiếp theo — xem
+     `rft/service.py::RFT_CLASSIFICATION_READY`, hằng số MỚI đặt ngay cạnh
+     `classify_rft_category()`, comment nhắc rõ "đổi thành True khi thay xong hàm này"): khi
+     `false` (hiện tại), card nhận class `is-pending` (làm mờ màu số liệu) + 1 dòng chú
+     thích "Đang chờ cấu hình quy tắc phân loại" — THAY THẾ hoàn toàn cách hiển thị "0%"
+     trần trụi dễ hiểu nhầm là dữ liệu thật xấu. Khi cờ chuyển `true` (sau khi có quy tắc
+     phân loại thật), card tự động hiện đúng số liệu — không cần sửa gì thêm ở
+     template/JS.
+   - **Downtime% tô màu theo ngưỡng tạm** (`downtimeColorFor()`: <=8% xanh `--success`,
+     <=15% vàng `--warning`, >15% đỏ `--danger`) — **CHƯA có ngưỡng chính thức từ người
+     dùng** (câu hỏi này đã hỏi nhưng chưa được trả lời trong phiên — để mặc định hợp lý,
+     dễ chỉnh sửa lại 1 chỗ duy nhất khi có số thật).
+
+   **BUG THẬT phát hiện + sửa khi verify Playwright ở NHIỀU tỉ lệ màn hình** (không phải
+   người dùng report — bắt được TRƯỚC khi báo hoàn thành, đúng quy trình bắt buộc): viewport
+   1366x768 (laptop phổ biến) vẫn PHÁT SINH CUỘN DỌC dù `.app-main` đã ép `height:100vh`
+   cho riêng trang này. Nguyên nhân: `.app-sidebar` (`static/css/app.css`, DÙNG CHUNG MỌI
+   TRANG) khai báo `min-height: 100vh` (không phải `height`) — khi danh sách menu dài hơn
+   viewport (846px menu vs 768px màn hình ở test case này), sidebar tự do cao HƠN 100vh để
+   chứa hết menu, kéo theo `.app-shell` (flex row cha) và cả trang bị cuộn theo, BẤT KỂ
+   `.app-main` đã bị ép cao đúng 100vh hay chưa. Đã có SẴN `.sidebar-body{flex:1;
+   min-height:0; overflow-y:auto;}` để cuộn nội bộ menu khi cần, nhưng KHÔNG BAO GIỜ được
+   kích hoạt vì `.app-sidebar` không hề bị ép trần chiều cao. Sửa: đổi `.app-sidebar` sang
+   `height: 100vh` (giữ cả `min-height:100vh` cho an toàn) — **ảnh hưởng MỌI TRANG** (không
+   chỉ Dyeing Hub) nhưng là sửa ĐÚNG bug tiềm ẩn từ trước (đã kiểm tra trang Downtime/Admin
+   Accounts sau khi sửa — sidebar hiển thị bình thường, không bị cắt/vỡ, trang nào có nội
+   dung dài hơn viewport vẫn cuộn ĐÚNG như thiết kế, chỉ riêng sidebar giờ tự cuộn nội bộ
+   khi menu dài hơn màn hình thay vì kéo cả trang cuộn theo).
+
+   **Thêm block mới cho base.html**: `{% block body_class %}{% endblock %}` (mặc định
+   rỗng, KHÔNG đổi hành vi trang nào khác) — `dyeing_hub.html` dùng để gắn class
+   `page-dyeing-hub` lên `<body>`, cho phép CSS ép `.app-main` cao 100vh CHỈ RIÊNG trang
+   này (scope bằng `body.page-dyeing-hub .app-main {...}`) mà không đụng hành vi cuộn bình
+   thường của mọi trang khác trong app.
+
+   **Verify đầy đủ**: seed dữ liệu mẫu vào bản sao TẠM của DB dev (không đụng file thật —
+   đã xác nhận `availability_logs`/`performance_logs` DB dev thật vẫn 0 dòng sau khi xong),
+   chạy Playwright ở 4 tỉ lệ màn hình khác nhau (1600x900 chuẩn 16:9, 2400x900 ultrawide,
+   1366x768 laptop phổ biến, 1200x1200 vuông — trường hợp lệch tỉ lệ cực đoan nhất) + đo
+   `document.documentElement.scrollHeight` so với `clientHeight` bằng JS thật (không đoán
+   qua ảnh chụp) — xác nhận CẢ 4 tỉ lệ đều KHÔNG có cuộn dọc/ngang sau khi sửa bug sidebar.
+   Chụp ảnh xác nhận bằng mắt: dải letterbox xuất hiện đúng ở 2 tỉ lệ lệch (ultrawide letterbox
+   trái-phải, vuông letterbox trên-dưới), tỉ lệ chuẩn/gần chuẩn (16:9, laptop) lấp đầy gần
+   như toàn bộ. Xác nhận cờ `is-pending`/ghi chú RFT hiện đúng qua `classList.contains()`.
+   Test cả Light/Dark Mode. Re-run `tests/test_permission_model.py` — PASS 100%, không
+   regression trên các trang khác sau khi sửa `.app-sidebar` toàn cục.
+
 -15. **Viết lại Dyeing Hub thành Dashboard tổng 8 widget biểu đồ** (2026-09-18, theo yêu
    cầu người dùng — hỏi rõ 1 câu về kiểu chart cho 4 widget RFT trước khi code: line chart
    trend theo ngày, giống Batch/Day/Tank Loading, thay vì gauge như OEE).
@@ -943,6 +1045,9 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 8. Quality trong công thức OEE tạm giả định 100% (giữ nguyên, chưa đổi).
 
 ## Việc tiếp theo
+- **CHỜ XÁC NHẬN**: ngưỡng tô màu chính thức cho Downtime% trên Dashboard (hiện đang tạm
+  đặt <=8% xanh / <=15% vàng / >15% đỏ trong `dyeing_hub.js::downtimeColorFor()` — người
+  dùng chưa xác nhận số cụ thể, đã hỏi nhưng chưa có câu trả lời trong phiên làm việc này).
 - **CHỜ XÁC NHẬN**: tạo bảng MỚI `tank_loading_targets` trên Supabase production (áp lại
   DDL tương ứng trong `supabase/schema.sql`, không cần migration script vì là bảng hoàn
   toàn mới) — trước khi chạy, tính năng Target trên trang %Tank Loading vẫn hoạt động nếu

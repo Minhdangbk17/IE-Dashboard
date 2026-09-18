@@ -244,6 +244,11 @@ input, select, textarea, button { font-family: inherit; }
     flex-direction: column;
     width: 264px;
     flex-shrink: 0;
+    height: 100vh; /* CỐ ĐỊNH (không chỉ min-height) — bắt buộc để .sidebar-body's
+        overflow-y:auto (đã có sẵn) thật sự phát huy tác dụng khi danh sách menu dài hơn
+        màn hình. Trước đây dùng min-height:100vh khiến sidebar tự do cao HƠN 100vh để
+        chứa hết menu, kéo theo .app-shell/toàn trang bị cuộn dọc trên màn hình thấp
+        (phát hiện khi làm trang Dyeing Hub Dashboard — yêu cầu KHÔNG BAO GIỜ cuộn trang). */
     min-height: 100vh;
     background: var(--bg-void);
     border-right: 1px solid var(--border-subtle);
