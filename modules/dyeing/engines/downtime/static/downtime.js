@@ -512,7 +512,6 @@
     function updateChart(selected) {
         if (!chartData || typeof Chart === "undefined") return;
         const colors = { "Total Rate": "#ff7dda", "Rework": "#2862d7", "Color Adjustment": "#625fff", "Sample checking": "#3fb950", "Fabric loading": "#d29922", "Fabric unloading": "#db61a2", "Bleaching/Washing": "#85a6e9", "PH checking": "#f778ba", "Chemical load": "#79c0ff", "Others": "#abaebb" };
-        const rowsByCategory = Object.fromEntries((chartData.rows || []).map((row) => [row.category, row]));
         const datasets = selected.map((name) => ({
             label: name === "Total Rate" ? "Total Downtime Rate" : name,
             data: (unitMode === "hour" ? chartData.datasets_hours : chartData.datasets)[name] || [],
@@ -523,28 +522,6 @@
             pointRadius: name === "Total Rate" ? 3 : 0,
             yAxisID: "y",
         }));
-        // Benchmark (bắt buộc theo quy tắc dashboard): đường Target đứt nét ngang cho từng
-        // category ĐÃ CHỌN có Target admin đặt sẵn (bảng downtime_targets, cùng dữ liệu
-        // đang tô màu ô vượt target ở pivot table) — ẩn khỏi legend/tooltip để không rối mắt
-        // khi chọn nhiều category cùng lúc, chỉ vẽ trên canvas để so trực quan.
-        selected.forEach((name) => {
-            if (name === "Total Rate") return;
-            const row = rowsByCategory[name];
-            const target = row ? (unitMode === "hour" ? row.target_hours : row.target_pct) : null;
-            if (target === null || target === undefined) return;
-            datasets.push({
-                label: `${name} Target`,
-                data: chartData.labels.map(() => target),
-                type: "line",
-                borderColor: colors[name],
-                borderDash: [6, 4],
-                borderWidth: 1.5,
-                pointRadius: 0,
-                fill: false,
-                isTargetLine: true,
-                yAxisID: "y",
-            });
-        });
         if (chart) chart.destroy();
         const isLight = document.documentElement.getAttribute("data-color-mode") === "light";
         const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#abaebb";
@@ -560,10 +537,7 @@
                     x: { stacked: true, ticks: { color: textColor }, grid: { color: gridColor } },
                             y: { stacked: true, beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: unitMode === "hour" ? "Downtime hours / batch" : "Downtime rate (%)", color: textColor } },
                 },
-                plugins: {
-                    legend: { position: "bottom", labels: { color: textColor, usePointStyle: true, filter: (item) => !item.text.endsWith(" Target") } },
-                    tooltip: { filter: (item) => !item.dataset.isTargetLine },
-                },
+                plugins: { legend: { position: "bottom", labels: { color: textColor, usePointStyle: true } } },
             },
         });
     }
