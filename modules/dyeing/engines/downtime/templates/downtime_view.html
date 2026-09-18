@@ -118,7 +118,18 @@
 
 <section class="downtime-page" id="page-achievement" data-page="achievement" hidden>
     <div class="Box p-3 mb-4 chart-panel">
-        <h3 class="mt-0 mb-2">Standard Achievement Breakdown</h3>
+        <div class="d-flex flex-justify-between flex-items-center mb-2">
+            <h3 class="mt-0 mb-0">Standard Achievement Breakdown</h3>
+            <div class="category-selector">
+                <button id="stage-toggle" class="form-select" type="button" aria-haspopup="true" aria-expanded="false">4 selected</button>
+                <div id="stage-menu" class="category-menu" hidden>
+                    {% for stage in ["Load", "Unload", "Sample Check", "pH Check", "Chemical", "Color"] %}
+                    <label class="category-option"><input class="stage-checkbox" value="{{ stage }}" type="checkbox" {% if stage in ["Load", "Unload", "Sample Check", "pH Check"] %}checked{% endif %}> {{ stage }}</label>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        <p class="f6 color-fg-muted mt-0 mb-2">Max 4 stages at a time to keep the trend readable.</p>
         <canvas id="achievementChart" aria-label="Standard achievement chart"></canvas>
     </div>
     <div class="Box p-3" style="overflow-x:auto;">

@@ -69,13 +69,26 @@ def _all_known_production_dates() -> set[date]:
     return dates
 
 
+def rebuild_summaries_range(from_date: date | None = None, to_date: date | None = None) -> int:
+    """Như `rebuild_all_summaries()` nhưng cho phép giới hạn khoảng `production_date`
+    (2 đầu đều `None` = toàn bộ lịch sử, giữ nguyên hành vi cũ). Dùng khi cần chạy backfill
+    theo từng đợt (VD qua route admin trên Vercel — serverless có giới hạn thời gian 1
+    request, backfill toàn bộ lịch sử 1 lần có thể không kịp) thay vì bắt buộc chạy hết
+    trong 1 lần gọi `flask rebuild-summaries`."""
+    dates = _all_known_production_dates()
+    if from_date is not None:
+        dates = {d for d in dates if d >= from_date}
+    if to_date is not None:
+        dates = {d for d in dates if d <= to_date}
+    trigger_recompute(dates)
+    return len(dates)
+
+
 def rebuild_all_summaries() -> int:
     """Chạy `recompute_daily()` cho TOÀN BỘ production_date đã từng xuất hiện trong dữ
     liệu hiện có — dùng 1 lần khi triển khai Daily Rollup lần đầu (dữ liệu cũ chưa có
     summary), hoặc bất cứ khi nào cần sửa lỗi công thức/đổi logic tính toán sau này."""
-    dates = _all_known_production_dates()
-    trigger_recompute(dates)
-    return len(dates)
+    return rebuild_summaries_range()
 
 
 def init_app(app: Flask) -> None:

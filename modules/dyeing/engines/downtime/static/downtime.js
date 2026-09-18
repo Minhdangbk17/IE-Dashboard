@@ -12,6 +12,10 @@
     const categoryMenu = document.getElementById("category-menu");
     const categoryAll = document.getElementById("category-all");
     const categoryCheckboxes = [...document.querySelectorAll(".category-checkbox")];
+    const stageToggle = document.getElementById("stage-toggle");
+    const stageMenu = document.getElementById("stage-menu");
+    const stageCheckboxes = [...document.querySelectorAll(".stage-checkbox")];
+    const MAX_STAGE_LINES = 4; // Quy tắc line chart: tối đa 3-4 đường để tránh "spaghetti chart".
     let chartData = null;
     let achievementChart = null;
     let dataQualityChart = null;
@@ -496,9 +500,19 @@
         categoryToggle.textContent = categoryAll.checked ? "All Categories" : selected.length ? `${selected.length} selected` : "Select category";
     }
 
+    function selectedStages() {
+        return stageCheckboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
+    }
+
+    function updateStageLabel() {
+        const count = selectedStages().length;
+        stageToggle.textContent = count ? `${count} selected` : "Select stage";
+    }
+
     function updateChart(selected) {
         if (!chartData || typeof Chart === "undefined") return;
         const colors = { "Total Rate": "#ff7dda", "Rework": "#2862d7", "Color Adjustment": "#625fff", "Sample checking": "#3fb950", "Fabric loading": "#d29922", "Fabric unloading": "#db61a2", "Bleaching/Washing": "#85a6e9", "PH checking": "#f778ba", "Chemical load": "#79c0ff", "Others": "#abaebb" };
+        const rowsByCategory = Object.fromEntries((chartData.rows || []).map((row) => [row.category, row]));
         const datasets = selected.map((name) => ({
             label: name === "Total Rate" ? "Total Downtime Rate" : name,
             data: (unitMode === "hour" ? chartData.datasets_hours : chartData.datasets)[name] || [],
@@ -509,6 +523,28 @@
             pointRadius: name === "Total Rate" ? 3 : 0,
             yAxisID: "y",
         }));
+        // Benchmark (bắt buộc theo quy tắc dashboard): đường Target đứt nét ngang cho từng
+        // category ĐÃ CHỌN có Target admin đặt sẵn (bảng downtime_targets, cùng dữ liệu
+        // đang tô màu ô vượt target ở pivot table) — ẩn khỏi legend/tooltip để không rối mắt
+        // khi chọn nhiều category cùng lúc, chỉ vẽ trên canvas để so trực quan.
+        selected.forEach((name) => {
+            if (name === "Total Rate") return;
+            const row = rowsByCategory[name];
+            const target = row ? (unitMode === "hour" ? row.target_hours : row.target_pct) : null;
+            if (target === null || target === undefined) return;
+            datasets.push({
+                label: `${name} Target`,
+                data: chartData.labels.map(() => target),
+                type: "line",
+                borderColor: colors[name],
+                borderDash: [6, 4],
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+                isTargetLine: true,
+                yAxisID: "y",
+            });
+        });
         if (chart) chart.destroy();
         const isLight = document.documentElement.getAttribute("data-color-mode") === "light";
         const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#abaebb";
@@ -524,7 +560,10 @@
                     x: { stacked: true, ticks: { color: textColor }, grid: { color: gridColor } },
                             y: { stacked: true, beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: unitMode === "hour" ? "Downtime hours / batch" : "Downtime rate (%)", color: textColor } },
                 },
-                plugins: { legend: { position: "bottom", labels: { color: textColor, usePointStyle: true } } },
+                plugins: {
+                    legend: { position: "bottom", labels: { color: textColor, usePointStyle: true, filter: (item) => !item.text.endsWith(" Target") } },
+                    tooltip: { filter: (item) => !item.dataset.isTargetLine },
+                },
             },
         });
     }
@@ -541,21 +580,28 @@
         const canvas = document.getElementById("achievementChart");
         if (!canvas) return;
         const periods = data.achievement.periods;
-        const breakdown = data.achievement.breakdown;
+        const selected = selectedStages();
+        // Quy tắc line chart: tối đa MAX_STAGE_LINES đường/biểu đồ — lọc theo stage đã chọn
+        // (mặc định 4/6 stage) để tránh "spaghetti chart" thay vì luôn vẽ cả 6.
+        const breakdown = data.achievement.breakdown.filter((row) => selected.includes(row.stage));
         const colors = ["#2862d7", "#625fff", "#3fb950", "#d29922", "#db61a2", "#f778ba"];
-        const datasets = breakdown.map((row, index) => ({
-            label: row.stage,
-            data: row.values,
-            borderColor: colors[index % colors.length],
-            backgroundColor: colors[index % colors.length],
-            borderWidth: 2,
-            tension: 0.35,
-            fill: false,
-            spanGaps: true,
-            pointRadius: 3,
-            pointHoverRadius: 5,
-            pointBackgroundColor: colors[index % colors.length],
-        }));
+        const allStages = data.achievement.breakdown.map((row) => row.stage);
+        const datasets = breakdown.map((row) => {
+            const index = allStages.indexOf(row.stage);
+            return {
+                label: row.stage,
+                data: row.values,
+                borderColor: colors[index % colors.length],
+                backgroundColor: colors[index % colors.length],
+                borderWidth: 2,
+                tension: 0.35,
+                fill: false,
+                spanGaps: true,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: colors[index % colors.length],
+            };
+        });
         if (achievementChart) achievementChart.destroy();
         const { textColor, gridColor } = chartTextColors();
         achievementChart = new Chart(canvas, {
@@ -698,6 +744,19 @@
         updateCategoryLabel();
         updateChart(selectedCategories());
     }));
+    stageToggle.addEventListener("click", () => {
+        stageMenu.hidden = !stageMenu.hidden;
+        stageToggle.setAttribute("aria-expanded", String(!stageMenu.hidden));
+    });
+    stageCheckboxes.forEach((checkbox) => checkbox.addEventListener("change", () => {
+        if (checkbox.checked && selectedStages().length > MAX_STAGE_LINES) {
+            checkbox.checked = false;
+            showToast(`Line chart is limited to ${MAX_STAGE_LINES} stages at once — deselect one first.`, "error");
+            return;
+        }
+        updateStageLabel();
+        if (chartData) updateAchievementChart(chartData);
+    }));
     globalUnitFilter.querySelectorAll("[data-unit]").forEach((button) => button.addEventListener("click", () => {
         unitMode = button.dataset.unit;
         globalUnitFilter.querySelectorAll("[data-unit]").forEach((item) => {
@@ -718,6 +777,8 @@
         if (!event.target.closest(".category-selector")) {
             categoryMenu.hidden = true;
             categoryToggle.setAttribute("aria-expanded", "false");
+            stageMenu.hidden = true;
+            stageToggle.setAttribute("aria-expanded", "false");
         }
     });
     ["from-date", "to-date", "group-by"].forEach((id) => document.getElementById(id).addEventListener("change", load));
@@ -728,6 +789,7 @@
     });
     updateCapacityLabel();
     updateCategoryLabel();
+    updateStageLabel();
     const defaultRange = defaultDateRange();
     document.getElementById("from-date").value = defaultRange.from;
     document.getElementById("to-date").value = defaultRange.to;

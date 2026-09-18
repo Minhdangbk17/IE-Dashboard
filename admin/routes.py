@@ -14,6 +14,8 @@ Admin là superuser cố định — KHÔNG đi qua bảng `user_permissions`, r
 """
 from __future__ import annotations
 
+import time
+from datetime import datetime
 from typing import Any
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
@@ -132,3 +134,34 @@ def account_permissions(user_id: int) -> Any:
         })
 
     return render_template("account_permissions.html", target=dict(target), rows=rows)
+
+
+@admin_bp.route("/data-tools", methods=["GET", "POST"])
+@role_required("admin")
+def data_tools() -> Any:
+    """Trang admin gọi `core.rollup.rebuild_summaries_range()` (Daily Rollup backfill)
+    qua web thay vì CLI `flask rebuild-summaries` — cần thiết khi máy chạy CLI không kết
+    nối được thẳng tới Postgres (VD firewall mạng nội bộ chặn cổng DB) nhưng server chạy
+    app (Vercel) vẫn kết nối Supabase bình thường. Cho phép giới hạn khoảng ngày để chạy
+    theo từng đợt, tránh vượt giới hạn thời gian 1 request của serverless."""
+    if request.method == "POST":
+        from core.rollup import rebuild_summaries_range
+
+        def _parse_date(field: str) -> Any:
+            raw = request.form.get(field, "").strip()
+            return datetime.strptime(raw, "%Y-%m-%d").date() if raw else None
+
+        try:
+            from_date = _parse_date("from_date")
+            to_date = _parse_date("to_date")
+        except ValueError:
+            flash("Invalid date format.", "danger")
+            return redirect(url_for("admin.data_tools"))
+
+        started = time.monotonic()
+        count = rebuild_summaries_range(from_date, to_date)
+        elapsed = time.monotonic() - started
+        flash(f"Rebuilt summaries for {count} production date(s) in {elapsed:.1f}s.", "success")
+        return redirect(url_for("admin.data_tools"))
+
+    return render_template("data_tools.html")

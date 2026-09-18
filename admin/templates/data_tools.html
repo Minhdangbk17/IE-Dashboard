@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Data Tools{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3">
+    <h2 class="mt-0">Data Tools</h2>
+    <a class="btn btn-sm" href="{{ url_for('admin.list_accounts') }}">&larr; Accounts</a>
+</div>
+<div class="Box p-3" style="max-width:560px;">
+    <h3 class="mt-0">Rebuild Summaries</h3>
+    <p class="f6 color-fg-muted">
+        Recomputes the Daily Rollup summary tables (Downtime, Batch/Day Matrix, Cleaning MC, ...)
+        straight from raw data. Use this after a schema/formula change, or to backfill history
+        after adding a new filter column — same as running <code>flask rebuild-summaries</code>,
+        but runs on this server (useful when your own machine can't reach the database directly,
+        e.g. behind a firewall).
+    </p>
+    <form method="POST">
+        <div class="form-group">
+            <label for="from_date">From Date (optional)</label>
+            <input class="form-control" type="date" id="from_date" name="from_date">
+        </div>
+        <div class="form-group">
+            <label for="to_date">To Date (optional)</label>
+            <input class="form-control" type="date" id="to_date" name="to_date">
+        </div>
+        <p class="f6 color-fg-muted">
+            Leave both blank to rebuild the entire history in one run. If that times out,
+            narrow the date range and run it a few times to cover the full history in batches
+            — each run is safe to repeat.
+        </p>
+        <button class="btn btn-primary" type="submit">Rebuild Summaries</button>
+    </form>
+</div>
+{% endblock %}

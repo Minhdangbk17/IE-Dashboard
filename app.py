@@ -155,6 +155,12 @@ def _register_admin_blueprint(app: Flask) -> None:
         icon="people",
         roles=("admin",),
     )
+    navigation.register_menu(
+        label="Data Tools",
+        endpoint="admin.data_tools",
+        icon="sync",
+        roles=("admin",),
+    )
 
 
 def _register_error_handlers(app: Flask) -> None:
