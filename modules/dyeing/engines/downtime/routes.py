@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from flask import Blueprint, jsonify, render_template, request
 
 from core.auth import get_current_user, permission_required, role_required
+from core.excel_importer import set_achievement_standard
 
 from . import service
 
@@ -120,5 +121,20 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             return jsonify({"status": "success", "note": note})
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+
+    @bp.route("/api/achievement-standards/<stage>", methods=["POST"])
+    @permission_required("dyeing", "downtime", "edit")
+    def api_set_achievement_standard(stage: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            standard_hours = float(payload.get("standard_hours"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "standard_hours phải là số."}), 400
+        user = get_current_user()
+        try:
+            standard = set_achievement_standard(stage, standard_hours, user["id"])
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"status": "success", "standard": standard})
 
     return bp

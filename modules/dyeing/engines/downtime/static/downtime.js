@@ -657,15 +657,91 @@
         }, { passive: false });
     }
 
+    function achievementStandardUrl(stage) {
+        return window.DOWNTIME_ACHIEVEMENT_STANDARD_URL_TEMPLATE.replace("__STAGE__", encodeURIComponent(stage));
+    }
+
+    function formatStandardHours(value) {
+        return value === null || value === undefined ? "-" : `${Number(value).toFixed(2)}h`;
+    }
+
+    function renderStandardCell(row) {
+        const text = formatStandardHours(row.standard_hours);
+        if (!window.DOWNTIME_CAN_EDIT_NOTES) return `<td>${text}</td>`;
+        return `<td><span class="case-note-cell" data-stage="${escAttr(row.stage)}">${text}</span></td>`;
+    }
+
+    function buildStandardCellSpan(row) {
+        const span = document.createElement("span");
+        span.className = "case-note-cell";
+        span.dataset.stage = row.stage;
+        span.textContent = formatStandardHours(row.standard_hours);
+        return span;
+    }
+
+    function startEditingStandard(cell) {
+        const stage = cell.dataset.stage;
+        const row = (chartData && chartData.achievement.breakdown || []).find((item) => item.stage === stage);
+        if (!row) return;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.01";
+        input.className = "case-note-input";
+        input.value = row.standard_hours === null || row.standard_hours === undefined ? "" : row.standard_hours;
+        cell.replaceWith(input);
+        input.focus();
+        input.select();
+
+        let settled = false;
+        function commit() { if (settled) return; settled = true; saveStandard(input, row, input.value.trim()); }
+        function cancel() { if (settled) return; settled = true; input.replaceWith(buildStandardCellSpan(row)); }
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+        });
+    }
+
+    function saveStandard(inputEl, row, rawValue) {
+        const value = Number(rawValue);
+        if (rawValue === "" || Number.isNaN(value) || value <= 0) {
+            inputEl.replaceWith(buildStandardCellSpan(row));
+            showToast("Standard must be a positive number.", "error");
+            return;
+        }
+        fetch(achievementStandardUrl(row.stage), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ standard_hours: value }),
+        }).then((response) => response.json().catch(() => ({})).then((data) => {
+            if (!response.ok) throw new Error(data.error || "save failed");
+            showToast(`Standard for ${row.stage} saved — recalculating...`, "success");
+            // Khác Target (chỉ đổi ngưỡng tô màu hiển thị, không đổi số liệu gốc): đổi
+            // Standard làm server RECOMPUTE lại toàn bộ tỷ lệ đạt chuẩn đã tính cho dữ liệu
+            // lịch sử (xem set_achievement_standard()) -> phải load() lại cả trang để lấy
+            // đúng số liệu mới (KPI achievement-rate, chart, và chính bảng này).
+            load();
+        })).catch((err) => {
+            inputEl.replaceWith(buildStandardCellSpan(row));
+            showToast(err && err.message ? err.message : "Failed to save standard.", "error");
+        });
+    }
+
     function renderAchievement(data) {
         const head = document.getElementById("achievement-head");
-        head.innerHTML = "<th>Stage</th>" + data.achievement.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
+        head.innerHTML = "<th>Stage</th><th>Standard</th>" + data.achievement.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
         document.querySelector("#achievement-table tbody").innerHTML = data.achievement.breakdown.map((row) => {
             const cells = row.values.map((value) => `<td>${value === null ? "N/A" : `${value.toFixed(1)}%`}</td>`).join("");
             const total = row.rate_pct === null ? "N/A" : `${row.rate_pct.toFixed(1)}%`;
-            return `<tr><th>${row.stage}</th>${cells}<td><strong>${total}</strong></td></tr>`;
+            return `<tr><th>${row.stage}</th>${renderStandardCell(row)}${cells}<td><strong>${total}</strong></td></tr>`;
         }).join("");
     }
+
+    document.querySelector("#achievement-table tbody").addEventListener("click", (event) => {
+        const cell = event.target.closest(".case-note-cell");
+        if (!cell || !cell.dataset.stage) return;
+        startEditingStandard(cell);
+    });
 
     let loadSeq = 0;
     async function load() {
@@ -682,7 +758,6 @@
         document.getElementById("planned-hours").textContent = data.kpis.planned_hours.toFixed(1);
         document.getElementById("downtime-hours").textContent = data.kpis.downtime_hours.toFixed(1);
         document.getElementById("downtime-rate").textContent = `${data.kpis.downtime_rate_pct.toFixed(1)}%`;
-        document.getElementById("valid-batches").textContent = data.kpis.valid_batches.toLocaleString();
         document.getElementById("achievement-rate").textContent = `${data.kpis.achievement_rate_pct.toFixed(1)}%`;
         renderTable(data);
         renderAchievement(data);

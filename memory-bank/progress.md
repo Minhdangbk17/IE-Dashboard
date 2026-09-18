@@ -700,6 +700,39 @@
       suite cũ không regression sau khi đổi cơ chế dispatch rollup. Chi tiết
       đầy đủ ở `activeContext.md` mục -11.
 
+- [x] **Sửa bug thật "Batch Per Day by Machine" lưu cấu hình máy "lúc được lúc
+      không"** — `upsert_machine_config()` (`reports/cleaning_matrix.py`) đổi
+      từ "SELECT xem đã có chưa rồi INSERT/UPDATE" (2 câu SQL rời rạc, có race
+      condition khi sửa nhiều field liên tiếp trên máy CHƯA từng cấu hình)
+      sang `INSERT ... ON CONFLICT(machine_id) DO UPDATE` nguyên tử. Sửa thêm
+      UX: lưu field mô tả thuần (MC brand/Tank/MC quantity/Tube no) không còn
+      `load()` lại toàn bảng (chỉ Capacity mới cần vì ảnh hưởng Cleaning MC
+      Ratio/filter); khi Capacity cần reload, tự chụp + mở lại đúng ô đang gõ
+      dở ở nơi khác sau khi render xong. Thêm nút thu gọn/mở rộng 5 cột cấu
+      hình máy (state `localStorage`). Chi tiết đầy đủ ở `activeContext.md`
+      mục -11a.
+- [x] **Sửa bug thật cascading crash khi Postgres mất kết nối giữa chừng**
+      (production Vercel+Supabase, phát hiện qua log thật) —
+      `execute_query()`/`execute_one()` (`core/database.py`) tự phát hiện
+      connection Postgres bị đứt (`OperationalError`/`InterfaceError`), đóng +
+      mở lại + thử lại đúng 1 lần; `get_current_user()` (`core/auth.py`) coi
+      như "chưa đăng nhập" nếu DB vẫn lỗi sau retry thay vì crash tiếp — trước
+      đây lỗi này khiến CHÍNH trang lỗi 500 thân thiện cũng crash theo (context
+      processor `inject_nav_menu` gọi lại `get_current_user()` dùng connection
+      đã hỏng). Chi tiết đầy đủ ở `activeContext.md` mục -11a.
+- [x] **Thêm cột "Standard" (ngưỡng giờ) vào bảng "Standard Achievement
+      Breakdown" (Downtime) + cho phép người dùng có quyền edit sửa qua UI** —
+      bảng mới `downtime_achievement_standards` (khoá `stage`), seed từ hằng số
+      `STANDARD_HOURS` đã có sẵn (`core/excel_importer.py`). Sửa Standard
+      RECOMPUTE lại cờ `ach_*` + `ach_evaluated`/`ach_passed`/`ach_all_items`
+      cho TOÀN BỘ `availability_logs` (khác Target chỉ đổi ngưỡng tô màu, không
+      đụng số liệu gốc). Import sau này (Excel hàng loạt/Manual Entry/Raw Data
+      Viewer revalidate) đều dùng Standard mới nhất từ DB. Quyền ghi:
+      `permission_required("dyeing","downtime","edit")` (KHÁC Target vốn
+      `role_required("admin")` — theo đúng yêu cầu người dùng lần này). Chi
+      tiết đầy đủ + toàn bộ verify (DB tạm + Flask test client subprocess) ở
+      `activeContext.md` mục -12.
+
 ## Backlog (Phase 2+)
 - [ ] **Quy tắc phân loại 6 nhóm của `rft`** (Lab to Lab/Lab to Bulk/Bulk to
       Bulk/2nd Batch/Rework/Adjust Color) — CHỜ người dùng cung cấp chi tiết,

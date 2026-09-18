@@ -21,6 +21,7 @@ from typing import Any
 
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect, sql_datetime
+from core.excel_importer import get_achievement_standards
 from core.production_time import normalize_production_date, production_date_sql_expr
 
 CATEGORIES = (
@@ -599,12 +600,18 @@ def get_downtime_pivot_data(
         }
         for category in CATEGORIES
     ]
+    achievement_standards = get_achievement_standards()
     achievement_breakdown = []
     achievement_periods = [value["label"] for _, value in ordered]
     for name in ACHIEVEMENT_COLUMNS:
         evaluated = sum(value["achievement"][name][0] for _, value in ordered)
         passed = sum(value["achievement"][name][1] for _, value in ordered)
-        achievement_breakdown.append({"stage": name, "values": [round(value["achievement"][name][1] / value["achievement"][name][0] * 100, 1) if value["achievement"][name][0] else None for _, value in ordered], "rate_pct": round(passed / evaluated * 100, 1) if evaluated else None})
+        achievement_breakdown.append({
+            "stage": name,
+            "standard_hours": achievement_standards.get(name),
+            "values": [round(value["achievement"][name][1] / value["achievement"][name][0] * 100, 1) if value["achievement"][name][0] else None for _, value in ordered],
+            "rate_pct": round(passed / evaluated * 100, 1) if evaluated else None,
+        })
     all_evaluated = sum(value["achievement"][name][0] for _, value in ordered for name in ACHIEVEMENT_COLUMNS)
     all_passed = sum(value["achievement"][name][1] for _, value in ordered for name in ACHIEVEMENT_COLUMNS)
     achievement_rate = round(all_passed / all_evaluated * 100, 1) if all_evaluated else 0.0

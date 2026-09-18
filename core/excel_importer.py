@@ -31,7 +31,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
-from core.database import get_dialect
+from core.database import execute_query, get_db, get_dialect
 from core.production_time import get_production_date
 
 
@@ -128,6 +128,22 @@ STANDARD_HOURS = {
     "wait_color_load_hour": 0.50,
 }
 ACH_FIELDS = ("ach_load", "ach_unload", "ach_sample_check", "ach_ph", "ach_chemical", "ach_color")
+# "Stage" hiển thị trên UI (bảng "Standard Achievement Breakdown" của Engine downtime) ->
+# cột giờ thô nguồn trong `availability_logs` dùng để so sánh với Standard. Đây là bộ khoá
+# "stage" DUY NHẤT dùng chung cho: seed/đọc/sửa `downtime_achievement_standards` (hàm bên
+# dưới), lúc tính cờ ach_* khi import (`_add_availability_business_fields()`), VÀ
+# `modules/dyeing/engines/downtime/service.py::ACHIEVEMENT_COLUMNS` (map stage -> cột
+# ach_* để đọc báo cáo) — PHẢI cùng bộ khoá "stage" với dict đó, không định nghĩa lệch.
+ACHIEVEMENT_STAGES: dict[str, str] = {
+    "Load": "load_hour", "Unload": "unload_hour", "Sample Check": "sample_checking_hour",
+    "pH Check": "ph_checking_hour", "Chemical": "wait_chemical_load_hour", "Color": "wait_color_load_hour",
+}
+# stage -> cột ach_* tương ứng — dùng khi RECOMPUTE lại cờ ach_* cho TOÀN BỘ dữ liệu cũ mỗi
+# khi Standard của 1 stage đổi (xem `set_achievement_standard()`).
+ACHIEVEMENT_STAGE_ACH_FIELDS: dict[str, str] = {
+    "Load": "ach_load", "Unload": "ach_unload", "Sample Check": "ach_sample_check",
+    "pH Check": "ach_ph", "Chemical": "ach_chemical", "Color": "ach_color",
+}
 # dict.fromkeys(...) khử trùng lặp NHƯNG giữ thứ tự xuất hiện đầu tiên — cần thiết vì
 # AVAILABILITY_COLUMNS có nhiều header (key) khác nhau cùng map vào 1 field DB (value) — VD
 # "Testing Sample order (Kg-H)" (tự sinh) và "Test Production - Sample order (Kg-H)" (alias
@@ -179,7 +195,13 @@ def _standard_result(value: Any, standard: float) -> int | None:
     return 1 if numeric <= standard else 0
 
 
-def _add_availability_business_fields(record: dict[str, Any]) -> None:
+def _add_availability_business_fields(record: dict[str, Any], standard_hours: dict[str, float] | None = None) -> None:
+    """`standard_hours` (khoá = cột giờ thô, VD "load_hour") — mặc định `None` dùng luôn
+    `STANDARD_HOURS` (hằng số). Caller nên truyền kết quả của
+    `get_achievement_standard_hours_by_field()` (đọc từ DB, phản ánh Standard admin đã sửa
+    qua UI) — fetch 1 LẦN trước vòng lặp import hàng loạt rồi truyền vào đây cho TỪNG dòng,
+    KHÔNG query DB lại mỗi dòng (xem `detect_and_parse_file()`)."""
+    standards = standard_hours or STANDARD_HOURS
     reference_time = record.get("end_time") or record.get("start_time")
     production = calculate_production_date(reference_time)
     if production is None:
@@ -189,18 +211,139 @@ def _add_availability_business_fields(record: dict[str, Any]) -> None:
     record["week_label"] = f"{iso_year}-W{iso_week:02d}"
     record["month_label"] = production.strftime("%Y-%m")
     results = {
-        "ach_load": _standard_result(record.get("load_hour"), STANDARD_HOURS["load_hour"]),
-        "ach_unload": _standard_result(record.get("unload_hour"), STANDARD_HOURS["unload_hour"]),
-        "ach_sample_check": _standard_result(record.get("sample_checking_hour"), STANDARD_HOURS["sample_checking_hour"]),
-        "ach_ph": _standard_result(record.get("ph_checking_hour"), STANDARD_HOURS["ph_checking_hour"]),
-        "ach_chemical": _standard_result(record.get("wait_chemical_load_hour"), STANDARD_HOURS["wait_chemical_load_hour"]),
-        "ach_color": _standard_result(record.get("wait_color_load_hour"), STANDARD_HOURS["wait_color_load_hour"]),
+        "ach_load": _standard_result(record.get("load_hour"), standards.get("load_hour", STANDARD_HOURS["load_hour"])),
+        "ach_unload": _standard_result(record.get("unload_hour"), standards.get("unload_hour", STANDARD_HOURS["unload_hour"])),
+        "ach_sample_check": _standard_result(record.get("sample_checking_hour"), standards.get("sample_checking_hour", STANDARD_HOURS["sample_checking_hour"])),
+        "ach_ph": _standard_result(record.get("ph_checking_hour"), standards.get("ph_checking_hour", STANDARD_HOURS["ph_checking_hour"])),
+        "ach_chemical": _standard_result(record.get("wait_chemical_load_hour"), standards.get("wait_chemical_load_hour", STANDARD_HOURS["wait_chemical_load_hour"])),
+        "ach_color": _standard_result(record.get("wait_color_load_hour"), standards.get("wait_color_load_hour", STANDARD_HOURS["wait_color_load_hour"])),
     }
     evaluated = [result for result in results.values() if result is not None]
     record.update(results)
     record["ach_evaluated"] = len(evaluated)
     record["ach_passed"] = sum(evaluated)
     record["ach_all_items"] = int(bool(evaluated) and record["ach_passed"] == record["ach_evaluated"])
+
+
+# ---------------------------------------------------------------------------
+# Standard Achievement — bảng cấu hình `downtime_achievement_standards`, cho phép người
+# dùng có quyền edit Engine downtime sửa ngưỡng giờ (Standard) của từng stage qua UI
+# (`modules/dyeing/engines/downtime/service.py::get_downtime_pivot_data()` đọc
+# `get_achievement_standards()` để hiển thị, route ghi gọi `set_achievement_standard()`).
+# Đặt ở ĐÂY (không phải trong Engine downtime) vì cùng nhóm với STANDARD_HOURS/ACH_FIELDS/
+# `_add_availability_business_fields()` đã có sẵn — Engine downtime import từ đây.
+# ---------------------------------------------------------------------------
+
+
+def _ensure_achievement_standards_table(conn: Any) -> None:
+    """Tự tạo bảng (CHỈ SQLite — Postgres tạo qua `supabase/schema.sql`) + seed giá trị mặc
+    định (`STANDARD_HOURS`) cho stage nào CHƯA có dòng cấu hình (idempotent, an toàn gọi
+    lại nhiều lần)."""
+    if get_dialect() == "sqlite":
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS downtime_achievement_standards (
+                stage TEXT PRIMARY KEY,
+                standard_hours REAL NOT NULL,
+                updated_by INTEGER REFERENCES users (id),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+    existing = {row["stage"] for row in execute_query("SELECT stage FROM downtime_achievement_standards")}
+    for stage, hour_field in ACHIEVEMENT_STAGES.items():
+        if stage in existing:
+            continue
+        conn.execute(
+            "INSERT INTO downtime_achievement_standards (stage, standard_hours) VALUES (?, ?) "
+            "ON CONFLICT (stage) DO NOTHING",
+            (stage, STANDARD_HOURS[hour_field]),
+        )
+    conn.commit()
+
+
+def get_achievement_standards() -> dict[str, float]:
+    """{stage: standard_hours} cho MỌI stage (Load/Unload/Sample Check/pH Check/Chemical/
+    Color) — dùng để hiển thị cột Standard trên UI. Luôn trả đủ 6 stage (fallback
+    `STANDARD_HOURS` nếu vì lý do gì đó thiếu dòng trong bảng)."""
+    conn = get_db()
+    _ensure_achievement_standards_table(conn)
+    rows = execute_query("SELECT stage, standard_hours FROM downtime_achievement_standards")
+    result = {row["stage"]: float(row["standard_hours"]) for row in rows}
+    for stage, hour_field in ACHIEVEMENT_STAGES.items():
+        result.setdefault(stage, STANDARD_HOURS[hour_field])
+    return result
+
+
+def get_achievement_standard_hours_by_field() -> dict[str, float]:
+    """Như `get_achievement_standards()` nhưng khoá theo CỘT GIỜ THÔ (VD "load_hour") thay
+    vì tên stage — đúng hình dạng mà `_add_availability_business_fields()` cần lúc import."""
+    by_stage = get_achievement_standards()
+    return {ACHIEVEMENT_STAGES[stage]: value for stage, value in by_stage.items()}
+
+
+def _recompute_achievement_aggregates(conn: Any) -> None:
+    """Tính lại `ach_evaluated`/`ach_passed`/`ach_all_items` cho TOÀN BỘ `availability_logs`
+    từ giá trị HIỆN TẠI của 6 cột `ach_*` — PHẢI gọi sau khi đổi BẤT KỲ Standard nào (dù chỉ
+    1 stage), vì 3 cột này là tổng hợp CỦA CẢ 6 cờ `ach_*` cộng lại, không phải riêng 1 cột."""
+    ach_fields = list(ACHIEVEMENT_STAGE_ACH_FIELDS.values())
+    evaluated_expr = " + ".join(f"(CASE WHEN {field} IS NOT NULL THEN 1 ELSE 0 END)" for field in ach_fields)
+    passed_expr = " + ".join(f"COALESCE({field}, 0)" for field in ach_fields)
+    conn.execute(f"UPDATE availability_logs SET ach_evaluated = {evaluated_expr}, ach_passed = {passed_expr}")
+    conn.execute("UPDATE availability_logs SET ach_all_items = CASE WHEN ach_evaluated > 0 AND ach_passed = ach_evaluated THEN 1 ELSE 0 END")
+
+
+def set_achievement_standard(stage: str, standard_hours: float, user_id: int) -> dict[str, Any]:
+    """Cập nhật Standard (đơn vị: giờ) của 1 stage + RECOMPUTE lại cờ `ach_*` cho TOÀN BỘ
+    dữ liệu THẬT đã import từ trước — vì `ach_*`/`ach_evaluated`/`ach_passed`/`ach_all_items`
+    được tính SẴN 1 LẦN lúc import (`_add_availability_business_fields()`), Engine downtime
+    đọc thẳng các cột này khi tổng hợp báo cáo (KHÔNG tính lại mỗi lần đọc, xem
+    `downtime/service.py::_daily_planned_and_achievement()`). Đổi Standard mà không
+    recompute sẽ khiến dữ liệu lịch sử VẪN dùng ngưỡng CŨ, sai lệch với Standard mới hiển
+    thị trên UI — KHÁC với Target (Downtime by Category), Target chỉ đổi ngưỡng tô màu
+    hiển thị, không đổi số liệu gốc nên không cần recompute gì."""
+    if stage not in ACHIEVEMENT_STAGES:
+        raise ValueError(f"Stage không hợp lệ: {stage}")
+    if not standard_hours or standard_hours <= 0:
+        raise ValueError("Standard phải là số dương.")
+    hour_field = ACHIEVEMENT_STAGES[stage]
+    ach_field = ACHIEVEMENT_STAGE_ACH_FIELDS[stage]
+
+    conn = get_db()
+    _ensure_achievement_standards_table(conn)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        """
+        INSERT INTO downtime_achievement_standards (stage, standard_hours, updated_by, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (stage) DO UPDATE SET standard_hours = excluded.standard_hours,
+                                           updated_by = excluded.updated_by, updated_at = excluded.updated_at
+        """,
+        (stage, standard_hours, user_id, now_str),
+    )
+    conn.execute(
+        f"""
+        UPDATE availability_logs SET {ach_field} = CASE
+            WHEN {hour_field} IS NULL OR {hour_field} <= 0 THEN NULL
+            WHEN {hour_field} <= ? THEN 1 ELSE 0 END
+        """,
+        (standard_hours,),
+    )
+    _recompute_achievement_aggregates(conn)
+    conn.commit()
+    row = execute_query(
+        """
+        SELECT s.stage, s.standard_hours, s.updated_at, u.username AS updated_by_username
+        FROM downtime_achievement_standards s LEFT JOIN users u ON u.id = s.updated_by
+        WHERE s.stage = ?
+        """,
+        (stage,),
+    )
+    result_row = row[0] if row else None
+    return {
+        "stage": stage,
+        "standard_hours": float(result_row["standard_hours"]) if result_row else standard_hours,
+        "updated_by": result_row["updated_by_username"] if result_row else None,
+        "updated_at": result_row["updated_at"] if result_row else now_str,
+    }
 
 
 def _parse_datetime(value: Any) -> datetime:
@@ -665,12 +808,16 @@ def _build_raw_row_dict(fields: list[str], indexes: dict[str, int], values: list
     return raw
 
 
-def _parse_raw_row(file_type: str, fields: list[str], required: set[str], raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def _parse_raw_row(
+    file_type: str, fields: list[str], required: set[str], raw: dict[str, Any],
+    standard_hours: dict[str, float] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
     """Ép kiểu + áp business rule cho 1 dòng Availability/Performance ở dạng raw dict.
 
     Dùng chung cho vòng lặp import hàng loạt (`detect_and_parse_file`) VÀ cho
     `revalidate_raw_row()` khi người dùng sửa 1 dòng lỗi trong Raw Data Viewer — đảm bảo
-    cùng một luật ép kiểu, không lặp code hai nơi.
+    cùng một luật ép kiểu, không lặp code hai nơi. `standard_hours` (nếu có) truyền thẳng
+    sang `_add_availability_business_fields()` — xem ghi chú ở đó.
     """
     record: dict[str, Any] = {}
     try:
@@ -694,7 +841,7 @@ def _parse_raw_row(file_type: str, fields: list[str], required: set[str], raw: d
         if missing:
             return None, f"Thiếu giá trị bắt buộc: {', '.join(missing)}"
         if file_type == "AVAILABILITY":
-            _add_availability_business_fields(record)
+            _add_availability_business_fields(record, standard_hours)
         return record, None
     except ValueError as exc:
         return None, str(exc)
@@ -708,7 +855,11 @@ def revalidate_raw_row(file_type: str, raw: dict[str, Any]) -> tuple[dict[str, A
         fields, required = list(PERFORMANCE_COLUMNS.values()), _PERFORMANCE_REQUIRED
     else:
         raise ValueError(f"file_type '{file_type}' không hỗ trợ revalidate.")
-    return _parse_raw_row(file_type, fields, required, raw)
+    # Chỉ 1 dòng/lần (sửa tay trong Raw Data Viewer) nên query DB lấy Standard hiện tại ở
+    # đây KHÔNG đáng kể — khác vòng lặp hàng loạt của `detect_and_parse_file()` phải fetch
+    # 1 LẦN trước loop để tránh N query.
+    standard_hours = get_achievement_standard_hours_by_field() if file_type == "AVAILABILITY" else None
+    return _parse_raw_row(file_type, fields, required, raw, standard_hours)
 
 
 def detect_and_parse_file(file_path: str) -> dict[str, Any]:
@@ -760,11 +911,15 @@ def detect_and_parse_file(file_path: str) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     row_details: list[dict[str, Any]] = []
+    # Fetch Standard 1 LẦN trước vòng lặp (không phải mỗi dòng) — file Availability có thể
+    # có hàng nghìn dòng, query DB lặp lại theo dòng sẽ chậm không cần thiết (đúng bài học
+    # đã rút ra ở `executemany()`/Postgres round-trip, xem systemPatterns.md mục 5.1).
+    standard_hours = get_achievement_standard_hours_by_field() if file_type == "AVAILABILITY" else None
     for row_number, values in raw_rows:
         if _is_blank_row(values):
             continue
         raw = _build_raw_row_dict(fields, indexes, values)
-        record, error = _parse_raw_row(file_type, fields, required, raw)
+        record, error = _parse_raw_row(file_type, fields, required, raw, standard_hours)
         if error is not None:
             errors.append({"row": row_number, "error": error})
             row_details.append({"row_number": row_number, "status": "invalid", "error": error, "data": raw})

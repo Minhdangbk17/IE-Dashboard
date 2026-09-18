@@ -7,7 +7,7 @@ from flask import Blueprint, jsonify, render_template, request
 
 from core.auth import permission_required
 from core.database import get_db, get_dialect
-from core.excel_importer import _add_availability_business_fields
+from core.excel_importer import _add_availability_business_fields, get_achievement_standard_hours_by_field
 
 if TYPE_CHECKING:
     from core.engine_base import BaseEngine
@@ -101,7 +101,7 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             record["planned_prd_time_hour"] = round((end - start).total_seconds() / 3600, 4)
             record["running_time_hour"] = max(0.0, record["planned_prd_time_hour"] - sum(record[field] for field in DOWNTIME_FIELDS))
             record["total_downtime_hour"] = round(sum(record[field] for field in DOWNTIME_FIELDS), 4)
-            _add_availability_business_fields(record)
+            _add_availability_business_fields(record, get_achievement_standard_hours_by_field())
             _ensure_columns(get_db())
             fields = tuple(record.keys()) + ("entry_type",)
             values = tuple(record.values()) + ("MANUAL",)

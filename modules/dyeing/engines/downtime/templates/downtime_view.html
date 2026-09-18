@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Downtime Availability - Dyeing{% endblock %}
 {% block extra_head %}<style>
-    .downtime-kpis { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 12px; }
+    .downtime-kpis { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
     .downtime-kpis .widget-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
     .downtime-kpis strong { font-size: 28px; line-height: 1.1; }
     .downtime-table td[style] { background: linear-gradient(90deg, rgba(248, 81, 73, .22) var(--heat), transparent var(--heat)); }
@@ -86,7 +86,6 @@
         <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLANNED PRD HOURS</span><strong id="planned-hours">--</strong><span class="f6 color-fg-muted">hours</span></div>
         <div class="widget-card"><span class="f6 color-fg-muted">TOTAL DOWNTIME HOURS</span><strong id="downtime-hours">--</strong><span class="f6 color-fg-muted">hours</span></div>
         <div class="widget-card"><span class="f6 color-fg-muted">AVERAGE DOWNTIME RATE</span><strong id="downtime-rate">--%</strong><span class="f6 color-fg-muted">of planned time</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">BATCH/DAY</span><strong id="valid-batches">--</strong><span class="f6 color-fg-muted">batch/day/machine</span></div>
         <div class="widget-card"><span class="f6 color-fg-muted">STANDARD ACHIEVEMENT</span><strong id="achievement-rate">--%</strong><span class="f6 color-fg-muted">evaluated steps achieved</span></div>
     </div>
 
@@ -134,7 +133,7 @@
     </div>
     <div class="Box p-3" style="overflow-x:auto;">
         <table class="preview-table" id="achievement-table">
-            <thead><tr id="achievement-head"><th>Stage</th><th>Total</th></tr></thead>
+            <thead><tr id="achievement-head"><th>Stage</th><th>Standard</th><th>Total</th></tr></thead>
             <tbody></tbody>
         </table>
     </div>
@@ -174,6 +173,7 @@
     window.DOWNTIME_CAN_EDIT_NOTES = {{ "true" if current_user_can('dyeing', 'downtime', 'edit') else "false" }};
     window.DOWNTIME_TARGETS_URL = "{{ url_for('dyeing.downtime.api_get_targets') }}";
     window.DOWNTIME_IS_ADMIN = {{ "true" if CURRENT_USER and CURRENT_USER.role == 'admin' else "false" }};
+    window.DOWNTIME_ACHIEVEMENT_STANDARD_URL_TEMPLATE = "{{ url_for('dyeing.downtime.api_set_achievement_standard', stage='__STAGE__') }}";
 </script>
 <script src="{{ url_for('dyeing.downtime.static', filename='downtime.js') }}"></script>
 {% endblock %}

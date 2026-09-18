@@ -312,6 +312,21 @@ create table if not exists downtime_case_notes (
 );
 create index if not exists idx_downtime_case_notes_log on downtime_case_notes (availability_log_id);
 
+-- Standard (threshold hours) for each Achievement stage shown on the "Standard Achievement
+-- Breakdown" table (Downtime page). Seeded with STANDARD_HOURS defaults
+-- (core/excel_importer.py) on first read via get_achievement_standards(). Editing a
+-- standard (set_achievement_standard()) recomputes the ach_* flags AND the
+-- ach_evaluated/ach_passed/ach_all_items aggregates for ALL of availability_logs, not just
+-- future imports — see core/excel_importer.py for the full rationale. Writable by any user
+-- with edit permission on dyeing/downtime (permission_required(..., "edit")), unlike
+-- downtime_targets above which is admin-only by deliberate design choice.
+create table if not exists downtime_achievement_standards (
+    stage          text primary key,
+    standard_hours double precision not null,
+    updated_by     bigint references users (id),
+    updated_at     text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+
 -- Numerator: batch count by (production_date, fabric_type, color_group, capacity_kg).
 -- Denominator (operating_hours): operating hours of the exact machine set that
 -- ran the batches in this cell — NOT hours shared across the whole table.
@@ -455,6 +470,7 @@ alter table performance_logs enable row level security;
 alter table downtime_daily_summary enable row level security;
 alter table downtime_targets enable row level security;
 alter table downtime_case_notes enable row level security;
+alter table downtime_achievement_standards enable row level security;
 alter table batch_matrix_daily_summary enable row level security;
 alter table batch_matrix_targets enable row level security;
 alter table batch_day_trend_daily_summary enable row level security;

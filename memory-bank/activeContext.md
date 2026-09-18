@@ -1,18 +1,34 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-18 — **Bug thật phát hiện + sửa trên production**:
-tab "Batch/Day Trend" (`batch_matrix`) không tính ra số liệu dù dữ liệu đã
-upload đủ tới ngày hiện tại — nguyên nhân là `flask rebuild-summaries` gọi
-`recompute_daily()` RIÊNG LẺ cho từng ngày, mà thuật toán carry-forward của
-Engine này BẮT BUỘC quét lại TOÀN BỘ lịch sử 1 máy mỗi lần gọi -> hàng trăm
-ngày = hàng trăm lần fetch+sort lại y hệt lịch sử đó qua kết nối Postgres
-remote, đủ chậm để tiến trình bị ngắt giữa chừng (chỉ backfill được 6 ngày
-ĐẦU TIÊN theo thứ tự tăng dần trước khi "treo"). Đã thêm
-`BaseEngine.recompute_all(dates, conn)` (mặc định lặp `recompute_daily()`
-như cũ, Engine nào cần thì override) + `batch_day_trend.recompute_all()`
-(tính 1 LẦN cho mỗi máy thay vì N lần) — xem chi tiết đầy đủ ở mục -11 bên
-dưới. Bản ghi trước đó (2026-09-17 — thêm filter Fabric Type/Brand Program +
-chuẩn hoá UI dropdown) giữ nguyên ở mục -10.
+**Cập nhật lần cuối:** 2026-09-18 (bản ghi mới nhất) — 3 việc riêng biệt trong
+cùng 1 phiên làm việc, theo thứ tự: (1) **Bug thật + sửa**: `upsert_machine_config()`
+("Batch Per Day by Machine", `reports/cleaning_matrix.py`) dùng "SELECT xem đã
+có chưa rồi INSERT hoặc UPDATE" KHÔNG nguyên tử — vì bảng `machines` mặc định
+RỖNG, sửa liên tiếp nhiều field trên CÙNG 1 máy chưa từng cấu hình bắn nhiều
+request gần như đồng thời, có thể cùng chạy nhánh INSERT -> vi phạm
+`machine_id UNIQUE` -> lỗi "lưu lúc được lúc không" đúng như người dùng report.
+Đã đổi sang `INSERT ... ON CONFLICT(machine_id) DO UPDATE` nguyên tử (cùng
+nguyên tắc `upsert_case_note()` bên downtime). Đồng thời sửa UX: lưu 1 field
+KHÔNG còn `load()` lại toàn bảng (chỉ Capacity mới cần, các field còn lại
+THUẦN mô tả) — tránh xoá mất ô khác đang gõ dở; thêm nút thu gọn/mở rộng 5 cột
+cấu hình máy (state lưu localStorage). (2) **Bug thật + sửa (production
+Vercel+Supabase)**: request gặp `psycopg2.OperationalError: SSL connection
+has been closed unexpectedly` ở `get_current_user()` -> Flask cố render
+`errors/500.html` -> `inject_nav_menu` context processor gọi
+`get_current_user()` LẦN NỮA dùng lại đúng `g.db` đã hỏng -> `InterfaceError:
+connection already closed` -> trang lỗi thân thiện KHÔNG BAO GIỜ render được.
+Đã thêm `execute_query()`/`execute_one()` tự phát hiện connection Postgres bị
+đứt, đóng + mở lại + thử lại ĐÚNG 1 LẦN (an toàn vì luôn là SELECT thuần);
+`get_current_user()` coi như "chưa đăng nhập" nếu DB vẫn lỗi sau retry thay vì
+crash tiếp. (3) **Tính năng mới**: thêm cột "Standard" (ngưỡng giờ) vào bảng
+"Standard Achievement Breakdown" (Downtime) — xem chi tiết đầy đủ ở mục -12
+bên dưới. (4) **UI nhỏ**: bỏ hẳn KPI widget "BATCH/DAY" (subtitle
+"batch/day/machine", `id="valid-batches"`) khỏi tab Overview của trang
+Downtime theo yêu cầu người dùng — `downtime-kpis` đổi từ 5 xuống 4 cột, KHÔNG
+đụng gì tới `kpis.valid_batches` ở backend (chỉ ẩn khỏi UI, giá trị vẫn tính
+và trả về trong `/api/summary` phòng khi cần lại). Bản ghi trước đó
+(2026-09-18 sáng — bug Batch/Day Trend `recompute_all()`) giữ nguyên ở mục
+-11.
 
 **Cập nhật lần cuối (bản ghi cũ):** 2026-09-17 — Thêm 2 filter mới (Fabric Type, Brand
 Program) vào TẤT CẢ 5 báo cáo của Dyeing Hub (Downtime, Batch/Day — cả 2 tab,
@@ -144,6 +160,116 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-12. **Thêm cột "Standard" (ngưỡng giờ) vào bảng "Standard Achievement Breakdown"
+   + cho phép sửa qua UI, sửa 2 bug thật riêng biệt phát sinh cùng phiên**
+   (2026-09-18, theo yêu cầu người dùng: "giá trị so sánh đã có nhưng phải xuất
+   ra trên UI và người dùng có quyền có thể sửa chúng").
+
+   **Phát hiện trước khi code**: ngưỡng "Standard" (giờ) đã tồn tại từ trước
+   dưới dạng hằng số Python `STANDARD_HOURS` (`core/excel_importer.py`) — dùng
+   để tính cờ `ach_load`/`ach_unload`/`ach_sample_check`/`ach_ph`/`ach_chemical`/
+   `ach_color` (0/1/NULL) NGAY LÚC IMPORT (`_add_availability_business_fields()`),
+   lưu thẳng vào `availability_logs`. Báo cáo Achievement
+   (`downtime/service.py::_daily_planned_and_achievement()`) SUM/COUNT thẳng
+   các cột `ach_*` này (KHÔNG tính lại từ giờ thô mỗi lần đọc) — nghĩa là đổi
+   hằng số Python không hề ảnh hưởng gì tới dữ liệu ĐÃ import trước đó, và
+   không có UI nào để sửa cả.
+
+   **Thiết kế**: bảng mới `downtime_achievement_standards` (khoá `stage` —
+   "Load"/"Unload"/"Sample Check"/"pH Check"/"Chemical"/"Color", cùng bộ khoá
+   với `ACHIEVEMENT_COLUMNS` ở `downtime/service.py`; cột `standard_hours`),
+   seed mặc định từ `STANDARD_HOURS` khi đọc lần đầu. Đặt các hàm CRUD
+   (`get_achievement_standards()`, `get_achievement_standard_hours_by_field()`,
+   `set_achievement_standard()`) trong `core/excel_importer.py` — CÙNG chỗ với
+   `STANDARD_HOURS`/`ACH_FIELDS`/`_add_availability_business_fields()` đã có
+   sẵn (Engine downtime import từ đây, đúng hướng phụ thuộc Engine -> core).
+   Thêm 2 dict mới `ACHIEVEMENT_STAGES` (stage -> cột giờ thô) và
+   `ACHIEVEMENT_STAGE_ACH_FIELDS` (stage -> cột `ach_*`) — PHẢI giữ đồng bộ
+   bộ khoá "stage" với `ACHIEVEMENT_COLUMNS` (downtime/service.py) và danh sách
+   stage hardcode trong `downtime_view.html` (bộ lọc stage của biểu đồ) — 3 nơi
+   định nghĩa CÙNG 1 khái niệm "stage", chưa gộp thành 1 nguồn vì mỗi nơi cần
+   value khác nhau (cột giờ thô / cột ach_* / chỉ cần tên hiển thị).
+
+   **Điểm mấu chốt khác hẳn Target (Downtime by Category)**: sửa Target chỉ đổi
+   ngưỡng TÔ MÀU hiển thị, KHÔNG đụng số liệu gốc. Sửa Standard THẬT SỰ đổi kết
+   quả tính toán — `set_achievement_standard()` phải UPDATE lại cột `ach_*`
+   tương ứng cho TOÀN BỘ `availability_logs` (không chỉ dữ liệu import sau này),
+   RỒI tính lại `ach_evaluated`/`ach_passed`/`ach_all_items` (tổng hợp của CẢ 6
+   cờ `ach_*`, phải tính lại dù chỉ 1 stage đổi). Vì vậy JS (`saveStandard()`)
+   PHẢI `load()` lại toàn trang sau khi lưu (khác `saveTarget()` chỉ
+   `renderTable()` lại từ dữ liệu cache, không gọi `load()`).
+   `_add_availability_business_fields()` cũng đổi để nhận `standard_hours`
+   (dict tuỳ chọn, khoá theo cột giờ thô) — mọi lần IMPORT SAU (Excel hàng loạt
+   `detect_and_parse_file()`, Manual Entry, revalidate Raw Data Viewer) đều
+   dùng Standard MỚI NHẤT từ DB thay vì hằng số cũ; vòng lặp hàng loạt fetch
+   Standard đúng 1 LẦN trước khi lặp qua từng dòng (không query DB mỗi dòng).
+
+   **Quyền**: route ghi `POST /dyeing/downtime/api/achievement-standards/<stage>`
+   gate bằng `permission_required("dyeing", "downtime", "edit")` — CỐ Ý khác
+   Target (Target dùng `role_required("admin")`, quyết định riêng đã ghi ở mục
+   -9) vì người dùng yêu cầu rõ "người dùng có quyền [edit]" chứ không phải
+   "chỉ admin". UI: tái dùng ĐÚNG class `case-note-cell`/`case-note-input` +
+   flag `window.DOWNTIME_CAN_EDIT_NOTES` đã có sẵn (không tạo permission
+   flag/CSS riêng), giống hệt cách vừa làm cho machine config ở mục dưới đây.
+
+   **Postgres production**: đã thêm bảng vào `supabase/schema.sql` (kèm RLS) —
+   **CHƯA CHẠY trên Supabase thật**, cần admin áp DDL này thủ công (không có
+   migration script riêng vì đây là bảng HOÀN TOÀN MỚI, không phải ALTER bảng
+   đã có dữ liệu — cùng cách đã làm cho `downtime_targets` ở mục -9).
+
+   Verify: script tạm dựng DB SQLite tạm (không đụng DB thật) xác nhận
+   `get_achievement_standards()` trả đủ 6 stage với giá trị mặc định,
+   `set_achievement_standard()` recompute ĐÚNG `ach_load` + 3 cột tổng hợp cho
+   TOÀN BỘ dữ liệu cũ (đối chiếu tay: máy có `load_hour` nằm giữa Standard cũ
+   và Standard mới đổi đúng từ "không đạt" sang "đạt"), từ chối đúng standard
+   âm/stage không hợp lệ. Verify end-to-end qua Flask test client đầy đủ
+   (subprocess riêng, DB tạm): trang render 200 kèm cột Standard, `/api/summary`
+   trả đúng `standard_hours` từng stage, ghi qua API phản ánh đúng ở lần đọc
+   sau, operator chỉ có `view` bị chặn ghi (302, không lộ JSON). Re-run
+   `tests/test_downtime_brand_fabric_filters.py`,
+   `tests/test_downtime_case_notes_context.py`, `tests/test_permission_model.py`,
+   `tests/verify_rollup_parity.py` — PASS 100%, không regression.
+
+-11a. **2 bug thật phát hiện + sửa cùng phiên với mục -12 ở trên, KHÔNG liên
+   quan tính năng Standard** (2026-09-18): (1) **"Batch Per Day by Machine" lưu
+   cấu hình máy "lúc được lúc không"** — `upsert_machine_config()`
+   (`reports/cleaning_matrix.py`) dùng "SELECT xem đã có chưa rồi
+   INSERT/UPDATE" 2 câu SQL riêng biệt, KHÔNG nguyên tử. Vì bảng `machines`
+   mặc định RỖNG, mọi máy CHƯA sửa lần nào rơi vào nhánh INSERT ở LẦN ĐẦU —
+   sửa liên tiếp nhiều field trên CÙNG 1 máy (Tab qua nhiều ô) bắn nhiều
+   request gần đồng thời, có thể CÙNG thấy "chưa có dòng" ở bước SELECT rồi
+   CÙNG INSERT, request thua vi phạm `machine_id UNIQUE` -> lỗi 400. Đã đổi
+   sang `INSERT ... ON CONFLICT(machine_id) DO UPDATE` nguyên tử (cùng nguyên
+   tắc `upsert_case_note()`). Đồng thời JS hiện đúng lỗi thật từ server thay vì
+   thông báo chung chung. UX: lưu 1 field (MC brand/Tank/MC quantity/Tube no)
+   KHÔNG còn `load()` lại toàn bảng nữa — các field này THUẦN mô tả, không ảnh
+   hưởng phép tính nào khác (đã xác nhận qua code); CHỈ Capacity mới `load()`
+   lại (ảnh hưởng Cleaning MC Ratio + filter Capacity), và khi đó chụp lại +
+   mở lại đúng các ô đang gõ dở ở nơi khác sau khi render xong (tránh mất nội
+   dung, bug đã report trực tiếp). Thêm nút thu gọn/mở rộng 5 cột cấu hình máy
+   (MC brand/Tank/MC quantity/Tube no/Capacity), state lưu `localStorage`.
+   Verify: script tạm DB SQLite (mô phỏng race, xác nhận UPSERT không còn lỗi
+   UNIQUE + không tạo dòng trùng), Flask test client thật lưu 2 lần liên tiếp
+   trên 1 mã máy test (dọn sạch sau khi xong, không để lại dữ liệu test trong
+   DB dev). (2) **Cascading crash khi Postgres mất kết nối giữa chừng
+   (production Vercel+Supabase)** — log thật cho thấy request gặp
+   `psycopg2.OperationalError: SSL connection has been closed unexpectedly` ở
+   `get_current_user()` (decorator phân quyền), Flask cố render
+   `errors/500.html`, nhưng `inject_nav_menu` (context processor chạy cho MỌI
+   template) lại gọi `get_current_user()` LẦN NỮA dùng lại đúng `g.db` đã hỏng
+   -> `psycopg2.InterfaceError: connection already closed` -> trang lỗi thân
+   thiện KHÔNG BAO GIỜ render được, người dùng thấy lỗi thô. Đã thêm
+   `execute_query()`/`execute_one()` (`core/database.py`) tự phát hiện lỗi kết
+   nối Postgres, đóng + mở lại + thử lại ĐÚNG 1 LẦN (an toàn vì luôn là SELECT
+   thuần); `get_current_user()` (`core/auth.py`) coi như "chưa đăng nhập" nếu
+   DB vẫn lỗi sau retry, KHÔNG crash tiếp (lỗi vẫn log đầy đủ qua
+   `current_app.logger.exception`). Đường SQLite không đổi hành vi. Verify:
+   mock `_PostgresConnCompat` (không có Postgres thật trong môi trường dev) xác
+   nhận đứt kết nối 1 lần tự phục hồi, mất kết nối kéo dài vẫn trả `None` sạch
+   sẽ thay vì crash, đường SQLite không bị ảnh hưởng. Re-run
+   `tests/test_postgres_shim_translation.py`, `tests/test_production_date.py`,
+   `tests/test_permission_model.py` — PASS 100%.
+
 -11. **BUG THẬT phát hiện + sửa trên production: "Batch/Day Trend" không tính ra
    số liệu dù dữ liệu đã upload đủ tới ngày hiện tại** (2026-09-18, người dùng
    report trực tiếp sau khi dùng thử tính năng filter mới ở mục -10).
@@ -574,6 +700,13 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 8. Quality trong công thức OEE tạm giả định 100% (giữ nguyên, chưa đổi).
 
 ## Việc tiếp theo
+- **CHỜ XÁC NHẬN**: tạo bảng MỚI `downtime_achievement_standards` trên Supabase
+  production (áp lại đoạn DDL tương ứng trong `supabase/schema.sql`, không có
+  migration script riêng vì đây là bảng hoàn toàn mới) — trước khi chạy, tính
+  năng "Standard" trên UI vẫn hiển thị/sửa được nếu app đang chạy SQLite (tự
+  lazy-create), nhưng trên Postgres/Vercel sẽ lỗi 500 khi gọi
+  `get_achievement_standards()`/`set_achievement_standard()` cho tới khi bảng
+  này tồn tại.
 - **CHỜ XÁC NHẬN**: chạy 3 migration mới cho filter Fabric Type/Brand Program
   (2026-09-17) qua Supabase SQL Editor trên DB production, rồi chạy lại
   `flask rebuild-summaries` để backfill dữ liệu lịch sử theo đúng 2 chiều mới:
