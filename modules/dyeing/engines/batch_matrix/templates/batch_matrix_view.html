@@ -29,6 +29,11 @@
     .trend-kpis strong { font-size: 28px; line-height: 1.1; }
     .chart-panel { min-height: 380px; height: 380px; }
     @media (max-width: 800px) { .trend-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
+    .trend-charts-row { display: flex; gap: 12px; height: 320px; }
+    .trend-chart-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .trend-chart-title { margin: 0 0 6px; text-align: center; }
+    .trend-chart-canvas-wrap { position: relative; flex: 1; min-height: 0; }
+    @media (max-width: 900px) { .trend-charts-row { flex-direction: column; height: auto; } .trend-chart-canvas-wrap { height: 260px; } }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
@@ -66,9 +71,22 @@
         <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLANNED HOURS</span><strong class="kpi-total-hours">--</strong><span class="f6 color-fg-muted">Planned PRD time, all batches</span></div>
     </div>
 
-    <div class="Box p-3 mb-4 chart-panel">
+    <div class="Box p-3 mb-4">
         <h3 class="mt-0 mb-2">Batch/Day — trend</h3>
-        <canvas id="trend-chart" aria-label="Batch/Day trend chart"></canvas>
+        <div class="trend-charts-row">
+            <div class="trend-chart-col">
+                <h4 class="trend-chart-title">Cotton</h4>
+                <div class="trend-chart-canvas-wrap"><canvas id="trend-chart-cotton" aria-label="Cotton Batch/Day trend chart"></canvas></div>
+            </div>
+            <div class="trend-chart-col">
+                <h4 class="trend-chart-title">CVC</h4>
+                <div class="trend-chart-canvas-wrap"><canvas id="trend-chart-cvc" aria-label="CVC Batch/Day trend chart"></canvas></div>
+            </div>
+            <div class="trend-chart-col">
+                <h4 class="trend-chart-title">Polyester</h4>
+                <div class="trend-chart-canvas-wrap"><canvas id="trend-chart-polyester" aria-label="Polyester Batch/Day trend chart"></canvas></div>
+            </div>
+        </div>
     </div>
 
     <div class="Box p-3" style="overflow-x:auto;">
@@ -323,7 +341,7 @@
     // -----------------------------------------------------------------
     // Tab "Batch/Day Trend"
     // -----------------------------------------------------------------
-    let trendChart = null;
+    let trendCharts = {}; // fabric_type -> Chart instance (1 biểu đồ riêng/loại vải)
 
     function pad2(value) { return String(value).padStart(2, "0"); }
     function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
@@ -436,20 +454,22 @@
         ).join("");
     }
 
+    function trendCanvasId(fabricType) {
+        return `trend-chart-${fabricType.toLowerCase()}`;
+    }
+
+    // 3 biểu đồ RIÊNG BIỆT (trái=Cotton, giữa=CVC, phải=Polyester, theo đúng thứ tự
+    // MAIN_FABRIC_TYPES) — mỗi biểu đồ chỉ có 1 đường số liệu + 1 đường Target đứt nét
+    // của ĐÚNG loại đó, không còn gộp chung 1 chart 3 màu như bản trước.
     function updateTrendChart(data) {
         if (typeof Chart === "undefined") return;
-        const canvas = document.getElementById("trend-chart");
-        if (!canvas) return;
         const { textColor, gridColor } = chartTextColors();
-        const datasets = [];
         (data.rows || []).forEach((row) => {
+            const canvas = document.getElementById(trendCanvasId(row.fabric_type));
+            if (!canvas) return;
             const color = TREND_FABRIC_COLORS[row.fabric_type] || "#abaebb";
-            datasets.push({ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false });
+            const datasets = [{ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false }];
             if (row.target !== null && row.target !== undefined) {
-                // Đường Target đứt nét ngang xuyên suốt biểu đồ, cùng màu đường số liệu —
-                // ẩn khỏi legend/tooltip để không nhân đôi chú giải (chỉ 3 loại vải cố
-                // định nên KHÔNG gặp vấn đề "quá nhiều đường" đã khiến tính năng tương tự
-                // bị gỡ khỏi chart Downtime by Category, nơi có tới 9 category chọn tự do).
                 datasets.push({
                     label: `${row.fabric_type} Target`,
                     data: data.periods.map(() => row.target),
@@ -461,24 +481,24 @@
                     isTargetLine: true,
                 });
             }
-        });
-        if (trendChart) trendChart.destroy();
-        trendChart = new Chart(canvas, {
-            type: "line",
-            data: { labels: data.periods, datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: "index", intersect: false },
-                scales: {
-                    x: { ticks: { color: textColor }, grid: { color: gridColor } },
-                    y: { beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: "Batch/Day", color: textColor } },
+            if (trendCharts[row.fabric_type]) trendCharts[row.fabric_type].destroy();
+            trendCharts[row.fabric_type] = new Chart(canvas, {
+                type: "line",
+                data: { labels: data.periods, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: "index", intersect: false },
+                    scales: {
+                        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+                        y: { beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: "Batch/Day", color: textColor } },
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { filter: (item) => !item.dataset.isTargetLine },
+                    },
                 },
-                plugins: {
-                    legend: { position: "bottom", labels: { color: textColor, usePointStyle: true, filter: (item) => !item.text.endsWith(" Target") } },
-                    tooltip: { filter: (item) => !item.dataset.isTargetLine },
-                },
-            },
+            });
         });
     }
 
@@ -522,7 +542,7 @@
         activePageIndex = index;
         tabs.forEach((tab, i) => tab.classList.toggle("is-active", i === index));
         pages.forEach((page, i) => { page.hidden = i !== index; });
-        requestAnimationFrame(() => { if (trendChart) trendChart.resize(); });
+        requestAnimationFrame(() => { Object.values(trendCharts).forEach((c) => c && c.resize()); });
     }
     tabs.forEach((tab, index) => tab.addEventListener("click", () => activatePage(index)));
     let wheelLocked = false;

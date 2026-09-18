@@ -5,7 +5,7 @@
     const capacityMenu = document.getElementById("capacity-menu");
     const capacityAll = document.getElementById("capacity-all");
     const capacityCheckboxes = [...document.querySelectorAll(".capacity-checkbox")];
-    let chart = null;
+    let charts = {}; // fabric_type -> Chart instance (1 biểu đồ riêng/loại vải)
 
     function escAttr(value) {
         return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
@@ -212,15 +212,21 @@
         ).join("");
     }
 
+    function chartCanvasId(fabricType) {
+        return `tank-loading-chart-${fabricType.toLowerCase()}`;
+    }
+
+    // 3 biểu đồ RIÊNG BIỆT (trái=Cotton, giữa=CVC, phải=Polyester, theo đúng thứ tự
+    // MAIN_FABRIC_TYPES) — mỗi biểu đồ chỉ có 1 đường số liệu + 1 đường Target đứt nét
+    // của ĐÚNG loại đó, không còn gộp chung 1 chart 3 màu như bản trước.
     function updateChart(data) {
         if (typeof Chart === "undefined") return;
-        const canvas = document.getElementById("tank-loading-chart");
-        if (!canvas) return;
         const { textColor, gridColor } = chartTextColors();
-        const datasets = [];
         (data.rows || []).forEach((row) => {
+            const canvas = document.getElementById(chartCanvasId(row.fabric_type));
+            if (!canvas) return;
             const color = TANK_LOADING_FABRIC_COLORS[row.fabric_type] || "#abaebb";
-            datasets.push({ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false });
+            const datasets = [{ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false }];
             if (row.target !== null && row.target !== undefined) {
                 datasets.push({
                     label: `${row.fabric_type} Target`,
@@ -233,24 +239,24 @@
                     isTargetLine: true,
                 });
             }
-        });
-        if (chart) chart.destroy();
-        chart = new Chart(canvas, {
-            type: "line",
-            data: { labels: data.periods, datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: "index", intersect: false },
-                scales: {
-                    x: { ticks: { color: textColor }, grid: { color: gridColor } },
-                    y: { beginAtZero: true, ticks: { color: textColor, callback: (value) => `${value}%` }, grid: { color: gridColor }, title: { display: true, text: "Tank Loading %", color: textColor } },
+            if (charts[row.fabric_type]) charts[row.fabric_type].destroy();
+            charts[row.fabric_type] = new Chart(canvas, {
+                type: "line",
+                data: { labels: data.periods, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: "index", intersect: false },
+                    scales: {
+                        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+                        y: { beginAtZero: true, ticks: { color: textColor, callback: (value) => `${value}%` }, grid: { color: gridColor }, title: { display: true, text: "Tank Loading %", color: textColor } },
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { filter: (item) => !item.dataset.isTargetLine },
+                    },
                 },
-                plugins: {
-                    legend: { position: "bottom", labels: { color: textColor, usePointStyle: true, filter: (item) => !item.text.endsWith(" Target") } },
-                    tooltip: { filter: (item) => !item.dataset.isTargetLine },
-                },
-            },
+            });
         });
     }
 

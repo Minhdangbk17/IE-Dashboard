@@ -11,6 +11,11 @@
     .capacity-option:hover { background: var(--color-neutral-muted, rgba(110, 118, 129, .15)); }
     .chart-panel { min-height: 380px; height: 380px; }
     @media (max-width: 800px) { .tank-loading-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
+    .trend-charts-row { display: flex; gap: 12px; height: 320px; }
+    .trend-chart-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .trend-chart-title { margin: 0 0 6px; text-align: center; }
+    .trend-chart-canvas-wrap { position: relative; flex: 1; min-height: 0; }
+    @media (max-width: 900px) { .trend-charts-row { flex-direction: column; height: auto; } .trend-chart-canvas-wrap { height: 260px; } }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
@@ -48,9 +53,22 @@
     <div class="widget-card"><span class="f6 color-fg-muted">TOTAL MAX LOAD (KG/H)</span><strong class="kpi-total-max-load">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
 </div>
 
-<div class="Box p-3 mb-4 chart-panel">
+<div class="Box p-3 mb-4">
     <h3 class="mt-0 mb-2">Tank Loading — trend</h3>
-    <canvas id="tank-loading-chart" aria-label="Tank Loading chart"></canvas>
+    <div class="trend-charts-row">
+        <div class="trend-chart-col">
+            <h4 class="trend-chart-title">Cotton</h4>
+            <div class="trend-chart-canvas-wrap"><canvas id="tank-loading-chart-cotton" aria-label="Cotton Tank Loading chart"></canvas></div>
+        </div>
+        <div class="trend-chart-col">
+            <h4 class="trend-chart-title">CVC</h4>
+            <div class="trend-chart-canvas-wrap"><canvas id="tank-loading-chart-cvc" aria-label="CVC Tank Loading chart"></canvas></div>
+        </div>
+        <div class="trend-chart-col">
+            <h4 class="trend-chart-title">Polyester</h4>
+            <div class="trend-chart-canvas-wrap"><canvas id="tank-loading-chart-polyester" aria-label="Polyester Tank Loading chart"></canvas></div>
+        </div>
+    </div>
 </div>
 
 <div class="Box p-3" style="overflow-x:auto;">

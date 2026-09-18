@@ -40,8 +40,13 @@ chart từ `type: "bar"` sang `type: "line"`, thêm cột Target (%) + đường
 đứt trên chart, bảng Target mới `tank_loading_targets` (khoá `fabric_type`,
 KHÔNG import cross-engine từ `batch_matrix` — định nghĩa `MAIN_FABRIC_TYPES`
 riêng, đúng Vertical Slice Architecture) — xem chi tiết đầy đủ ở mục -14 bên
-dưới. Bản ghi trước đó (2026-09-18 sáng —
-bug Batch/Day Trend `recompute_all()`) giữ nguyên ở mục -11.
+dưới. (7) **Tinh chỉnh UI**: đổi cả 2 báo cáo (5)+(6) từ "1 chart gộp 3 đường
+màu khác nhau" sang "3 chart RIÊNG BIỆT đặt cạnh nhau" (trái=Cotton,
+giữa=CVC, phải=Polyester, theo yêu cầu người dùng) — mỗi chart giờ chỉ có 1
+đường số liệu + 1 đường Target của ĐÚNG loại đó, ẩn hẳn legend (không cần
+phân biệt màu nữa vì đã có tiêu đề riêng từng chart). Bản ghi trước đó
+(2026-09-18 sáng — bug Batch/Day Trend `recompute_all()`) giữ nguyên ở mục
+-11.
 
 **Cập nhật lần cuối (bản ghi cũ):** 2026-09-17 — Thêm 2 filter mới (Fabric Type, Brand
 Program) vào TẤT CẢ 5 báo cáo của Dyeing Hub (Downtime, Batch/Day — cả 2 tab,
@@ -216,6 +221,23 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
    **Postgres production**: đã thêm bảng `tank_loading_targets` vào `supabase/schema.sql`
    (kèm RLS) — CHƯA CHẠY trên Supabase thật, cần admin áp DDL thủ công (bảng hoàn toàn
    mới, không cần migration script riêng).
+
+   **Cập nhật ngay sau đó (cùng ngày)**: người dùng yêu cầu đổi cách trình bày — thay vì 1
+   chart gộp 3 đường màu khác nhau (Cotton/CVC/Polyester chồng lên nhau cùng 1 biểu đồ),
+   tách thành **3 chart RIÊNG BIỆT đặt cạnh nhau** (trái=Cotton, giữa=CVC, phải=Polyester,
+   đúng thứ tự `MAIN_FABRIC_TYPES`). Áp dụng CÙNG lúc cho CẢ Batch/Day Trend (mục -13) lẫn
+   %Tank Loading. Mỗi chart giờ chỉ nhận đúng 1 dòng dữ liệu (`row`) + vẽ 1 đường số liệu +
+   1 đường Target (nếu có) của ĐÚNG loại đó — không cần lọc legend theo hậu tố " Target"
+   nữa (đơn giản hơn hẳn), chỉ cần ẩn hẳn legend (`display:false`) vì tiêu đề `<h4>` phía
+   trên mỗi canvas đã đủ để phân biệt. JS đổi từ biến `let trendChart`/`let chart` (1 Chart
+   instance) sang object `{fabric_type: Chart instance}`, `updateTrendChart()`/
+   `updateChart()` giờ `forEach` qua `data.rows` để vẽ từng canvas riêng
+   (`trend-chart-cotton`/`trend-chart-cvc`/`trend-chart-polyester` và tương tự
+   `tank-loading-chart-*`). CSS mới `.trend-charts-row`/`.trend-chart-col` (flex 3 cột, dùng
+   CHUNG class ở cả 2 file template) tự chuyển sang xếp dọc dưới 900px màn hình. Verify:
+   Flask test client xác nhận cả 6 canvas ID (3 mỗi trang) tồn tại đúng trong HTML, trích
+   xuất + `node -c` script JS đã render (thay xong Jinja) xác nhận cú pháp hợp lệ, re-run
+   `test_permission_model.py`/`test_batch_day_trend_recompute_all.py` — PASS 100%.
 
 -13. **Báo cáo "Batch/Day Trend" — đưa lên trước Matrix làm tab mặc định, LUÔN cố định
    3 dòng/3 đường Cotton/CVC/Polyester, thêm Target có thể sửa + đường nét đứt trên
