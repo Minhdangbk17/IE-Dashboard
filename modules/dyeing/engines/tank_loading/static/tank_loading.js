@@ -14,6 +14,16 @@
         return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    function showToast(message, kind) {
+        let container = document.querySelector(".toast-container");
+        if (!container) { container = document.createElement("div"); container.className = "toast-container"; document.body.appendChild(container); }
+        const el = document.createElement("div");
+        el.className = `flash flash-${kind || "success"} import-toast`;
+        el.textContent = message;
+        container.appendChild(el);
+        window.setTimeout(() => el.remove(), 4000);
+    }
+
     // Dropdown multi-select DATA-DRIVEN (cùng cách trình bày với Capacity ở trên, nhưng
     // option list lấy từ response API) — dùng cho Fabric Type/Brand Program.
     function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, onChange) {
@@ -65,7 +75,6 @@
             },
         };
     }
-    const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", load);
     const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", load);
 
     function pad2(value) { return String(value).padStart(2, "0"); }
@@ -103,7 +112,6 @@
     function filters() {
         return new URLSearchParams({
             capacities: selectedCapacities().join(","),
-            fabric_types: fabricTypeFilter.selected().join(","),
             brand_programs: brandProgramFilter.selected().join(","),
             from_date: document.getElementById("from-date").value,
             to_date: document.getElementById("to-date").value,
@@ -118,12 +126,90 @@
         return { textColor, gridColor };
     }
 
+    // Màu cố định theo loại vải — DÙNG CHUNG cho đường số liệu (nét liền) và đường Target
+    // tương ứng (nét đứt, cùng màu) — cùng bảng màu đã dùng cho Batch/Day Trend.
+    const TANK_LOADING_FABRIC_COLORS = { Cotton: "#3fb950", CVC: "#2862d7", Polyester: "#f778ba" };
+    let lastData = null;
+
+    function tankLoadingTargetUrl(fabricType) {
+        return window.TANK_LOADING_TARGET_URL_TEMPLATE.replace("__FABRIC__", encodeURIComponent(fabricType));
+    }
+
+    function formatTankLoadingTarget(value) {
+        return value === null || value === undefined ? "-" : `${Number(value).toFixed(1)}%`;
+    }
+
+    function renderTargetCell(row) {
+        const text = formatTankLoadingTarget(row.target);
+        if (!window.TANK_LOADING_CAN_EDIT) return `<td>${text}</td>`;
+        return `<td><span class="case-note-cell" data-fabric-type="${escAttr(row.fabric_type)}">${text}</span></td>`;
+    }
+
+    function buildTargetCellSpan(row) {
+        const span = document.createElement("span");
+        span.className = "case-note-cell";
+        span.dataset.fabricType = row.fabric_type;
+        span.textContent = formatTankLoadingTarget(row.target);
+        return span;
+    }
+
+    function startEditingTarget(cell) {
+        const fabricType = cell.dataset.fabricType;
+        const row = (lastData && lastData.rows || []).find((item) => item.fabric_type === fabricType);
+        if (!row) return;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.1";
+        input.className = "case-note-input";
+        input.value = row.target === null || row.target === undefined ? "" : row.target;
+        cell.replaceWith(input);
+        input.focus();
+        input.select();
+        let settled = false;
+        function commit() { if (settled) return; settled = true; saveTarget(input, row, input.value.trim()); }
+        function cancel() { if (settled) return; settled = true; input.replaceWith(buildTargetCellSpan(row)); }
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+        });
+    }
+
+    function saveTarget(inputEl, row, rawValue) {
+        const value = rawValue === "" ? 0 : Number(rawValue);
+        if (Number.isNaN(value)) {
+            inputEl.replaceWith(buildTargetCellSpan(row));
+            showToast("Target must be a number.", "error");
+            return;
+        }
+        fetch(tankLoadingTargetUrl(row.fabric_type), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target_value: value }),
+        }).then((response) => response.json().catch(() => ({})).then((data) => {
+            if (!response.ok) throw new Error(data.error || "save failed");
+            row.target = value;
+            inputEl.replaceWith(buildTargetCellSpan(row));
+            showToast(`Target for ${row.fabric_type} saved.`, "success");
+            updateChart(lastData);
+        })).catch((err) => {
+            inputEl.replaceWith(buildTargetCellSpan(row));
+            showToast(err && err.message ? err.message : "Failed to save target.", "error");
+        });
+    }
+
+    document.querySelector("#tank-loading-table tbody").addEventListener("click", (event) => {
+        const cell = event.target.closest(".case-note-cell");
+        if (!cell || !cell.dataset.fabricType) return;
+        startEditingTarget(cell);
+    });
+
     function renderTable(data) {
         const head = document.getElementById("tank-loading-head");
-        head.innerHTML = "<th>Tank Loading %</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
-        const row = data.rows[0];
-        document.querySelector("#tank-loading-table tbody").innerHTML =
-            `<tr><th>${row.label}</th>${row.values.map((value) => `<td>${value.toFixed(1)}%</td>`).join("")}<td><strong>${row.total.toFixed(1)}%</strong></td></tr>`;
+        head.innerHTML = "<th>Fabric Type</th><th>Target</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
+        document.querySelector("#tank-loading-table tbody").innerHTML = data.rows.map((row) =>
+            `<tr><th>${row.fabric_type}</th>${renderTargetCell(row)}${row.values.map((value) => `<td>${value.toFixed(1)}%</td>`).join("")}<td><strong>${row.total.toFixed(1)}%</strong></td></tr>`
+        ).join("");
     }
 
     function updateChart(data) {
@@ -131,11 +217,27 @@
         const canvas = document.getElementById("tank-loading-chart");
         if (!canvas) return;
         const { textColor, gridColor } = chartTextColors();
-        const row = data.rows[0];
+        const datasets = [];
+        (data.rows || []).forEach((row) => {
+            const color = TANK_LOADING_FABRIC_COLORS[row.fabric_type] || "#abaebb";
+            datasets.push({ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false });
+            if (row.target !== null && row.target !== undefined) {
+                datasets.push({
+                    label: `${row.fabric_type} Target`,
+                    data: data.periods.map(() => row.target),
+                    borderColor: color,
+                    borderDash: [6, 4],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    isTargetLine: true,
+                });
+            }
+        });
         if (chart) chart.destroy();
         chart = new Chart(canvas, {
-            type: "bar",
-            data: { labels: data.periods, datasets: [{ label: row.label, data: row.values, backgroundColor: "#2862d7", borderColor: "#2862d7", borderWidth: 1 }] },
+            type: "line",
+            data: { labels: data.periods, datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -144,7 +246,10 @@
                     x: { ticks: { color: textColor }, grid: { color: gridColor } },
                     y: { beginAtZero: true, ticks: { color: textColor, callback: (value) => `${value}%` }, grid: { color: gridColor }, title: { display: true, text: "Tank Loading %", color: textColor } },
                 },
-                plugins: { legend: { display: false } },
+                plugins: {
+                    legend: { position: "bottom", labels: { color: textColor, usePointStyle: true, filter: (item) => !item.text.endsWith(" Target") } },
+                    tooltip: { filter: (item) => !item.dataset.isTargetLine },
+                },
             },
         });
     }
@@ -153,11 +258,11 @@
         const response = await fetch(`${window.TANK_LOADING_API_URL}?${filters()}`);
         if (!response.ok) return;
         const data = await response.json();
-        fabricTypeFilter.setOptions(data.available_fabric_types || []);
         brandProgramFilter.setOptions(data.available_brand_programs || []);
         document.querySelector(".kpi-tank-loading-pct").textContent = `${data.kpis.tank_loading_pct.toFixed(1)}%`;
         document.querySelector(".kpi-total-output").textContent = data.kpis.total_output_kgh.toLocaleString();
         document.querySelector(".kpi-total-max-load").textContent = data.kpis.total_max_load_kgh.toLocaleString();
+        lastData = data;
         renderTable(data);
         updateChart(data);
     }

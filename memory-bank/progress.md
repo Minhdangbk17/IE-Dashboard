@@ -732,6 +732,28 @@
       `role_required("admin")` — theo đúng yêu cầu người dùng lần này). Chi
       tiết đầy đủ + toàn bộ verify (DB tạm + Flask test client subprocess) ở
       `activeContext.md` mục -12.
+- [x] **Báo cáo "Batch/Day Trend" — tab mặc định, cố định 3 loại vải, Target có
+      thể sửa + đường nét đứt trên chart** — đưa tab "Batch/Day Trend" lên
+      trước "Fabric/Color Matrix" làm mặc định; báo cáo Trend giờ LUÔN tách
+      riêng đúng 3 dòng/3 đường Cotton/CVC/Polyester (mỗi loại tính độc lập
+      theo đúng công thức gốc, loại khác bị loại bỏ hoàn toàn khỏi báo cáo này
+      — đã xoá luôn filter Fabric Type trên tab Trend vì không còn ý nghĩa).
+      Thêm bảng Target mới `batch_day_trend_targets` (khoá `fabric_type`,
+      KHÔNG tái dùng `batch_matrix_targets` vì khác đơn vị đo/quy mô), sửa
+      qua UI (quyền edit thường của Engine, không phải admin-only), hiển thị
+      thành đường nét đứt cùng màu với đường số liệu trên chart — đã tra cứu
+      lại lý do gỡ tính năng tương tự ở Downtime trước khi làm để xác nhận
+      không tái diễn (lý do gỡ là do chart Downtime stacked-bar chọn tự do tới
+      9 category, KHÔNG áp dụng cho chart 3-đường-cố-định này). Chi tiết đầy
+      đủ + toàn bộ verify ở `activeContext.md` mục -13.
+- [x] **Báo cáo "%Tank Loading" — áp dụng lại pattern 3 loại vải cố định + Target
+      + đường nét đứt (giống Batch/Day Trend), đổi chart bar -> line** — LUÔN
+      cố định 3 dòng/3 đường Cotton/CVC/Polyester (bỏ filter Fabric Type),
+      thêm bảng Target mới `tank_loading_targets` (khoá `fabric_type`, quyền
+      edit thường của Engine). `MAIN_FABRIC_TYPES` định nghĩa RIÊNG trong
+      `tank_loading/service.py` (KHÔNG import cross-engine từ `batch_matrix`)
+      để giữ đúng Vertical Slice Architecture, dù giá trị giống hệt. Chi tiết
+      đầy đủ + toàn bộ verify ở `activeContext.md` mục -14.
 
 ## Backlog (Phase 2+)
 - [ ] **Quy tắc phân loại 6 nhóm của `rft`** (Lab to Lab/Lab to Bulk/Bulk to

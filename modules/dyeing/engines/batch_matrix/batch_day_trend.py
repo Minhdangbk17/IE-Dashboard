@@ -48,6 +48,21 @@ from core.database import DatabaseError, execute_query, get_db, get_dialect
 from core.production_time import get_production_date, production_date_sql_expr
 
 INVALID_FABRIC_TYPES = {"", "unknow", "unknown"}
+# Báo cáo "Batch/Day Trend" LUÔN thể hiện ĐÚNG 3 loại vải chính này (theo yêu cầu người
+# dùng — 1 đường/1 dòng cố định mỗi loại, không phụ thuộc filter hay dữ liệu thực tế đang
+# có). Mọi `fabric_type` KHÁC 3 loại này (VD Nylon, Spandex...) bị loại khỏi báo cáo Trend
+# hoàn toàn — khác các báo cáo khác trong `batch_matrix`/`downtime`/`rft` vốn hiển thị ĐỘNG
+# theo `available_fabric_types` tìm thấy trong dữ liệu. So khớp không phân biệt hoa/thường
+# (xem `_normalize_main_fabric_type()`) — CHƯA xác nhận dữ liệu thật có biến thể viết khác
+# (VD viết tắt "PES" cho Polyester) hay không, nếu có sẽ cần bổ sung alias sau.
+MAIN_FABRIC_TYPES: tuple[str, ...] = ("Cotton", "CVC", "Polyester")
+_MAIN_FABRIC_TYPE_BY_NORM: dict[str, str] = {name.lower(): name for name in MAIN_FABRIC_TYPES}
+
+
+def _normalize_main_fabric_type(value: str | None) -> str | None:
+    """Khớp `fabric_type` thô (bất kỳ hoa/thường) với ĐÚNG 1 trong `MAIN_FABRIC_TYPES` —
+    trả `None` nếu không khớp loại nào (loại đó bị loại khỏi báo cáo Trend)."""
+    return _MAIN_FABRIC_TYPE_BY_NORM.get(str(value or "").strip().lower())
 # Nhãn "Brand - Program" suy từ greige_code (batch_details) -> brand_program_mapping — cùng
 # cơ chế `downtime/service.py`/`batch_matrix/service.py`. AN TOÀN thêm thẳng vào grain của
 # bảng rollup này (khác `batch_matrix_daily_summary.operating_hours`): mỗi dòng summary ở
@@ -79,13 +94,6 @@ def _parse_capacities(capacities: str | list[str] | None) -> list[float]:
         if number not in parsed:
             parsed.append(number)
     return parsed
-
-
-def _parse_fabric_types(fabric_types: str | list[str] | None) -> list[str]:
-    if not fabric_types:
-        return []
-    values = fabric_types if isinstance(fabric_types, list) else str(fabric_types).split(",")
-    return [text for value in values if (text := str(value).strip())]
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -352,18 +360,68 @@ def recompute_all(dates: Iterable[date], conn: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Target — bảng cấu hình `batch_day_trend_targets`, khoá theo `fabric_type` (CHỈ 3 giá trị
+# `MAIN_FABRIC_TYPES`). Cùng pattern `downtime_targets`/`batch_matrix_targets` đã có sẵn
+# trong dự án — mỗi báo cáo 1 bảng riêng, khoá theo đúng "đơn vị hàng" của báo cáo đó.
+# KHÔNG tái dùng `batch_matrix_targets` (khoá `(fabric_type, color_group)`) — 2 bảng trả lời
+# 2 câu hỏi khác nhau ("target cho 1 ô fabric+color của Matrix" vs "target cho tổng
+# Batch/Day của 1 loại vải ở Trend"), đơn vị đo cũng khác quy mô nhau dù cùng công thức gốc.
+# ---------------------------------------------------------------------------
+
+
+def _ensure_trend_targets_table(conn: Any) -> None:
+    """CHỈ chạy CREATE TABLE ở SQLite — Postgres tạo qua `supabase/schema.sql`."""
+    if get_dialect() == "sqlite":
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS batch_day_trend_targets (
+                fabric_type TEXT PRIMARY KEY,
+                target_value REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+    conn.commit()
+
+
+def get_trend_targets() -> dict[str, float | None]:
+    """{fabric_type: target_value} cho ĐÚNG 3 loại `MAIN_FABRIC_TYPES` — loại CHƯA từng
+    được cấu hình trả `None` (hiển thị "-" trên UI, phân biệt với target THẬT SỰ = 0)."""
+    conn = get_db()
+    _ensure_trend_targets_table(conn)
+    rows = execute_query("SELECT fabric_type, target_value FROM batch_day_trend_targets")
+    result: dict[str, float | None] = {row["fabric_type"]: float(row["target_value"]) for row in rows}
+    for name in MAIN_FABRIC_TYPES:
+        result.setdefault(name, None)
+    return result
+
+
+def set_trend_target(fabric_type: str, target_value: float) -> dict[str, Any]:
+    if fabric_type not in MAIN_FABRIC_TYPES:
+        raise ValueError(f"Fabric type không hợp lệ: {fabric_type}")
+    conn = get_db()
+    _ensure_trend_targets_table(conn)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT INTO batch_day_trend_targets (fabric_type, target_value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(fabric_type) DO UPDATE SET target_value = excluded.target_value, updated_at = excluded.updated_at",
+        (fabric_type, target_value, now_str),
+    )
+    conn.commit()
+    return {"fabric_type": fabric_type, "target_value": target_value, "updated_at": now_str}
+
+
+# ---------------------------------------------------------------------------
 # Đọc báo cáo — CHỈ SELECT từ `batch_day_trend_daily_summary`, lọc/gộp ở Python.
 # ---------------------------------------------------------------------------
 
 
-def _empty_trend(group_by: str) -> dict[str, Any]:
+def _empty_trend(group_by: str, targets: dict[str, float | None] | None = None) -> dict[str, Any]:
+    targets = targets or {}
     return {
-        "filters": {"capacities": [], "fabric_types": [], "brand_programs": [], "from_date": None, "to_date": None, "group_by": group_by},
+        "filters": {"capacities": [], "brand_programs": [], "from_date": None, "to_date": None, "group_by": group_by},
         "periods": [], "period_keys": [],
-        "rows": [{"label": "Batch/Day", "values": [], "total": 0.0}],
-        "chart": {"categories": [], "values": []},
+        "rows": [{"fabric_type": name, "target": targets.get(name), "values": [], "total": 0.0} for name in MAIN_FABRIC_TYPES],
+        "chart": {"categories": [], "series": []},
         "kpis": {"batch_per_day": 0.0, "valid_batches": 0, "total_planned_hours": 0.0},
-        "available_fabric_types": [],
         "available_capacities": [],
         "available_brand_programs": [],
     }
@@ -371,12 +429,12 @@ def _empty_trend(group_by: str) -> dict[str, Any]:
 
 def get_batch_day_trend(
     capacities: str | list[str] | None = None,
-    fabric_types: str | list[str] | None = None,
     brand_programs: str | list[str] | None = None,
     from_date: str | None = None, to_date: str | None = None,
     group_by: str = "date",
 ) -> dict[str, Any]:
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
+    trend_targets = get_trend_targets()
     conn = get_db()
     sql = "SELECT production_date, machine, fabric_type, capacity_kg, brand_program, hours, is_valid FROM batch_day_trend_daily_summary WHERE 1=1"
     params: list[Any] = []
@@ -393,72 +451,81 @@ def get_batch_day_trend(
         # Bảng `batch_day_trend_daily_summary` chưa tồn tại trên Postgres (chưa áp
         # `supabase/migrate_batch_day_trend.sql`) hoặc lỗi tương tự — trả kết quả rỗng
         # thay vì crash cả trang, giống cách `rft`/`tank_loading` xử lý.
-        return _empty_trend(group_by)
+        return _empty_trend(group_by, trend_targets)
     if not rows:
-        return _empty_trend(group_by)
+        return _empty_trend(group_by, trend_targets)
 
     available_capacities = sorted({round(float(row["capacity_kg"]), 2) for row in rows if row["capacity_kg"] not in (None, "")})
-    available_fabric_types = sorted({row["fabric_type"] for row in rows if row["fabric_type"]})
     available_brand_programs = sorted({row["brand_program"] for row in rows if row["brand_program"]})
 
     selected_capacities = _parse_capacities(capacities)
     capacity_filter = {round(value, 2) for value in selected_capacities} if selected_capacities else None
-    selected_fabric_types = _parse_fabric_types(fabric_types)
-    fabric_filter = set(selected_fabric_types) if selected_fabric_types else None
     selected_brand_programs = _parse_brand_programs(brand_programs)
     brand_program_filter = set(selected_brand_programs) if selected_brand_programs else None
 
-    period_counts: dict[str, int] = {}
-    period_hours: dict[str, float] = {}
+    # Mỗi loại vải chính (Cotton/CVC/Polyester) có tử số/mẫu số RIÊNG — tính ĐỘC LẬP theo
+    # ĐÚNG công thức gốc (đếm mẻ Rework=0 * 24 / tổng giờ TẤT CẢ mẻ), không dùng chung mẫu
+    # số như bản 1-đường-gộp cũ. Loại KHÁC 3 loại chính (`_normalize_main_fabric_type()`
+    # trả None) bị loại bỏ hoàn toàn khỏi báo cáo Trend.
+    period_counts: dict[str, dict[str, int]] = {name: {} for name in MAIN_FABRIC_TYPES}
+    period_hours: dict[str, dict[str, float]] = {name: {} for name in MAIN_FABRIC_TYPES}
     period_labels: dict[str, str] = {}
     for row in rows:
+        fabric_type = _normalize_main_fabric_type(row["fabric_type"])
+        if fabric_type is None:
+            continue
         if capacity_filter is not None:
             row_capacity = round(float(row["capacity_kg"]), 2) if row["capacity_kg"] not in (None, "") else None
             if row_capacity not in capacity_filter:
                 continue
-        if fabric_filter is not None and row["fabric_type"] not in fabric_filter:
-            continue
         if brand_program_filter is not None and (row["brand_program"] or "") not in brand_program_filter:
             continue
         day = datetime.strptime(row["production_date"], "%Y-%m-%d").date()
         key, label = _period(day, group_by)
         period_labels[key] = label
-        period_hours[key] = period_hours.get(key, 0.0) + float(row["hours"] or 0)
+        period_hours[fabric_type][key] = period_hours[fabric_type].get(key, 0.0) + float(row["hours"] or 0)
         if row["is_valid"]:
-            period_counts[key] = period_counts.get(key, 0) + 1
+            period_counts[fabric_type][key] = period_counts[fabric_type].get(key, 0) + 1
 
     if not period_labels:
-        result = _empty_trend(group_by)
-        result["available_fabric_types"] = available_fabric_types
+        result = _empty_trend(group_by, trend_targets)
         result["available_capacities"] = available_capacities
         result["available_brand_programs"] = available_brand_programs
         return result
 
     ordered_keys = sorted(period_labels.keys())
     labels = [period_labels[key] for key in ordered_keys]
-    values = [
-        round(period_counts.get(key, 0) * 24 / period_hours[key], 2) if period_hours.get(key) else 0.0
-        for key in ordered_keys
-    ]
-    total_count = sum(period_counts.values())
-    total_hours = sum(period_hours.values())
-    total_value = round(total_count * 24 / total_hours, 2) if total_hours else 0.0
+
+    rows_out: list[dict[str, Any]] = []
+    total_count_all = 0
+    total_hours_all = 0.0
+    for name in MAIN_FABRIC_TYPES:
+        counts = period_counts[name]
+        hours = period_hours[name]
+        values = [round(counts.get(key, 0) * 24 / hours[key], 2) if hours.get(key) else 0.0 for key in ordered_keys]
+        total_count = sum(counts.values())
+        total_hours = sum(hours.values())
+        total_value = round(total_count * 24 / total_hours, 2) if total_hours else 0.0
+        rows_out.append({"fabric_type": name, "target": trend_targets.get(name), "values": values, "total": total_value})
+        total_count_all += total_count
+        total_hours_all += total_hours
+
+    overall_value = round(total_count_all * 24 / total_hours_all, 2) if total_hours_all else 0.0
 
     return {
         "filters": {
-            "capacities": selected_capacities or "all", "fabric_types": selected_fabric_types or "all",
+            "capacities": selected_capacities or "all",
             "brand_programs": selected_brand_programs or "all",
             "from_date": from_date, "to_date": to_date, "group_by": group_by,
         },
         "periods": labels, "period_keys": ordered_keys,
-        "rows": [{"label": "Batch/Day", "values": values, "total": total_value}],
-        "chart": {"categories": labels, "values": values},
+        "rows": rows_out,
+        "chart": {"categories": labels, "series": [{"name": row["fabric_type"], "data": row["values"]} for row in rows_out]},
         "kpis": {
-            "batch_per_day": total_value,
-            "valid_batches": total_count,
-            "total_planned_hours": round(total_hours, 1),
+            "batch_per_day": overall_value,
+            "valid_batches": total_count_all,
+            "total_planned_hours": round(total_hours_all, 1),
         },
-        "available_fabric_types": available_fabric_types,
         "available_capacities": available_capacities,
         "available_brand_programs": available_brand_programs,
     }

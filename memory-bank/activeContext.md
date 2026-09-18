@@ -26,9 +26,22 @@ bên dưới. (4) **UI nhỏ**: bỏ hẳn KPI widget "BATCH/DAY" (subtitle
 "batch/day/machine", `id="valid-batches"`) khỏi tab Overview của trang
 Downtime theo yêu cầu người dùng — `downtime-kpis` đổi từ 5 xuống 4 cột, KHÔNG
 đụng gì tới `kpis.valid_batches` ở backend (chỉ ẩn khỏi UI, giá trị vẫn tính
-và trả về trong `/api/summary` phòng khi cần lại). Bản ghi trước đó
-(2026-09-18 sáng — bug Batch/Day Trend `recompute_all()`) giữ nguyên ở mục
--11.
+và trả về trong `/api/summary` phòng khi cần lại). (5) **Tính năng mới**: báo
+cáo "Batch/Day" — đổi tab mặc định sang "Batch/Day Trend" (đưa lên trước
+"Fabric/Color Matrix"), báo cáo Trend giờ LUÔN cố định 3 dòng/3 đường Cotton/
+CVC/Polyester (loại bỏ hoàn toàn fabric type khác + bộ lọc Fabric Type trên
+tab này — không còn ý nghĩa khi báo cáo đã cố định 3 loại), thêm cột Target
+(giờ/kỳ) có thể sửa qua UI cho từng loại vải + đường Target nét đứt ngang
+xuyên suốt chart (bảng mới `batch_day_trend_targets`, khoá `fabric_type`) —
+xem chi tiết đầy đủ ở mục -13 bên dưới. (6) **Tính năng mới**: áp dụng LẠI
+đúng pattern ở mục (5) cho báo cáo "%Tank Loading" (Engine `tank_loading`) —
+LUÔN cố định 3 dòng/3 đường Cotton/CVC/Polyester (bỏ filter Fabric Type), đổi
+chart từ `type: "bar"` sang `type: "line"`, thêm cột Target (%) + đường nét
+đứt trên chart, bảng Target mới `tank_loading_targets` (khoá `fabric_type`,
+KHÔNG import cross-engine từ `batch_matrix` — định nghĩa `MAIN_FABRIC_TYPES`
+riêng, đúng Vertical Slice Architecture) — xem chi tiết đầy đủ ở mục -14 bên
+dưới. Bản ghi trước đó (2026-09-18 sáng —
+bug Batch/Day Trend `recompute_all()`) giữ nguyên ở mục -11.
 
 **Cập nhật lần cuối (bản ghi cũ):** 2026-09-17 — Thêm 2 filter mới (Fabric Type, Brand
 Program) vào TẤT CẢ 5 báo cáo của Dyeing Hub (Downtime, Batch/Day — cả 2 tab,
@@ -160,6 +173,117 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-14. **Báo cáo "%Tank Loading" — áp dụng LẠI đúng pattern "3 loại vải cố định + Target +
+   đường nét đứt" vừa làm cho Batch/Day Trend (mục -13)** (2026-09-18, theo yêu cầu người
+   dùng).
+
+   **Khác biệt DUY NHẤT so với mục -13** (còn lại giống hệt về mặt kỹ thuật):
+   - Đổi loại chart từ `type: "bar"` sang `type: "line"` (yêu cầu rõ "chuyển biểu đồ thành
+     biểu đồ đường tương tự batch/day") — trước đó Tank Loading là bar chart 1 cột/kỳ,
+     Batch/Day Trend vốn ĐÃ là line chart từ đầu nên mục -13 không cần đổi type.
+   - `MAIN_FABRIC_TYPES`/`_normalize_main_fabric_type()` được **định nghĩa RIÊNG** trong
+     `tank_loading/service.py` (KHÔNG import từ `batch_matrix/batch_day_trend.py`) — dù
+     giá trị giống hệt (`("Cotton", "CVC", "Polyester")`), cố tình KHÔNG dùng chung 1 nguồn
+     giữa 2 Engine để giữ đúng Vertical Slice Architecture (mỗi Engine tự đóng gói đầy đủ,
+     không phụ thuộc Engine khác — CLAUDE.md mục 3-4). Đây là 1 trong những chỗ dự án CHỦ
+     ĐÍCH chấp nhận trùng lặp có kiểm soát (kèm comment chéo tham chiếu) thay vì tạo phụ
+     thuộc chéo giữa 2 Engine — cùng tinh thần `INVALID_FABRIC_TYPES` đã lệch nhau có chủ
+     đích giữa `batch_matrix`/`downtime`/`rft` từ trước.
+   - Bảng Target mới `tank_loading_targets` (khoá `fabric_type`) — tách riêng khỏi
+     `batch_day_trend_targets` dù cùng khoá `fabric_type` giống hệt, vì 2 báo cáo đo 2 chỉ
+     số khác nhau (Batch/Day vs %Tank Loading) trên 2 nguồn dữ liệu khác nhau
+     (`availability_logs`+`batch_details` vs `performance_logs`).
+   - Nguồn dữ liệu `performance_logs.fabric_type` (khác `availability_logs.fabric_type`
+     dùng ở Batch/Day Trend) — 2 bảng import độc lập nhau nên KHÔNG có gì đảm bảo cùng quy
+     ước viết hoa/thường, nhưng so khớp không phân biệt hoa/thường nên không thành vấn đề.
+
+   Công thức MỖI loại vải: Sum(OutputKgH)/Sum(MaxOutputKgH) của ĐÚNG loại đó (tính độc
+   lập, không dùng chung mẫu số) — giữ nguyên nguyên tắc Sum/Sum đã có từ bản 1-đường cũ.
+   KPI tổng ở đầu trang (`tank_loading_pct`/`total_output_kgh`/`total_max_load_kgh`) giờ
+   CHỈ tính trên 3 loại chính (loại khác bị loại khỏi TOÀN BỘ báo cáo, không chỉ khỏi
+   chart/bảng) — đã verify riêng để xác nhận KPI tổng không bị lệch bởi dữ liệu loại vải
+   khác (ví dụ Nylon).
+
+   Verify: script DB tạm (bẫy đúng: 1 dòng Nylon với output=999 để xác nhận KHÔNG làm
+   lệch KPI tổng của 3 loại chính) xác nhận công thức tách đúng theo từng loại vải, Target
+   lưu/đọc đúng, từ chối đúng fabric_type ngoài danh sách. Verify end-to-end Flask test
+   client (subprocess, DB tạm): trang đã gỡ filter Fabric Type, file JS tĩnh xác nhận
+   `type: "line"` (không còn `"bar"`) + có `isTargetLine`, API luôn trả đủ 3 dòng, ghi
+   Target qua API phản ánh đúng, operator chỉ-view bị chặn ghi (302). Re-run
+   `tests/test_permission_model.py` — PASS 100%, không regression (chưa có test suite
+   riêng cho `tank_loading` từ trước).
+
+   **Postgres production**: đã thêm bảng `tank_loading_targets` vào `supabase/schema.sql`
+   (kèm RLS) — CHƯA CHẠY trên Supabase thật, cần admin áp DDL thủ công (bảng hoàn toàn
+   mới, không cần migration script riêng).
+
+-13. **Báo cáo "Batch/Day Trend" — đưa lên trước Matrix làm tab mặc định, LUÔN cố định
+   3 dòng/3 đường Cotton/CVC/Polyester, thêm Target có thể sửa + đường nét đứt trên
+   chart** (2026-09-18, theo yêu cầu người dùng).
+
+   **Trước khi code — điều tra qua agent** để tránh lặp lại đúng sai lầm đã xảy ra ở
+   Downtime: đọc lại commit `e198720` ("Remove per-category Target dashed lines from
+   Downtime by Category chart") — lý do gỡ KHÔNG phải bản thân ý tưởng "đường Target nét
+   đứt" bị coi là dở, mà vì áp dụng lên 1 chart STACKED BAR có tới 9 category chọn tự do
+   (`selected.forEach` nhân số đường Target lên tới 9, chồng lên bar+line đã dày sẵn ->
+   rối mắt). Chart Batch/Day Trend ngược lại: LUÔN cố định đúng 3 đường (không phụ thuộc
+   lựa chọn người dùng), không phải bar chart — kết luận: áp dụng lại đúng kỹ thuật cũ
+   (đường nét đứt + ẩn khỏi legend/tooltip qua `legend.labels.filter`/`tooltip.filter`)
+   là AN TOÀN ở đây, không tái diễn lý do bị gỡ trước đó.
+
+   **Thiết kế**:
+   - `batch_day_trend.py::MAIN_FABRIC_TYPES = ("Cotton", "CVC", "Polyester")` (so khớp
+     không phân biệt hoa/thường qua `_normalize_main_fabric_type()`) — mọi `fabric_type`
+     KHÁC 3 loại này bị loại HOÀN TOÀN khỏi báo cáo Trend (khác mọi báo cáo khác trong dự
+     án vốn hiển thị ĐỘNG theo `available_fabric_types` tìm thấy trong dữ liệu thật).
+     **CHƯA xác nhận** dữ liệu thật có biến thể viết khác (VD viết tắt "PES" cho
+     Polyester) — nếu người dùng phát hiện thiếu dữ liệu do sai chính tả/viết tắt, chỉ cần
+     bổ sung alias vào `_MAIN_FABRIC_TYPE_BY_NORM`.
+   - `get_batch_day_trend()` viết lại: MỖI loại vải có tử số/mẫu số RIÊNG, tính ĐỘC LẬP
+     theo ĐÚNG công thức gốc (đếm mẻ Rework=0 * 24 / tổng giờ TẤT CẢ mẻ CỦA ĐÚNG loại đó)
+     — KHÔNG dùng chung mẫu số như bản 1-đường-gộp cũ. Xoá hẳn filter "Fabric Type" khỏi
+     UI/API tab Trend (không còn ý nghĩa khi báo cáo đã cố định đúng 3 loại — người dùng
+     không thể "lọc xuống còn 1 trong 3" vì mục đích là LUÔN thấy cả 3).
+   - Bảng Target mới `batch_day_trend_targets` (khoá `fabric_type`, CHỈ 3 giá trị hợp lệ)
+     — CỐ TÌNH KHÔNG tái dùng `batch_matrix_targets` (khoá `(fabric_type, color_group)`)
+     dù cùng khái niệm "target" bề ngoài: 2 bảng trả lời 2 câu hỏi khác nhau (target cho 1
+     ô fabric+color của Matrix vs. target cho TỔNG Batch/Day của 1 loại vải ở Trend, khác
+     quy mô số dù cùng công thức gốc) — tái dùng sẽ cần sentinel `color_group` giả, dễ gây
+     hiểu nhầm là dữ liệu lỗi. Theo đúng pattern đã có trong dự án ("mỗi báo cáo 1 bảng
+     Target riêng, khoá theo đơn vị hàng của chính báo cáo đó" — `downtime_targets` khoá
+     `category`, `batch_matrix_targets` khoá `(fabric_type, color_group)`).
+   - Quyền ghi Target: `permission_required("dyeing", "batch_matrix", "edit")` — theo
+     ĐÚNG quy ước sẵn có của `batch_matrix_targets` (KHÔNG phải `role_required("admin")`
+     như Target bên Downtime — 2 quyết định độc lập, xem mục -9).
+   - UI: tái dùng ĐÚNG class `case-note-cell`/`case-note-input` (global trong `app.css`)
+     cho ô Target — trang `batch_matrix_view.html` trước đây CHƯA có `showToast()`, đã
+     thêm mới copy nguyên mẫu từ `cleaning_matrix_view.html`.
+   - Đường Target trên chart: nét đứt (`borderDash:[6,4]`) CÙNG MÀU với đường số liệu
+     tương ứng (Cotton=`#3fb950`, CVC=`#2862d7`, Polyester=`#f778ba`), ẩn khỏi legend
+     (filter theo hậu tố " Target") và tooltip (filter theo cờ `isTargetLine`) — chỉ vẽ
+     khi loại vải đó ĐÃ có Target cấu hình (`row.target !== null`).
+   - Tab mặc định đổi từ "Fabric/Color Matrix" sang "Batch/Day Trend" — chỉ cần đổi thứ tự
+     DOM của nav button + `<section>` (cả 2 cùng lúc, giữ nhất quán), JS `tabs`/`pages`
+     dựng từ `querySelectorAll` theo thứ tự DOM nên `activePageIndex = 0` tự động trỏ đúng
+     tab mới mà không cần sửa logic chuyển tab.
+
+   Verify: script DB tạm xác nhận công thức tách đúng theo từng loại vải (đối chiếu tay:
+   Cotton 2 mẻ hợp lệ/20h → 2.4, CVC 1 mẻ/8h → 3.0, Polyester 0 mẻ hợp lệ/8h → 0.0, 1 mẻ
+   Nylon bị loại hoàn toàn không ảnh hưởng 3 loại kia), Target lưu/đọc đúng, từ chối đúng
+   fabric_type ngoài danh sách 3 loại. Verify end-to-end Flask test client (subprocess, DB
+   tạm): thứ tự tab đúng trong markup, tab Trend là mặc định (không `hidden`), filter
+   Fabric Type đã bị gỡ khỏi HTML, API luôn trả đủ 3 dòng kể cả khi rỗng dữ liệu, ghi Target
+   qua API phản ánh đúng ở lần đọc sau, operator chỉ-view bị chặn ghi (302). Re-run
+   `tests/test_batch_day_trend_recompute_all.py`, `tests/test_batch_matrix_formula.py`,
+   `tests/test_batch_matrix_brand_fabric_filters.py`, `tests/verify_rollup_parity.py` —
+   PASS 100%, không regression.
+
+   **Postgres production**: đã thêm bảng `batch_day_trend_targets` vào
+   `supabase/schema.sql` (kèm RLS) — CHƯA CHẠY trên Supabase thật, cần admin áp DDL thủ
+   công (bảng hoàn toàn mới, không phải ALTER, không cần migration script riêng — cùng
+   cách đã làm cho `downtime_achievement_standards` ở mục -12 và `downtime_targets` ở mục
+   -9).
+
 -12. **Thêm cột "Standard" (ngưỡng giờ) vào bảng "Standard Achievement Breakdown"
    + cho phép sửa qua UI, sửa 2 bug thật riêng biệt phát sinh cùng phiên**
    (2026-09-18, theo yêu cầu người dùng: "giá trị so sánh đã có nhưng phải xuất
@@ -700,6 +824,15 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 8. Quality trong công thức OEE tạm giả định 100% (giữ nguyên, chưa đổi).
 
 ## Việc tiếp theo
+- **CHỜ XÁC NHẬN**: tạo bảng MỚI `tank_loading_targets` trên Supabase production (áp lại
+  DDL tương ứng trong `supabase/schema.sql`, không cần migration script vì là bảng hoàn
+  toàn mới) — trước khi chạy, tính năng Target trên trang %Tank Loading vẫn hoạt động nếu
+  app chạy SQLite, nhưng trên Postgres/Vercel sẽ lỗi 500 cho tới khi bảng tồn tại.
+- **CHỜ XÁC NHẬN**: tạo bảng MỚI `batch_day_trend_targets` trên Supabase production
+  (áp lại DDL tương ứng trong `supabase/schema.sql`, không cần migration script vì
+  là bảng hoàn toàn mới) — trước khi chạy, tính năng Target trên tab Batch/Day Trend
+  vẫn hoạt động nếu app chạy SQLite (tự lazy-create), nhưng trên Postgres/Vercel sẽ
+  lỗi 500 khi gọi `get_trend_targets()`/`set_trend_target()` cho tới khi bảng tồn tại.
 - **CHỜ XÁC NHẬN**: tạo bảng MỚI `downtime_achievement_standards` trên Supabase
   production (áp lại đoạn DDL tương ứng trong `supabase/schema.sql`, không có
   migration script riêng vì đây là bảng hoàn toàn mới) — trước khi chạy, tính

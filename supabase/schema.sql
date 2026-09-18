@@ -262,6 +262,16 @@ create table if not exists performance_logs (
 );
 create index if not exists idx_performance_start_time on performance_logs (start_time);
 
+-- Target for the "%Tank Loading" report, one row per fixed fabric type
+-- (Cotton/CVC/Polyester only, see tank_loading/service.py::MAIN_FABRIC_TYPES). Writable by
+-- permission_required("dyeing", "tank_loading", "edit") — same pattern as
+-- batch_day_trend_targets/batch_matrix_targets (not admin-only like downtime_targets).
+create table if not exists tank_loading_targets (
+    fabric_type text primary key,
+    target_value double precision not null default 0,
+    updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+
 -- Daily Rollup Pattern: each Engine owns its own summary table, precomputed
 -- per production_date, so reports SELECT from here instead of rescanning raw
 -- data on every filter change.
@@ -372,6 +382,20 @@ create table if not exists batch_day_trend_daily_summary (
 );
 create index if not exists idx_batch_day_trend_daily_summary_date on batch_day_trend_daily_summary (production_date);
 
+-- Admin/edit-permission-writable target for the "Batch/Day Trend" chart+table, one row
+-- per fixed fabric type (Cotton/CVC/Polyester only, see batch_day_trend.py::
+-- MAIN_FABRIC_TYPES). Deliberately a SEPARATE table from batch_matrix_targets above
+-- (keyed by fabric_type+color_group) even though both answer a similar "target value"
+-- question — they key on different row-identities and are calibrated against different
+-- metrics (one Matrix cell vs. one fabric type's overall Trend value), so sharing a table
+-- would need an overloaded sentinel key. Writable by permission_required("dyeing",
+-- "batch_matrix", "edit") — same as batch_matrix_targets, not admin-only.
+create table if not exists batch_day_trend_targets (
+    fabric_type text primary key,
+    target_value double precision not null default 0,
+    updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+
 -- Grain = one row per source record (1 row = 1 availability_logs.id, already
 -- joined + badge-classified). Unlike downtime/batch_matrix, Cleaning MC shows
 -- per-batch detail in sequence (not aggregated numbers), so it cannot be
@@ -467,6 +491,7 @@ alter table downtime_logs enable row level security;
 alter table availability_logs enable row level security;
 alter table batch_details enable row level security;
 alter table performance_logs enable row level security;
+alter table tank_loading_targets enable row level security;
 alter table downtime_daily_summary enable row level security;
 alter table downtime_targets enable row level security;
 alter table downtime_case_notes enable row level security;
@@ -474,6 +499,7 @@ alter table downtime_achievement_standards enable row level security;
 alter table batch_matrix_daily_summary enable row level security;
 alter table batch_matrix_targets enable row level security;
 alter table batch_day_trend_daily_summary enable row level security;
+alter table batch_day_trend_targets enable row level security;
 alter table cleaning_mc_daily_summary enable row level security;
 alter table brand_program_mapping enable row level security;
 alter table import_log_rows enable row level security;

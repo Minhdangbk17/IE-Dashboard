@@ -37,11 +37,50 @@
 </div>
 
 <nav class="page-tabs mb-3" id="batch-day-tabs" aria-label="Batch/Day pages">
-    <button class="page-tab is-active" type="button" data-page="matrix">Fabric/Color Matrix</button>
-    <button class="page-tab" type="button" data-page="trend">Batch/Day Trend</button>
+    <button class="page-tab is-active" type="button" data-page="trend">Batch/Day Trend</button>
+    <button class="page-tab" type="button" data-page="matrix">Fabric/Color Matrix</button>
 </nav>
 
-<section class="batch-matrix-page" id="page-matrix" data-page="matrix">
+<section class="batch-matrix-page" id="page-trend" data-page="trend">
+    <section class="Box p-3 mb-3" aria-label="Batch/Day Trend filters">
+        <div class="d-flex flex-wrap flex-items-end gap-2">
+            <div class="form-group mb-0"><label for="trend-from">From Date</label><input id="trend-from" class="form-control" type="date"></div>
+            <div class="form-group mb-0"><label for="trend-to">To Date</label><input id="trend-to" class="form-control" type="date"></div>
+            <div class="form-group mb-0 capacity-dropdown">
+                <label for="trend-capacity-toggle">Capacity (Kg)</label>
+                <button id="trend-capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All capacities</button>
+                <div id="trend-capacity-menu" class="capacity-menu" hidden></div>
+            </div>
+            <div class="form-group mb-0 capacity-dropdown">
+                <label for="trend-brand-program-toggle">Brand Program</label>
+                <button id="trend-brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
+                <div id="trend-brand-program-menu" class="capacity-menu" hidden></div>
+            </div>
+            <div class="form-group mb-0"><label for="trend-group-by">Group By</label><select id="trend-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
+        </div>
+    </section>
+
+    <div class="trend-kpis mb-4">
+        <div class="widget-card"><span class="f6 color-fg-muted">BATCH/DAY</span><strong class="kpi-batch-per-day">--</strong><span class="f6 color-fg-muted">Valid batches * 24 / total planned hours</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">VALID BATCHES (REWORK = 0)</span><strong class="kpi-valid-batches">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLANNED HOURS</span><strong class="kpi-total-hours">--</strong><span class="f6 color-fg-muted">Planned PRD time, all batches</span></div>
+    </div>
+
+    <div class="Box p-3 mb-4 chart-panel">
+        <h3 class="mt-0 mb-2">Batch/Day — trend</h3>
+        <canvas id="trend-chart" aria-label="Batch/Day trend chart"></canvas>
+    </div>
+
+    <div class="Box p-3" style="overflow-x:auto;">
+        <table class="preview-table" id="trend-table">
+            <thead><tr id="trend-head"><th>Fabric Type</th><th>Target</th><th>Total</th></tr></thead>
+            <tbody></tbody>
+        </table>
+        <p class="f6 color-fg-muted mt-2 mb-0">Fabric Type "Unknown"/blank batches are not counted separately — their time is carried forward into the next real batch on the same machine. Only Cotton/CVC/Polyester are shown; other fabric types are excluded from this report.</p>
+    </div>
+</section>
+
+<section class="batch-matrix-page" id="page-matrix" data-page="matrix" hidden>
     <section class="Box p-3 mb-3" aria-label="Report filters">
         <div class="d-flex flex-wrap flex-items-end gap-2">
             <div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div>
@@ -86,50 +125,11 @@
     </div>
 </section>
 
-<section class="batch-matrix-page" id="page-trend" data-page="trend" hidden>
-    <section class="Box p-3 mb-3" aria-label="Batch/Day Trend filters">
-        <div class="d-flex flex-wrap flex-items-end gap-2">
-            <div class="form-group mb-0"><label for="trend-from">From Date</label><input id="trend-from" class="form-control" type="date"></div>
-            <div class="form-group mb-0"><label for="trend-to">To Date</label><input id="trend-to" class="form-control" type="date"></div>
-            <div class="form-group mb-0 capacity-dropdown">
-                <label for="trend-capacity-toggle">Capacity (Kg)</label>
-                <button id="trend-capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All capacities</button>
-                <div id="trend-capacity-menu" class="capacity-menu" hidden></div>
-            </div>
-            <div class="form-group mb-0 capacity-dropdown">
-                <label for="trend-fabric-toggle">Fabric Type</label>
-                <button id="trend-fabric-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All fabric types</button>
-                <div id="trend-fabric-menu" class="capacity-menu" hidden></div>
-            </div>
-            <div class="form-group mb-0 capacity-dropdown">
-                <label for="trend-brand-program-toggle">Brand Program</label>
-                <button id="trend-brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
-                <div id="trend-brand-program-menu" class="capacity-menu" hidden></div>
-            </div>
-            <div class="form-group mb-0"><label for="trend-group-by">Group By</label><select id="trend-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
-        </div>
-    </section>
 
-    <div class="trend-kpis mb-4">
-        <div class="widget-card"><span class="f6 color-fg-muted">BATCH/DAY</span><strong class="kpi-batch-per-day">--</strong><span class="f6 color-fg-muted">Valid batches * 24 / total planned hours</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">VALID BATCHES (REWORK = 0)</span><strong class="kpi-valid-batches">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLANNED HOURS</span><strong class="kpi-total-hours">--</strong><span class="f6 color-fg-muted">Planned PRD time, all batches</span></div>
-    </div>
-
-    <div class="Box p-3 mb-4 chart-panel">
-        <h3 class="mt-0 mb-2">Batch/Day — trend</h3>
-        <canvas id="trend-chart" aria-label="Batch/Day trend chart"></canvas>
-    </div>
-
-    <div class="Box p-3" style="overflow-x:auto;">
-        <table class="preview-table" id="trend-table">
-            <thead><tr id="trend-head"><th>Batch/Day</th><th>Total</th></tr></thead>
-            <tbody></tbody>
-        </table>
-        <p class="f6 color-fg-muted mt-2 mb-0">Fabric Type "Unknown"/blank batches are not counted separately — their time is carried forward into the next real batch on the same machine.</p>
-    </div>
-</section>
-
+<script>
+    window.BATCH_DAY_TREND_CAN_EDIT = {{ "true" if current_user_can('dyeing', 'batch_matrix', 'edit') else "false" }};
+    window.BATCH_DAY_TREND_TARGET_URL_TEMPLATE = "{{ url_for('dyeing.batch_matrix.api_set_trend_target', fabric_type='__FABRIC__') }}";
+</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 (function () { "use strict"; const matrixUrl = "{{ url_for('dyeing.batch_matrix.api_matrix') }}";
@@ -138,6 +138,16 @@
 
     function fmtValue(value) {
         return value === null || value === undefined ? "-" : Number(value).toFixed(2);
+    }
+
+    function showToast(message, kind) {
+        let container = document.querySelector(".toast-container");
+        if (!container) { container = document.createElement("div"); container.className = "toast-container"; document.body.appendChild(container); }
+        const el = document.createElement("div");
+        el.className = `flash flash-${kind || "success"} import-toast`;
+        el.textContent = message;
+        container.appendChild(el);
+        window.setTimeout(() => el.remove(), 4000);
     }
 
     function escAttr(value) {
@@ -340,12 +350,90 @@
         return { textColor, gridColor };
     }
 
+    // Màu cố định theo loại vải — DÙNG CHUNG cho cả đường số liệu (nét liền) lẫn đường
+    // Target tương ứng (nét đứt, cùng màu) để dễ đối chiếu bằng mắt trên chart.
+    const TREND_FABRIC_COLORS = { Cotton: "#3fb950", CVC: "#2862d7", Polyester: "#f778ba" };
+    let lastTrendData = null;
+
+    function trendTargetUrl(fabricType) {
+        return window.BATCH_DAY_TREND_TARGET_URL_TEMPLATE.replace("__FABRIC__", encodeURIComponent(fabricType));
+    }
+
+    function formatTrendTarget(value) {
+        return value === null || value === undefined ? "-" : Number(value).toFixed(2);
+    }
+
+    function renderTrendTargetCell(row) {
+        const text = formatTrendTarget(row.target);
+        if (!window.BATCH_DAY_TREND_CAN_EDIT) return `<td>${text}</td>`;
+        return `<td><span class="case-note-cell" data-fabric-type="${escAttr(row.fabric_type)}">${text}</span></td>`;
+    }
+
+    function buildTrendTargetCellSpan(row) {
+        const span = document.createElement("span");
+        span.className = "case-note-cell";
+        span.dataset.fabricType = row.fabric_type;
+        span.textContent = formatTrendTarget(row.target);
+        return span;
+    }
+
+    function startEditingTrendTarget(cell) {
+        const fabricType = cell.dataset.fabricType;
+        const row = (lastTrendData && lastTrendData.rows || []).find((item) => item.fabric_type === fabricType);
+        if (!row) return;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.01";
+        input.className = "case-note-input";
+        input.value = row.target === null || row.target === undefined ? "" : row.target;
+        cell.replaceWith(input);
+        input.focus();
+        input.select();
+        let settled = false;
+        function commit() { if (settled) return; settled = true; saveTrendTarget(input, row, input.value.trim()); }
+        function cancel() { if (settled) return; settled = true; input.replaceWith(buildTrendTargetCellSpan(row)); }
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+        });
+    }
+
+    function saveTrendTarget(inputEl, row, rawValue) {
+        const value = rawValue === "" ? 0 : Number(rawValue);
+        if (Number.isNaN(value)) {
+            inputEl.replaceWith(buildTrendTargetCellSpan(row));
+            showToast("Target must be a number.", "error");
+            return;
+        }
+        fetch(trendTargetUrl(row.fabric_type), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target_value: value }),
+        }).then((response) => response.json().catch(() => ({})).then((data) => {
+            if (!response.ok) throw new Error(data.error || "save failed");
+            row.target = value;
+            inputEl.replaceWith(buildTrendTargetCellSpan(row));
+            showToast(`Target for ${row.fabric_type} saved.`, "success");
+            updateTrendChart(lastTrendData);
+        })).catch((err) => {
+            inputEl.replaceWith(buildTrendTargetCellSpan(row));
+            showToast(err && err.message ? err.message : "Failed to save target.", "error");
+        });
+    }
+
+    document.querySelector("#trend-table tbody").addEventListener("click", (event) => {
+        const cell = event.target.closest(".case-note-cell");
+        if (!cell || !cell.dataset.fabricType) return;
+        startEditingTrendTarget(cell);
+    });
+
     function renderTrendTable(data) {
         const head = document.getElementById("trend-head");
-        head.innerHTML = "<th>Batch/Day</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
-        const row = data.rows[0];
-        document.querySelector("#trend-table tbody").innerHTML =
-            `<tr><th>${row.label}</th>${row.values.map((value) => `<td>${Number(value).toFixed(2)}</td>`).join("")}<td><strong>${Number(row.total).toFixed(2)}</strong></td></tr>`;
+        head.innerHTML = "<th>Fabric Type</th><th>Target</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
+        document.querySelector("#trend-table tbody").innerHTML = data.rows.map((row) =>
+            `<tr><th>${row.fabric_type}</th>${renderTrendTargetCell(row)}${row.values.map((value) => `<td>${Number(value).toFixed(2)}</td>`).join("")}<td><strong>${Number(row.total).toFixed(2)}</strong></td></tr>`
+        ).join("");
     }
 
     function updateTrendChart(data) {
@@ -353,11 +441,31 @@
         const canvas = document.getElementById("trend-chart");
         if (!canvas) return;
         const { textColor, gridColor } = chartTextColors();
-        const row = data.rows[0];
+        const datasets = [];
+        (data.rows || []).forEach((row) => {
+            const color = TREND_FABRIC_COLORS[row.fabric_type] || "#abaebb";
+            datasets.push({ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false });
+            if (row.target !== null && row.target !== undefined) {
+                // Đường Target đứt nét ngang xuyên suốt biểu đồ, cùng màu đường số liệu —
+                // ẩn khỏi legend/tooltip để không nhân đôi chú giải (chỉ 3 loại vải cố
+                // định nên KHÔNG gặp vấn đề "quá nhiều đường" đã khiến tính năng tương tự
+                // bị gỡ khỏi chart Downtime by Category, nơi có tới 9 category chọn tự do).
+                datasets.push({
+                    label: `${row.fabric_type} Target`,
+                    data: data.periods.map(() => row.target),
+                    borderColor: color,
+                    borderDash: [6, 4],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    isTargetLine: true,
+                });
+            }
+        });
         if (trendChart) trendChart.destroy();
         trendChart = new Chart(canvas, {
             type: "line",
-            data: { labels: data.periods, datasets: [{ label: row.label, data: row.values, borderColor: "#2862d7", backgroundColor: "rgba(40,98,215,.2)", tension: .2, fill: true }] },
+            data: { labels: data.periods, datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -366,13 +474,15 @@
                     x: { ticks: { color: textColor }, grid: { color: gridColor } },
                     y: { beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: "Batch/Day", color: textColor } },
                 },
-                plugins: { legend: { display: false } },
+                plugins: {
+                    legend: { position: "bottom", labels: { color: textColor, usePointStyle: true, filter: (item) => !item.text.endsWith(" Target") } },
+                    tooltip: { filter: (item) => !item.dataset.isTargetLine },
+                },
             },
         });
     }
 
     const trendCapacityFilter = makeMultiSelectDropdown("trend-capacity-toggle", "trend-capacity-menu", "All capacities", loadTrend);
-    const trendFabricTypeFilter = makeMultiSelectDropdown("trend-fabric-toggle", "trend-fabric-menu", "All fabric types", loadTrend);
     const trendBrandProgramFilter = makeMultiSelectDropdown("trend-brand-program-toggle", "trend-brand-program-menu", "All brand programs", loadTrend);
 
     function loadTrend() {
@@ -381,16 +491,15 @@
             to_date: document.getElementById("trend-to").value,
             group_by: document.getElementById("trend-group-by").value,
             capacities: trendCapacityFilter.selected().join(","),
-            fabric_types: trendFabricTypeFilter.selected().join(","),
             brand_programs: trendBrandProgramFilter.selected().join(","),
         });
         fetch(`${trendUrl}?${params}`).then((response) => response.json()).then((data) => {
             trendCapacityFilter.setOptions((data.available_capacities || []).map(String));
-            trendFabricTypeFilter.setOptions(data.available_fabric_types || []);
             trendBrandProgramFilter.setOptions(data.available_brand_programs || []);
             document.querySelector(".kpi-batch-per-day").textContent = Number(data.kpis.batch_per_day).toFixed(2);
             document.querySelector(".kpi-valid-batches").textContent = Number(data.kpis.valid_batches).toLocaleString();
             document.querySelector(".kpi-total-hours").textContent = Number(data.kpis.total_planned_hours).toLocaleString();
+            lastTrendData = data;
             renderTrendTable(data);
             updateTrendChart(data);
         }).catch((error) => { console.error("Batch/Day Trend load failed:", error); });

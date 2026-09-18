@@ -12,8 +12,11 @@ Blueprint & Route (API + View) của Engine "batch_matrix".
 - `POST /dyeing/batch_matrix/api/targets`   -> Set/update 1 Target (fabric_type, color_group).
 - `GET  /dyeing/batch_matrix/api/day-batches?date=&fabric_type=&color_group=&capacity=...`
   -> API JSON danh sách mẻ THẬT của 1 ô ma trận (drill-down double-check, bấm vào ô ngày trên UI).
-- `GET  /dyeing/batch_matrix/api/batch-day-trend?capacities=&fabric_types=&from_date=&to_date=&group_by=`
-  -> API JSON tab "Batch/Day Trend" — xem `batch_day_trend.py` cho công thức đầy đủ.
+- `GET  /dyeing/batch_matrix/api/batch-day-trend?capacities=&brand_programs=&from_date=&to_date=&group_by=`
+  -> API JSON tab "Batch/Day Trend" (LUÔN 3 dòng Cotton/CVC/Polyester cố định — xem
+  `batch_day_trend.py` cho công thức đầy đủ).
+- `POST /dyeing/batch_matrix/api/batch-day-trend/targets/<fabric_type>` -> Set/update
+  Target (giờ/kỳ) của 1 trong 3 loại vải chính cho báo cáo Batch/Day Trend.
 """
 from __future__ import annotations
 
@@ -24,7 +27,7 @@ from flask import Blueprint, jsonify, render_template, request
 from core.auth import permission_required
 
 from . import service
-from .batch_day_trend import get_batch_day_trend
+from .batch_day_trend import get_batch_day_trend, set_trend_target
 
 if TYPE_CHECKING:
     from core.engine_base import BaseEngine
@@ -66,13 +69,26 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
     def api_batch_day_trend() -> Any:
         data = get_batch_day_trend(
             capacities=request.args.get("capacities") or None,
-            fabric_types=request.args.get("fabric_types") or None,
             brand_programs=request.args.get("brand_programs") or None,
             from_date=request.args.get("from_date") or None,
             to_date=request.args.get("to_date") or None,
             group_by=request.args.get("group_by", "date"),
         )
         return jsonify(data)
+
+    @bp.route("/api/batch-day-trend/targets/<fabric_type>", methods=["POST"])
+    @permission_required("dyeing", "batch_matrix", "edit")
+    def api_set_trend_target(fabric_type: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            target_value = float(payload.get("target_value"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "target_value must be a number."}), 400
+        try:
+            target = set_trend_target(fabric_type, target_value)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"status": "success", "target": target})
 
     @bp.route("/api/targets")
     @permission_required("dyeing", "batch_matrix", "view")
