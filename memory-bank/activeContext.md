@@ -1,6 +1,29 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-19 (chiều muộn) — Báo cáo RFT (cả 6 tab) đổi từ 1 dòng/tab
+**Cập nhật lần cuối:** 2026-09-19 (tối) — **BUG THẬT phát hiện + sửa NGAY SAU KHI vừa làm
+xong mục -17** (người dùng report: biểu đồ 3-loại-vải RFT không hiện gì cả). Nguyên nhân: file
+"RFT report.xlsx" KHÔNG có cột Fabric Type — `fabric_type` PHẢI suy qua LEFT JOIN
+`availability_logs` (khoá `batch=dyelot`), nhưng RẤT NHIỀU dyelot không khớp bảng đó (không
+chỉ MachineType "Small Machine" như đã biết từ trước) nên `fabric_type` rỗng ở phần lớn dòng
+-> không rơi vào Cotton/CVC/Polyester nào cả -> cả 3 chart trống. Đã sửa: `_rft_rows()`
+(`rft/service.py`) thêm LEFT JOIN `batch_details` (khoá TRỰC TIẾP `dyelot=dyelot`, cùng khoá
+tự nhiên với `rft_dye_results.dyelot` — không qua trung gian `availability_logs.batch`, cùng
+kỹ thuật `tank_loading/service.py` đã dùng) làm nguồn fallback: ưu tiên
+`availability_logs.fabric_type`, fallback `batch_details.fabric_type` khi rỗng/NULL. `capacity_kg`/
+`production_date` KHÔNG đổi nguồn (batch_details không có `capacity_kg`, vẫn PHẢI lấy từ
+`availability_logs`). Test thêm kịch bản 6 (`_scenario_fabric_type_fallback_batch_details`,
+`tests/test_rft_classification.py`) verify đúng thứ tự ưu tiên 2 nguồn + trường hợp không
+khớp nguồn nào. **Bài học quy trình**: khi thêm test DB tạm tối giản (như
+`_init_schema()` trong test này) mà code sản xuất sau đó JOIN thêm 1 bảng mới, PHẢI đồng bộ
+lại schema test — nếu không, `execute_query()` ném `sqlite3.OperationalError: no such table`
+bị NUỐT ÂM THẦM bởi `except DatabaseError: return []` (thiết kế cố ý để chịu lỗi DB khi
+chưa có Daily Rollup), khiến test FAIL với thông báo khó hiểu (`total_batches=0` thay vì lỗi
+rõ ràng "no such table") — đã gặp đúng tình huống này khi chạy lại test suite sau khi sửa,
+phải thêm bảng `batch_details` tối giản vào `_init_schema()`. Xem chi tiết đầy đủ ở mục -18
+bên dưới. Bản ghi trước đó (2026-09-19 chiều — RFT đổi sang 3 dòng/Target) giữ nguyên ngay
+dưới đây.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-19 (chiều muộn) — Báo cáo RFT (cả 6 tab) đổi từ 1 dòng/tab
 sang **3 dòng/3 đường cố định Cotton/CVC/Polyester + cột Target**, chart đổi từ `bar` sang
 `line` — áp dụng LẠI đúng pattern đã làm cho "%Tank Loading"/"Batch/Day Trend" (mục -13/-14),
 theo yêu cầu người dùng "làm hết cho cả 6 mục". Bỏ hẳn filter Fabric Type chung (không còn ý
@@ -291,6 +314,65 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-18. **BUG THẬT (người dùng report NGAY SAU khi làm xong mục -17) + sửa: biểu đồ 3-loại-vải
+   RFT trống trơn vì `fabric_type` không suy được từ `availability_logs`** (2026-09-19, tối).
+
+   Người dùng chẩn đoán đúng nguyên nhân trước khi tôi điều tra: "có thể do raw data rft
+   upload lên không có phân loại, cần phải tìm thông tin từ bảng batch". Xác nhận: file "RFT
+   report.xlsx" (13 cột, xem `core/rft_importer.py::RFT_HEADER_MAP`) **KHÔNG có cột Fabric
+   Type** — thiết kế TỪ ĐẦU (lúc scaffold `classify_rft_category()`) đã suy `fabric_type` qua
+   1 nguồn DUY NHẤT: LEFT JOIN `availability_logs` (khoá `lower(trim(a.batch)) =
+   lower(trim(r.dyelot))`). Nguồn này đã biết có lỗ hổng với MachineType "Small Machine"
+   (chưa theo dõi Availability) từ lúc scaffold, nhưng thực tế RỘNG HƠN nhiều — không giới
+   hạn ở Small Machine — khiến phần lớn dòng RFT không xác định được `fabric_type`, không
+   rơi vào Cotton/CVC/Polyester nào (tính năng mới thêm ở mục -17 phụ thuộc HOÀN TOÀN vào
+   trường này) -> cả 3 chart trống với dữ liệu thật.
+
+   **Sửa**: `_rft_rows()` (`rft/service.py`) thêm LEFT JOIN `batch_details` (khoá TRỰC TIẾP
+   `dyelot=dyelot` — batch_details.dyelot LÀ khoá tự nhiên giống hệt rft_dye_results.dyelot,
+   không cần đi qua `availability_logs.batch` như trước, cùng kỹ thuật
+   `tank_loading/service.py` đã join batch_details qua `performance_logs.dyelot`) làm nguồn
+   fallback: `CASE WHEN COALESCE(TRIM(a.fabric_type),'')<>'' THEN a.fabric_type ELSE
+   bd.fabric_type END`. Thứ tự ưu tiên: `availability_logs` trước (nguồn đã dùng nhất quán ở
+   mọi Engine khác — batch_matrix/downtime/tank_loading đều lấy fabric_type chính từ đây),
+   `batch_details` chỉ dùng khi (1) rỗng/không khớp. **KHÔNG đổi nguồn `capacity_kg`/
+   `start_time`/`end_time`** — `batch_details` không có cột `capacity_kg`, các trường này vẫn
+   PHẢI lấy từ `availability_logs` (nghĩa là dòng fallback qua batch_details vẫn có thể thiếu
+   Capacity/production_date, rơi vào "Unknown Date"/bị loại bởi filter Capacity như cũ — CHỈ
+   riêng `fabric_type` được cải thiện độ phủ).
+
+   **Bài học quy trình phát hiện khi chạy lại test sau khi sửa**: `tests/
+   test_rft_classification.py::_init_schema()` dựng DB tạm tối giản, TRƯỚC ĐÓ chỉ có
+   `availability_logs`/`rft_dye_results` — sau khi thêm JOIN `batch_details` vào code sản
+   xuất, bảng này KHÔNG tồn tại trong DB tạm của test, khiến `execute_query()` ném
+   `sqlite3.OperationalError: no such table: batch_details`. Vì `_rft_rows()` có
+   `except DatabaseError: return []` bao quanh (thiết kế cố ý để chịu lỗi DB tạm thời, xem
+   docstring "CHƯA có Daily Rollup"), lỗi này bị NUỐT ÂM THẦM — biểu hiện ra ngoài là mọi
+   `total_batches`/`kpis` về 0 thay vì traceback rõ ràng, dễ nhầm là lỗi logic công thức thay
+   vì lỗi schema DB tạm chưa đồng bộ. Đã sửa bằng thêm bảng `batch_details` (tối giản, chỉ 2
+   cột `dyelot`/`fabric_type` — đủ cho test, KHÔNG cần đủ 73 cột như schema thật) vào
+   `_init_schema()`. **Quy tắc rút ra cho lần sau**: khi code sản xuất JOIN thêm 1 bảng MỚI
+   vào 1 truy vấn đã có sẵn, PHẢI rà lại MỌI test dùng DB tạm tự dựng schema (không phải
+   `init_db.py` thật) xem có cần đồng bộ thêm bảng đó không — im lặng trả `[]`/`0` do bọc
+   `except DatabaseError` là 1 dạng lỗi ĐẶC BIỆT KHÓ PHÁT HIỆN qua test (không crash, chỉ ra
+   số sai).
+
+   Thêm kịch bản test MỚI `_scenario_fabric_type_fallback_batch_details()` (kịch bản 6,
+   `tests/test_rft_classification.py`) — 3 case: (1) dyelot khớp `availability_logs`
+   (fabric_type=CVC) NHƯNG `batch_details` có giá trị KHÁC (Polyester) cho CÙNG dyelot ->
+   xác nhận `availability_logs` vẫn thắng (đúng thứ tự ưu tiên); (2) dyelot KHÔNG khớp
+   `availability_logs`, CHỈ có trong `batch_details` (fabric_type=Cotton) -> xác nhận lấy
+   được qua fallback; (3) dyelot không khớp nguồn nào -> `fabric_type` rỗng, không bị gán
+   nhầm vào dòng vải nào. Full regression: `tests/test_rft_classification.py` (6 kịch bản,
+   PASS 100%) + `tests/test_permission_model.py` (PASS 100%, không regression Engine khác) +
+   `tests/test_postgres_shim_translation.py` (PASS 100%, câu SQL mới không dùng cú pháp
+   SQLite-only, an toàn cho Postgres qua `_PostgresConnCompat`).
+
+   **Lưu ý**: chưa có dữ liệu thật trên máy dev cục bộ (`data/mes_dashboard.db` hiện 0 dòng
+   `availability_logs`/`batch_details`) để đo CHÍNH XÁC % cải thiện độ phủ `fabric_type` trên
+   dữ liệu Supabase production thật — người dùng nên kiểm tra lại báo cáo RFT sau khi deploy
+   bản sửa này để xác nhận chart đã có dữ liệu.
+
 -17. **Báo cáo RFT (cả 6 tab) — áp dụng lại pattern "3 loại vải cố định + Target + đường nét
    đứt" đã làm cho "%Tank Loading"/"Batch/Day Trend"** (2026-09-19, theo yêu cầu người dùng
    "mỗi báo cáo phân làm 3 loại cotton cvc polyester ... chuyển thành biểu đồ đường và có

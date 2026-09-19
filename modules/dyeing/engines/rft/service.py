@@ -1,12 +1,17 @@
 """Right First Time (RFT) report — truy vấn và tổng hợp từ `rft_dye_results`.
 
 Nguồn dữ liệu: bảng `rft_dye_results` (import từ file "RFT report.xlsx" — QC xuất, xem
-`core/rft_importer.py`), khoá `dyelot`. LEFT JOIN `availability_logs` (khoá
+`core/rft_importer.py`), khoá `dyelot`. File nguồn KHÔNG có cột Fabric Type — `fabric_type`
+PHẢI suy từ 2 nguồn khác qua LEFT JOIN, ưu tiên thứ tự: (1) `availability_logs` (khoá
 `lower(trim(a.batch)) = lower(trim(r.dyelot))`, CÙNG khoá JOIN đã verify 99.7% khớp ở
-`batch_matrix`/`downtime`) chỉ để suy ra `capacity_kg`/`fabric_type`/`production_date` — 1
-dòng RFT KHÔNG khớp `availability_logs` (thường gặp ở MachineType "Small Machine", chưa được
-theo dõi Availability) vẫn được GIỮ LẠI (không loại bỏ), chỉ không có `production_date` nên
-rơi vào cột pivot "Unknown Date" thay vì bị mất.
+`batch_matrix`/`downtime` — nguồn `capacity_kg`/`production_date` cũng lấy từ đây, KHÔNG có
+nguồn thay thế), (2) fallback `batch_details` (khoá TRỰC TIẾP `dyelot=dyelot`, xem
+`_rft_rows()`) khi (1) rỗng/không khớp — thêm ở 2026-09-19 sau khi phát hiện nhiều dyelot
+KHÔNG khớp `availability_logs` khiến báo cáo chia-3-loại-vải trống trơn. 1 dòng RFT KHÔNG
+khớp `availability_logs` (thường gặp ở MachineType "Small Machine", chưa được theo dõi
+Availability) vẫn được GIỮ LẠI (không loại bỏ), chỉ không có `production_date` nên rơi vào
+cột pivot "Unknown Date" thay vì bị mất — và có thể vẫn xác định được `fabric_type` qua (2)
+dù không xác định được `capacity_kg`/`production_date`.
 
 Quy tắc phân loại 6 tab (`classify_rft_category`): cột `Stage` (chuẩn hoá lower+trim) map
 trực tiếp sang 1 trong 6 `RFT_CATEGORIES` qua `STAGE_TO_CATEGORY`. Giá trị Stage không khớp
@@ -147,18 +152,32 @@ def _rft_rows(selected_capacities: list[float], from_date: str | None, to_date: 
     query TRỰC TIẾP (chưa có Daily Rollup, cùng quyết định đã áp dụng lúc scaffold). KHÔNG lọc
     theo Machine Type/Fabric Type/Brand Program ở đây — lọc ở Python trong
     `get_rft_pivot_data()` để tính được `available_*` từ CÙNG 1 lần query, độc lập với chính
-    3 filter đó (cùng nguyên tắc `downtime/service.py::_available_fabric_types_and_brand_programs()`)."""
+    3 filter đó (cùng nguyên tắc `downtime/service.py::_available_fabric_types_and_brand_programs()`).
+
+    File "RFT report.xlsx" KHÔNG có cột Fabric Type — `fabric_type` PHẢI suy từ nguồn khác.
+    Trước đây CHỈ lấy qua LEFT JOIN `availability_logs` (khoá `batch=dyelot`), nhưng nhiều
+    dyelot KHÔNG khớp bảng đó (không chỉ MachineType "Small Machine" như đã biết — verify
+    thật cho thấy đây là nguyên nhân khiến báo cáo chia-3-loại-vải trống trơn với nhiều bộ dữ
+    liệu). Thêm LEFT JOIN `batch_details` (khoá TRỰC TIẾP `dyelot=dyelot`, cùng khoá tự nhiên
+    với `rft_dye_results.dyelot`, không qua trung gian `availability_logs.batch` — cùng cách
+    `tank_loading/service.py` join `batch_details` qua `performance_logs.dyelot`) làm NGUỒN
+    THỨ 2 cho `fabric_type`: ưu tiên `availability_logs.fabric_type` (nguồn đã dùng ở mọi
+    Engine khác), fallback `batch_details.fabric_type` khi rỗng/NULL — KHÔNG đổi nguồn
+    `capacity_kg`/`start_time`/`end_time` (batch_details không có `capacity_kg`, vẫn PHẢI lấy
+    từ `availability_logs`)."""
     ensure_brand_program_table(get_db())
     sql = f"""
         SELECT r."id" AS rft_id, r."dyelot" AS dyelot, r."customer" AS customer, r."color" AS color,
                r."order_no" AS order_no, r."greige_code" AS greige_code, r."machine_type" AS machine_type,
                r."nc_dg" AS nc_dg, r."result_dye" AS result_dye, r."new_batch2" AS new_batch2,
                r."rework_count" AS rework_count, r."stage" AS stage, r."recipe" AS recipe, r."body_rib" AS body_rib,
-               a."capacity_kg" AS capacity_kg, a."fabric_type" AS fabric_type,
+               a."capacity_kg" AS capacity_kg,
+               CASE WHEN COALESCE(TRIM(a."fabric_type"), '') <> '' THEN a."fabric_type" ELSE bd."fabric_type" END AS fabric_type,
                a."start_time" AS start_time, a."end_time" AS end_time,
                {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM rft_dye_results r
         LEFT JOIN availability_logs a ON lower(trim(a."batch")) = lower(trim(r."dyelot"))
+        LEFT JOIN batch_details bd ON lower(trim(bd."dyelot")) = lower(trim(r."dyelot"))
         LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm."greige_code")) = lower(trim(r."greige_code"))
         WHERE r."dyelot" IS NOT NULL AND TRIM(CAST(r."dyelot" AS TEXT)) <> ''
     """

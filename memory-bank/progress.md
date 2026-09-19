@@ -831,6 +831,21 @@
       render đúng/API trả đúng 3 rows/Target lưu-đọc đúng/Hub không bị ảnh
       hưởng. `supabase/schema.sql` đã thêm bảng `rft_targets` (kèm RLS) —
       CHƯA CHẠY trên Supabase production.
+- [x] **Sửa bug thật: biểu đồ 3-loại-vải RFT trống trơn (2026-09-19, tối, người
+      dùng report ngay sau mục trên)**: nguyên nhân là file "RFT report.xlsx"
+      không có cột Fabric Type, `fabric_type` trước đó CHỈ suy qua JOIN
+      `availability_logs` (nhiều dyelot không khớp bảng này, không chỉ riêng
+      MachineType "Small Machine"). Đã thêm LEFT JOIN `batch_details` (khoá
+      TRỰC TIẾP dyelot=dyelot) làm nguồn fallback fabric_type
+      (`_rft_rows()`, `rft/service.py`) — ưu tiên `availability_logs` trước,
+      `capacity_kg`/`production_date` không đổi nguồn. Thêm kịch bản test 6
+      (`tests/test_rft_classification.py`) verify đúng thứ tự ưu tiên 2
+      nguồn. Phát hiện phụ: schema DB tạm của test cũ thiếu bảng
+      `batch_details` khiến lỗi JOIN bị nuốt âm thầm qua
+      `except DatabaseError` (không crash, chỉ trả số 0) — đã bổ sung bảng
+      tối giản vào `_init_schema()`. Full regression (`test_rft_classification.py`
+      6 kịch bản + `test_permission_model.py` + `test_postgres_shim_translation.py`)
+      PASS 100%. Chi tiết đầy đủ ở `activeContext.md` mục -18.
 
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn

@@ -49,6 +49,14 @@ def _init_schema(db_path: str) -> None:
             batch TEXT, capacity_kg REAL, fabric_type TEXT, start_time TEXT, end_time TEXT
         )
     """)
+    # Bảng `batch_details` TỐI GIẢN (chỉ đủ cột `_rft_rows()` cần) — `rft/service.py` LEFT
+    # JOIN bảng này (khoá dyelot=dyelot) làm nguồn fallback fabric_type khi
+    # `availability_logs` không khớp (xem docstring `_rft_rows()`).
+    conn.execute("""
+        CREATE TABLE batch_details (
+            dyelot TEXT PRIMARY KEY, fabric_type TEXT
+        )
+    """)
     _ensure_rft_dye_results_table(conn)
     conn.commit()
     conn.close()
@@ -239,6 +247,48 @@ def _scenario_sync_rft_results_end_to_end(failures: list[str]) -> None:
         os.unlink(db_path)
 
 
+def _scenario_fabric_type_fallback_batch_details(failures: list[str]) -> None:
+    """`fabric_type` PHẢI fallback sang `batch_details` (khoá dyelot=dyelot) khi
+    `availability_logs` không khớp — xem docstring `_rft_rows()` (2026-09-19, sửa sau khi
+    người dùng report báo cáo chia-3-loại-vải trống trơn vì file "RFT report.xlsx" không có
+    cột Fabric Type và nhiều dyelot không khớp `availability_logs`)."""
+    print("\n=== Kịch bản 6: fabric_type fallback sang batch_details khi availability_logs không khớp ===")
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _init_schema(db_path)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+
+        # FB-MATCH: khớp availability_logs (fabric_type=CVC) — batch_details CÓ dòng khác
+        # (Polyester) nhưng KHÔNG được dùng, availability_logs vẫn ưu tiên trước.
+        conn.execute(
+            "INSERT INTO availability_logs (batch, capacity_kg, fabric_type, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+            ("FB-MATCH", 600, "CVC", "2026-09-05 08:00:00", "2026-09-05 10:00:00"),
+        )
+        conn.execute("INSERT INTO batch_details (dyelot, fabric_type) VALUES ('FB-MATCH', 'Polyester')")
+        # FB-FALLBACK: KHÔNG khớp availability_logs -> phải lấy fabric_type từ batch_details.
+        conn.execute("INSERT INTO batch_details (dyelot, fabric_type) VALUES ('FB-FALLBACK', 'Cotton')")
+        # FB-NONE: KHÔNG khớp cả 2 nguồn -> fabric_type rỗng, không rơi vào dòng vải nào.
+        for dyelot in ("FB-MATCH", "FB-FALLBACK", "FB-NONE"):
+            _insert_rft_row(conn, dyelot=dyelot, stage="lab to lab", result_dye="OK", machine_type=">=500kg")
+        conn.commit()
+        conn.close()
+
+        app = _make_temp_app(db_path)
+        with app.app_context():
+            data = get_rft_pivot_data(category="Lab to Lab")
+            close_db()
+
+        rows_by_fabric = {row["fabric_type"]: row for row in data["rows"]}
+        _check("KPI tổng vẫn đếm CẢ 3 dyelot (không đổi hành vi cũ)", data["kpis"]["total_batches"], 3, failures)
+        _check("Cotton total = 1 (FB-FALLBACK, lấy fabric_type từ batch_details)", rows_by_fabric["Cotton"]["total"], 100.0, failures)
+        _check("CVC total = 1 (FB-MATCH, ưu tiên availability_logs dù batch_details khác)", rows_by_fabric["CVC"]["total"], 100.0, failures)
+        _check("Polyester total = 0 (FB-NONE không khớp nguồn nào, không bị gán nhầm)", rows_by_fabric["Polyester"]["total"], 0.0, failures)
+    finally:
+        os.unlink(db_path)
+
+
 def main() -> int:
     failures: list[str] = []
     _scenario_stage_mapping(failures)
@@ -246,6 +296,7 @@ def main() -> int:
     _scenario_kpi_formula_and_machine_restriction(failures)
     _scenario_unknown_date_bucket(failures)
     _scenario_sync_rft_results_end_to_end(failures)
+    _scenario_fabric_type_fallback_batch_details(failures)
     print(f"\n{'='*60}\nKẾT QUẢ: {'TẤT CẢ KHỚP' if not failures else f'{len(failures)} CASE LỆCH'}\n{'='*60}")
     return 1 if failures else 0
 
