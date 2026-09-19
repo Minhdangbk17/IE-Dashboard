@@ -811,6 +811,26 @@
       suite cũ PASS 100%. Chi tiết đầy đủ (bao gồm 4 quyết định nghiệp vụ đã
       hỏi-đáp với người dùng trước khi code) ở `activeContext.md` mục "Đang
       làm" (Engine `rft`).
+- [x] **Báo cáo RFT (cả 6 tab) — đổi sang 3 dòng/3 đường cố định Cotton/CVC/
+      Polyester + cột Target (2026-09-19, chiều muộn)**: áp dụng lại pattern
+      đã làm cho "%Tank Loading"/"Batch/Day Trend" — chart đổi `bar` -> `line`
+      (3 chart cạnh nhau/tab, trái=Cotton/giữa=CVC/phải=Polyester), bảng đổi
+      từ 1 dòng sang 3 dòng có cột Target editable. Bảng Target MỚI
+      `rft_targets` khoá GHÉP `(category, fabric_type)` (KHÁC
+      `tank_loading_targets` chỉ khoá `fabric_type` đơn — RFT có 6 tab độc
+      lập, mỗi tab cần Target riêng). Route mới `POST /dyeing/rft/api/
+      targets/<slug>/<fabric_type>`. Bỏ hẳn filter "Fabric Type" chung (không
+      còn ý nghĩa khi đã cố định 3 loại). KPI card đầu trang +
+      `chart.values`/`chart.rate_values`/`kpis.rate_pct` GIỮ NGUYÊN ý nghĩa
+      cũ (gộp cả tab, mọi loại vải) để KHÔNG phải sửa `dyeing_hub.js` (4
+      mini-chart RFT trên Dyeing Hub Dashboard không bị ảnh hưởng gì). Chi
+      tiết đầy đủ + lý do khác biệt so với %Tank Loading ở `activeContext.md`
+      mục -17. Verify: `tests/test_rft_classification.py` (5 kịch bản cũ
+      không đổi assertion nào) + `tests/test_permission_model.py` PASS 100%,
+      cộng smoke test ad-hoc (Flask app đầy đủ + DB tạm) xác nhận trang
+      render đúng/API trả đúng 3 rows/Target lưu-đọc đúng/Hub không bị ảnh
+      hưởng. `supabase/schema.sql` đã thêm bảng `rft_targets` (kèm RLS) —
+      CHƯA CHẠY trên Supabase production.
 
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn

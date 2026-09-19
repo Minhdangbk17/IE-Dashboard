@@ -5,7 +5,8 @@
     const capacityMenu = document.getElementById("capacity-menu");
     const capacityAll = document.getElementById("capacity-all");
     const capacityCheckboxes = [...document.querySelectorAll(".capacity-checkbox")];
-    const charts = {};
+    const charts = {}; // `${category}::${fabricType}` -> Chart instance (1 biểu đồ riêng/loại vải/tab)
+    const lastDataByCategory = {}; // category -> response API gần nhất (cần lại khi sửa Target)
 
     function escAttr(value) {
         return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
@@ -14,8 +15,18 @@
         return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    function showToast(message, kind) {
+        let container = document.querySelector(".toast-container");
+        if (!container) { container = document.createElement("div"); container.className = "toast-container"; document.body.appendChild(container); }
+        const el = document.createElement("div");
+        el.className = `flash flash-${kind || "success"} import-toast`;
+        el.textContent = message;
+        container.appendChild(el);
+        window.setTimeout(() => el.remove(), 4000);
+    }
+
     // Dropdown multi-select DATA-DRIVEN (cùng cách trình bày với Capacity ở trên, nhưng
-    // option list lấy từ response API thay vì Jinja render sẵn) — dùng cho Fabric Type/
+    // option list lấy từ response API thay vì Jinja render sẵn) — dùng cho Machine Type/
     // Brand Program.
     function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, onChange) {
         const toggle = document.getElementById(toggleId);
@@ -67,7 +78,6 @@
         };
     }
     const machineTypeFilter = makeMultiSelectDropdown("machine-type-toggle", "machine-type-menu", "All machine types", loadAll);
-    const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", loadAll);
     const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", loadAll);
 
     function pad2(value) { return String(value).padStart(2, "0"); }
@@ -107,7 +117,6 @@
             category,
             capacities: selectedCapacities().join(","),
             machine_types: machineTypeFilter.selected().join(","),
-            fabric_types: fabricTypeFilter.selected().join(","),
             brand_programs: brandProgramFilter.selected().join(","),
             from_date: document.getElementById("from-date").value,
             to_date: document.getElementById("to-date").value,
@@ -122,35 +131,139 @@
         return { textColor, gridColor };
     }
 
-    function renderTable(section, data) {
-        const head = section.querySelector(".rft-head");
-        const label = head.querySelector("th").textContent;
-        head.innerHTML = `<th>${label}</th>` + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
-        const row = data.rows[0];
-        section.querySelector(".rft-table tbody").innerHTML =
-            `<tr><th>${row.label}</th>${row.values.map((value) => `<td>${value.toFixed(1)}%</td>`).join("")}<td><strong>${row.total.toFixed(1)}%</strong></td></tr>`;
+    // Màu cố định theo loại vải — DÙNG CHUNG cho đường số liệu (nét liền) và đường Target
+    // tương ứng (nét đứt, cùng màu) — cùng bảng màu đã dùng cho %Tank Loading/Batch/Day Trend.
+    const RFT_FABRIC_COLORS = { Cotton: "#3fb950", CVC: "#2862d7", Polyester: "#f778ba" };
+
+    function rftTargetUrl(category, fabricType) {
+        return window.RFT_TARGET_URL_TEMPLATE.replace("__SLUG__", encodeURIComponent(category)).replace("__FABRIC__", encodeURIComponent(fabricType));
     }
 
+    function formatRftTarget(value) {
+        return value === null || value === undefined ? "-" : `${Number(value).toFixed(1)}%`;
+    }
+
+    function renderTargetCell(category, row) {
+        const text = formatRftTarget(row.target);
+        if (!window.RFT_CAN_EDIT) return `<td>${text}</td>`;
+        return `<td><span class="case-note-cell" data-category="${escAttr(category)}" data-fabric-type="${escAttr(row.fabric_type)}">${text}</span></td>`;
+    }
+
+    function buildTargetCellSpan(category, row) {
+        const span = document.createElement("span");
+        span.className = "case-note-cell";
+        span.dataset.category = category;
+        span.dataset.fabricType = row.fabric_type;
+        span.textContent = formatRftTarget(row.target);
+        return span;
+    }
+
+    function startEditingTarget(cell) {
+        const category = cell.dataset.category;
+        const fabricType = cell.dataset.fabricType;
+        const data = lastDataByCategory[category];
+        const row = data && (data.rows || []).find((item) => item.fabric_type === fabricType);
+        if (!row) return;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.1";
+        input.className = "case-note-input";
+        input.value = row.target === null || row.target === undefined ? "" : row.target;
+        cell.replaceWith(input);
+        input.focus();
+        input.select();
+        let settled = false;
+        function commit() { if (settled) return; settled = true; saveTarget(input, category, row); }
+        function cancel() { if (settled) return; settled = true; input.replaceWith(buildTargetCellSpan(category, row)); }
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+        });
+    }
+
+    function saveTarget(inputEl, category, row) {
+        const rawValue = inputEl.value.trim();
+        const value = rawValue === "" ? 0 : Number(rawValue);
+        if (Number.isNaN(value)) {
+            inputEl.replaceWith(buildTargetCellSpan(category, row));
+            showToast("Target must be a number.", "error");
+            return;
+        }
+        fetch(rftTargetUrl(category, row.fabric_type), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target_value: value }),
+        }).then((response) => response.json().catch(() => ({})).then((data) => {
+            if (!response.ok) throw new Error(data.error || "save failed");
+            row.target = value;
+            inputEl.replaceWith(buildTargetCellSpan(category, row));
+            showToast(`Target for ${row.fabric_type} (${category}) saved.`, "success");
+            updateChart(category, lastDataByCategory[category]);
+        })).catch((err) => {
+            inputEl.replaceWith(buildTargetCellSpan(category, row));
+            showToast(err && err.message ? err.message : "Failed to save target.", "error");
+        });
+    }
+
+    document.querySelectorAll(".rft-table").forEach((table) => {
+        table.addEventListener("click", (event) => {
+            const cell = event.target.closest(".case-note-cell");
+            if (!cell || !cell.dataset.fabricType) return;
+            startEditingTarget(cell);
+        });
+    });
+
+    function renderTable(section, category, data) {
+        const head = section.querySelector(".rft-head");
+        head.innerHTML = "<th>Fabric Type</th><th>Target</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
+        section.querySelector(".rft-table tbody").innerHTML = data.rows.map((row) =>
+            `<tr><th>${row.fabric_type}</th>${renderTargetCell(category, row)}${row.values.map((value) => `<td>${value.toFixed(1)}%</td>`).join("")}<td><strong>${row.total.toFixed(1)}%</strong></td></tr>`
+        ).join("");
+    }
+
+    // 3 biểu đồ RIÊNG BIỆT/tab (trái=Cotton, giữa=CVC, phải=Polyester) — mỗi biểu đồ chỉ có
+    // 1 đường số liệu + 1 đường Target đứt nét của ĐÚNG loại đó, cùng kỹ thuật đã áp dụng cho
+    // %Tank Loading (`tank_loading.js::updateChart()`).
     function updateChart(category, data) {
-        if (typeof Chart === "undefined") return;
-        const canvas = document.querySelector(`.rft-chart[data-category="${category}"]`);
-        if (!canvas) return;
+        if (typeof Chart === "undefined" || !data) return;
         const { textColor, gridColor } = chartTextColors();
-        const row = data.rows[0];
-        if (charts[category]) charts[category].destroy();
-        charts[category] = new Chart(canvas, {
-            type: "bar",
-            data: { labels: data.periods, datasets: [{ label: row.label, data: row.values, backgroundColor: "#2862d7", borderColor: "#2862d7", borderWidth: 1 }] },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: "index", intersect: false },
-                scales: {
-                    x: { ticks: { color: textColor }, grid: { color: gridColor } },
-                    y: { beginAtZero: true, max: 100, ticks: { color: textColor, callback: (value) => `${value}%` }, grid: { color: gridColor }, title: { display: true, text: "RFT rate (%)", color: textColor } },
+        (data.rows || []).forEach((row) => {
+            const canvas = document.querySelector(`.rft-chart[data-category="${category}"][data-fabric="${row.fabric_type}"]`);
+            if (!canvas) return;
+            const color = RFT_FABRIC_COLORS[row.fabric_type] || "#abaebb";
+            const datasets = [{ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false }];
+            if (row.target !== null && row.target !== undefined) {
+                datasets.push({
+                    label: `${row.fabric_type} Target`,
+                    data: data.periods.map(() => row.target),
+                    borderColor: color,
+                    borderDash: [6, 4],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    isTargetLine: true,
+                });
+            }
+            const key = `${category}::${row.fabric_type}`;
+            if (charts[key]) charts[key].destroy();
+            charts[key] = new Chart(canvas, {
+                type: "line",
+                data: { labels: data.periods, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: "index", intersect: false },
+                    scales: {
+                        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+                        y: { beginAtZero: true, max: 100, ticks: { color: textColor, callback: (value) => `${value}%` }, grid: { color: gridColor }, title: { display: true, text: "RFT rate (%)", color: textColor } },
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { filter: (item) => !item.dataset.isTargetLine, callbacks: { label: (context) => `${context.formattedValue}%` } },
+                    },
                 },
-                plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => `${context.formattedValue}%` } } },
-            },
+            });
         });
     }
 
@@ -161,7 +274,6 @@
         if (!response.ok) return;
         const data = await response.json();
         machineTypeFilter.setOptions(data.available_machine_types || []);
-        fabricTypeFilter.setOptions(data.available_fabric_types || []);
         brandProgramFilter.setOptions(data.available_brand_programs || []);
         section.querySelector(".kpi-total-batches").textContent = data.kpis.total_batches.toLocaleString();
         section.querySelector(".kpi-ok-batches").textContent = data.kpis.ok_batches.toLocaleString();
@@ -175,7 +287,8 @@
                 otherStageEl.hidden = true;
             }
         }
-        renderTable(section, data);
+        lastDataByCategory[category] = data;
+        renderTable(section, category, data);
         updateChart(category, data);
     }
 
@@ -194,7 +307,9 @@
         // trước đó có thể 0x0 (bị "hidden"), phải resize lại sau khi hiện ra.
         requestAnimationFrame(() => {
             const category = pageTabsData[index];
-            if (charts[category]) charts[category].resize();
+            Object.keys(charts).forEach((key) => {
+                if (key.startsWith(`${category}::`) && charts[key]) charts[key].resize();
+            });
         });
     }
 

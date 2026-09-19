@@ -9,9 +9,13 @@
     .capacity-menu[hidden] { display: none; }
     .capacity-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
     .capacity-option:hover { background: var(--color-neutral-muted, rgba(110, 118, 129, .15)); }
-    .chart-panel { min-height: 380px; height: 380px; }
     @media (max-width: 800px) { .rft-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
     .rft-page[hidden] { display: none; }
+    .trend-charts-row { display: flex; gap: 12px; height: 320px; }
+    .trend-chart-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .trend-chart-title { margin: 0 0 6px; text-align: center; }
+    .trend-chart-canvas-wrap { position: relative; flex: 1; min-height: 0; }
+    @media (max-width: 900px) { .trend-charts-row { flex-direction: column; height: auto; } .trend-chart-canvas-wrap { height: 260px; } }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
@@ -36,11 +40,6 @@
             <label for="machine-type-toggle">Machine Type</label>
             <button id="machine-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All machine types</button>
             <div id="machine-type-menu" class="capacity-menu" hidden></div>
-        </div>
-        <div class="form-group mb-0 mr-3 capacity-dropdown">
-            <label for="fabric-type-toggle">Fabric Type</label>
-            <button id="fabric-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All fabric types</button>
-            <div id="fabric-type-menu" class="capacity-menu" hidden></div>
         </div>
         <div class="form-group mb-0 mr-3 capacity-dropdown">
             <label for="brand-program-toggle">Brand Program</label>
@@ -71,17 +70,30 @@
     {% endif %}
     <p class="f6 color-fg-muted mb-3 rft-other-stage" data-category="{{ slug }}" hidden></p>
 
-    <div class="Box p-3 mb-4 chart-panel">
+    <div class="Box p-3 mb-4">
         <h3 class="mt-0 mb-2">{{ label }} — RFT rate trend</h3>
-        <canvas class="rft-chart" data-category="{{ slug }}" aria-label="{{ label }} chart"></canvas>
+        <div class="trend-charts-row">
+            <div class="trend-chart-col">
+                <h4 class="trend-chart-title">Cotton</h4>
+                <div class="trend-chart-canvas-wrap"><canvas class="rft-chart" data-category="{{ slug }}" data-fabric="Cotton" aria-label="{{ label }} Cotton chart"></canvas></div>
+            </div>
+            <div class="trend-chart-col">
+                <h4 class="trend-chart-title">CVC</h4>
+                <div class="trend-chart-canvas-wrap"><canvas class="rft-chart" data-category="{{ slug }}" data-fabric="CVC" aria-label="{{ label }} CVC chart"></canvas></div>
+            </div>
+            <div class="trend-chart-col">
+                <h4 class="trend-chart-title">Polyester</h4>
+                <div class="trend-chart-canvas-wrap"><canvas class="rft-chart" data-category="{{ slug }}" data-fabric="Polyester" aria-label="{{ label }} Polyester chart"></canvas></div>
+            </div>
+        </div>
     </div>
 
     <div class="Box p-3" style="overflow-x:auto;">
         <table class="preview-table rft-table" data-category="{{ slug }}">
-            <thead><tr class="rft-head"><th>{{ label }}</th><th>Total</th></tr></thead>
+            <thead><tr class="rft-head"><th>Fabric Type</th><th>Target</th></tr></thead>
             <tbody></tbody>
         </table>
-        <p class="f6 color-fg-muted mt-2 mb-0">Values shown are RFT rate (% ResultDYE = OK) per period.</p>
+        <p class="f6 color-fg-muted mt-2 mb-0">Only Cotton/CVC/Polyester are shown; other fabric types are excluded from this breakdown. Values shown are RFT rate (% ResultDYE = OK) per period.</p>
     </div>
 </section>
 {% endfor %}
@@ -89,6 +101,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
     window.RFT_API_URL = "{{ url_for('dyeing.rft.api_summary') }}";
+    window.RFT_CAN_EDIT = {{ "true" if current_user_can('dyeing', 'rft', 'edit') else "false" }};
+    window.RFT_TARGET_URL_TEMPLATE = "{{ url_for('dyeing.rft.api_set_target', slug='__SLUG__', fabric_type='__FABRIC__') }}";
 </script>
 <script src="{{ url_for('dyeing.rft.static', filename='rft.js') }}"></script>
 {% endblock %}

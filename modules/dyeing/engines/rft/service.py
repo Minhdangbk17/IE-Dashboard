@@ -26,7 +26,7 @@ from datetime import date, datetime
 from typing import Any
 
 from core.brand_program_importer import ensure_brand_program_table
-from core.database import DatabaseError, execute_query, get_db
+from core.database import DatabaseError, execute_query, get_db, get_dialect
 from core.production_time import get_production_date
 from core.rft_importer import LARGE_MACHINE_KEY
 
@@ -60,6 +60,18 @@ RESTRICTED_TO_LARGE_MACHINE = {"Rework", "Adjust Color"}
 # THẬT — bật True kể từ khi có nguồn `rft_dye_results` (xem `RFT_CLASSIFICATION_READY` cũ,
 # trước đó luôn False vì hàm luôn trả None).
 RFT_CLASSIFICATION_READY = True
+
+# Mỗi tab (6 nhóm ở trên) LUÔN thể hiện ĐÚNG 3 loại vải chính này thành 3 dòng/3 đường riêng
+# (theo yêu cầu người dùng, cùng pattern đã áp dụng cho "%Tank Loading"/"Batch/Day Trend" —
+# xem `tank_loading/service.py::MAIN_FABRIC_TYPES`). Định nghĩa RIÊNG ở đây (không import
+# cross-engine) để giữ đúng Vertical Slice Architecture (CLAUDE.md mục 3-4) — cố tình chấp
+# nhận trùng lặp có kiểm soát thay vì phụ thuộc chéo giữa 2 Engine.
+MAIN_FABRIC_TYPES: tuple[str, ...] = ("Cotton", "CVC", "Polyester")
+_MAIN_FABRIC_TYPE_BY_NORM: dict[str, str] = {name.lower(): name for name in MAIN_FABRIC_TYPES}
+
+
+def _normalize_main_fabric_type(value: str | None) -> str | None:
+    return _MAIN_FABRIC_TYPE_BY_NORM.get(str(value or "").strip().lower())
 
 _BRAND_PROGRAM_LABEL_SQL = "CASE WHEN COALESCE(bpm.brand, '') <> '' AND COALESCE(bpm.brand_program, '') <> '' THEN bpm.brand || ' - ' || bpm.brand_program ELSE '' END"
 
@@ -176,19 +188,71 @@ def _rft_rows(selected_capacities: list[float], from_date: str | None, to_date: 
     return result
 
 
-def _empty_pivot(category: str, group_by: str) -> dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Target — bảng cấu hình `rft_targets`, khoá GHÉP `(category, fabric_type)` (KHÁC
+# `tank_loading_targets`/`batch_day_trend_targets` chỉ khoá theo `fabric_type` đơn — RFT có
+# 6 tab độc lập, mỗi tab cần Target RIÊNG cho từng loại vải, không dùng chung 1 Target cho
+# cùng loại vải xuyên suốt mọi tab).
+# ---------------------------------------------------------------------------
+
+
+def _ensure_targets_table(conn: Any) -> None:
+    """CHỈ chạy CREATE TABLE ở SQLite — Postgres tạo qua `supabase/schema.sql`."""
+    if get_dialect() == "sqlite":
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rft_targets (
+                category TEXT NOT NULL,
+                fabric_type TEXT NOT NULL,
+                target_value REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (category, fabric_type)
+            )
+        """)
+    conn.commit()
+
+
+def get_targets(category: str) -> dict[str, float | None]:
+    """{fabric_type: target_value} cho ĐÚNG 3 loại `MAIN_FABRIC_TYPES` của 1 tab — loại CHƯA
+    từng được cấu hình trả `None` (hiển thị "-" trên UI, phân biệt với target THẬT SỰ = 0)."""
+    conn = get_db()
+    _ensure_targets_table(conn)
+    rows = execute_query("SELECT fabric_type, target_value FROM rft_targets WHERE category = ?", [category])
+    result: dict[str, float | None] = {row["fabric_type"]: float(row["target_value"]) for row in rows}
+    for name in MAIN_FABRIC_TYPES:
+        result.setdefault(name, None)
+    return result
+
+
+def set_target(category: str, fabric_type: str, target_value: float) -> dict[str, Any]:
+    if category not in RFT_CATEGORIES:
+        raise ValueError(f"Nhóm RFT không hợp lệ: {category}")
+    if fabric_type not in MAIN_FABRIC_TYPES:
+        raise ValueError(f"Fabric type không hợp lệ: {fabric_type}")
+    conn = get_db()
+    _ensure_targets_table(conn)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT INTO rft_targets (category, fabric_type, target_value, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(category, fabric_type) DO UPDATE SET target_value = excluded.target_value, updated_at = excluded.updated_at",
+        (category, fabric_type, target_value, now_str),
+    )
+    conn.commit()
+    return {"category": category, "fabric_type": fabric_type, "target_value": target_value, "updated_at": now_str}
+
+
+def _empty_pivot(category: str, group_by: str, targets: dict[str, float | None] | None = None) -> dict[str, Any]:
+    targets = targets or {}
     return {
         "category": category,
         "filters": {
-            "capacities": [], "machine_types": [], "fabric_types": [], "brand_programs": [],
+            "capacities": [], "machine_types": [], "brand_programs": [],
             "from_date": None, "to_date": None, "group_by": group_by,
         },
         "periods": [], "period_keys": [],
-        "rows": [{"label": category, "values": [], "total": 0.0}],
-        "total_row": [],
-        "chart": {"categories": [], "values": [], "rate_values": []},
+        "rows": [{"fabric_type": name, "target": targets.get(name), "values": [], "total": 0.0} for name in MAIN_FABRIC_TYPES],
+        "chart": {"categories": [], "values": [], "rate_values": [], "series": []},
         "kpis": {"total_batches": 0, "ok_batches": 0, "rate_pct": 0.0},
-        "available_fabric_types": [], "available_brand_programs": [], "available_machine_types": [],
+        "available_brand_programs": [], "available_machine_types": [],
         "other_stage_count": 0,
         "classification_ready": RFT_CLASSIFICATION_READY,
     }
@@ -197,32 +261,34 @@ def _empty_pivot(category: str, group_by: str) -> dict[str, Any]:
 def get_rft_pivot_data(
     category: str, capacities: str | list[str] | None = None,
     machine_types: str | list[str] | None = None,
-    fabric_types: str | list[str] | None = None, brand_programs: str | list[str] | None = None,
+    brand_programs: str | list[str] | None = None,
     from_date: str | None = None, to_date: str | None = None, group_by: str = "date",
 ) -> dict[str, Any]:
     """Bảng + biểu đồ cho ĐÚNG 1 trong 6 nhóm RFT theo Day/Week/Month — cùng bộ lọc
-    Capacity/Machine Type/Fabric Type/Brand Program/Date range. `category` phải là 1 giá trị
-    trong `RFT_CATEGORIES` (route đã validate qua `RFT_CATEGORY_SLUGS`)."""
+    Capacity/Machine Type/Brand Program/Date range. `category` phải là 1 giá trị trong
+    `RFT_CATEGORIES` (route đã validate qua `RFT_CATEGORY_SLUGS`).
+
+    KPI/`chart.values`/`chart.rate_values` ở cấp TOP (dùng cho KPI card đầu trang + Dyeing Hub
+    Dashboard) LUÔN gộp CẢ tab (mọi loại vải, giữ nguyên hành vi cũ) — `rows`/`chart.series`
+    (MỚI) mới là phần chia riêng 3 dòng Cotton/CVC/Polyester + Target, cùng pattern đã áp dụng
+    cho "%Tank Loading" (`tank_loading/service.py::get_tank_loading_pivot_data()`)."""
     if category not in RFT_CATEGORIES:
         raise ValueError(f"Nhóm RFT không hợp lệ: {category}")
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
+    targets = get_targets(category)
     selected_capacities = _parse_capacities(capacities)
     selected_machine_types = _parse_text_filter(machine_types)
-    selected_fabric_types = _parse_text_filter(fabric_types)
     selected_brand_programs = _parse_text_filter(brand_programs)
 
     all_rows = _rft_rows(selected_capacities, from_date, to_date)
-    available_fabric_types = sorted({row["fabric_type"] for row in all_rows if row["fabric_type"]})
     available_brand_programs = sorted({row["brand_program"] for row in all_rows if row["brand_program"]})
     available_machine_types = sorted({row["machine_type"] for row in all_rows if row["machine_type"]})
 
     machine_filter = set(selected_machine_types) if selected_machine_types else None
-    fabric_filter = set(selected_fabric_types) if selected_fabric_types else None
     brand_filter = set(selected_brand_programs) if selected_brand_programs else None
     rows = [
         row for row in all_rows
         if (machine_filter is None or row["machine_type"] in machine_filter)
-        and (fabric_filter is None or row["fabric_type"] in fabric_filter)
         and (brand_filter is None or row["brand_program"] in brand_filter)
     ]
 
@@ -237,18 +303,20 @@ def get_rft_pivot_data(
         tab_rows = [row for row in tab_rows if _is_large_machine(row["machine_type"])]
 
     if not tab_rows:
-        empty = _empty_pivot(category, group_by)
+        empty = _empty_pivot(category, group_by, targets)
         empty["filters"] = {
             "capacities": selected_capacities or "all", "machine_types": selected_machine_types or "all",
-            "fabric_types": selected_fabric_types or "all", "brand_programs": selected_brand_programs or "all",
+            "brand_programs": selected_brand_programs or "all",
             "from_date": from_date, "to_date": to_date, "group_by": group_by,
         }
-        empty["available_fabric_types"] = available_fabric_types
         empty["available_brand_programs"] = available_brand_programs
         empty["available_machine_types"] = available_machine_types
         empty["other_stage_count"] = other_stage_count
         return empty
 
+    # Gộp CẢ tab (mọi loại vải) — GIỮ NGUYÊN như bản cũ, phục vụ KPI card đầu trang + Dyeing
+    # Hub Dashboard (đọc `chart.values`/`chart.rate_values`/`kpis.rate_pct`, KHÔNG đổi tên/ý
+    # nghĩa field để khỏi phải sửa `dyeing_hub.js`).
     periods: dict[str, dict[str, Any]] = {}
     for row in tab_rows:
         if row["production_date"] is not None:
@@ -278,24 +346,55 @@ def get_rft_pivot_data(
     ok_batches = {str(row["dyelot"]).strip() for row in tab_rows if row["result_dye"] == "OK"}
     overall_rate = round(len(ok_batches) / len(total_batches) * 100, 1) if total_batches else 0.0
 
+    # MỚI: chia riêng 3 dòng Cotton/CVC/Polyester — mỗi loại tính rate_pct ĐỘC LẬP theo ĐÚNG
+    # khung kỳ `period_keys` đã dựng ở trên (cùng trục X với KPI tổng). Mẻ có Fabric Type
+    # KHÔNG khớp 1 trong 3 loại chính (rỗng, "Unknow", hoặc loại khác như Nylon) không xuất
+    # hiện ở dòng nào trong 3 dòng này — vẫn được tính vào KPI/chart tổng ở trên (không đổi
+    # hành vi cũ), chỉ không có chỗ trong phần chia-theo-vải MỚI.
+    periods_by_fabric: dict[str, dict[str, dict[str, set]]] = {name: {} for name in MAIN_FABRIC_TYPES}
+    for row in tab_rows:
+        fabric_type = _normalize_main_fabric_type(row["fabric_type"])
+        if fabric_type is None:
+            continue
+        key = _period(row["production_date"], group_by)[0] if row["production_date"] is not None else "unknown"
+        period = periods_by_fabric[fabric_type].setdefault(key, {"batches": set(), "ok_batches": set()})
+        batch_key = str(row["dyelot"]).strip()
+        period["batches"].add(batch_key)
+        if row["result_dye"] == "OK":
+            period["ok_batches"].add(batch_key)
+
+    rows_out: list[dict[str, Any]] = []
+    for name in MAIN_FABRIC_TYPES:
+        fabric_periods = periods_by_fabric[name]
+        values = [
+            round(len(fabric_periods[key]["ok_batches"]) / len(fabric_periods[key]["batches"]) * 100, 1)
+            if fabric_periods.get(key) and fabric_periods[key]["batches"] else 0.0
+            for key in period_keys
+        ]
+        fabric_total_batches = {batch for period in fabric_periods.values() for batch in period["batches"]}
+        fabric_ok_batches = {batch for period in fabric_periods.values() for batch in period["ok_batches"]}
+        total_value = round(len(fabric_ok_batches) / len(fabric_total_batches) * 100, 1) if fabric_total_batches else 0.0
+        rows_out.append({"fabric_type": name, "target": targets.get(name), "values": values, "total": total_value})
+
     return {
         "category": category,
         "filters": {
             "capacities": selected_capacities or "all", "machine_types": selected_machine_types or "all",
-            "fabric_types": selected_fabric_types or "all", "brand_programs": selected_brand_programs or "all",
+            "brand_programs": selected_brand_programs or "all",
             "from_date": from_date, "to_date": to_date, "group_by": group_by,
         },
         "periods": labels, "period_keys": period_keys,
-        # Cell/Total hiển thị DẠNG % (tỷ lệ đạt ngay lần đầu theo kỳ), không phải số mẻ thô.
-        "rows": [{"label": category, "values": rate_values, "total": overall_rate}],
-        "total_row": rate_values,
-        "chart": {"categories": labels, "values": total_values, "rate_values": rate_values},
+        "rows": rows_out,
+        "chart": {
+            "categories": labels, "values": total_values, "rate_values": rate_values,
+            "series": [{"name": row["fabric_type"], "data": row["values"]} for row in rows_out],
+        },
         "kpis": {
             "total_batches": len(total_batches),
             "ok_batches": len(ok_batches),
             "rate_pct": overall_rate,
         },
-        "available_fabric_types": available_fabric_types, "available_brand_programs": available_brand_programs,
+        "available_brand_programs": available_brand_programs,
         "available_machine_types": available_machine_types,
         "other_stage_count": other_stage_count,
         "classification_ready": RFT_CLASSIFICATION_READY,

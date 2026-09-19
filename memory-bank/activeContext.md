@@ -1,6 +1,21 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-19 — Engine `rft` (Right First Time) có quy tắc phân loại
+**Cập nhật lần cuối:** 2026-09-19 (chiều muộn) — Báo cáo RFT (cả 6 tab) đổi từ 1 dòng/tab
+sang **3 dòng/3 đường cố định Cotton/CVC/Polyester + cột Target**, chart đổi từ `bar` sang
+`line` — áp dụng LẠI đúng pattern đã làm cho "%Tank Loading"/"Batch/Day Trend" (mục -13/-14),
+theo yêu cầu người dùng "làm hết cho cả 6 mục". Bỏ hẳn filter Fabric Type chung (không còn ý
+nghĩa khi mỗi tab đã cố định lộ 3 loại). Bảng Target MỚI `rft_targets` — khoá GHÉP
+**`(category, fabric_type)`** (KHÁC `tank_loading_targets` chỉ khoá `fabric_type` đơn — RFT
+có 6 tab độc lập, mỗi tab cần Target riêng cho từng loại vải, không dùng chung Target giữa
+các tab). KPI card đầu trang + field `chart.values`/`chart.rate_values`/`kpis.rate_pct` (dùng
+bởi Dyeing Hub Dashboard) **GIỮ NGUYÊN nguyên** — vẫn gộp CẢ tab (mọi loại vải, không chỉ 3
+loại chính), không cần sửa `dyeing_hub.js`; phần MỚI (`rows`/`chart.series`, 3 dòng theo
+đúng `MAIN_FABRIC_TYPES`) chỉ ảnh hưởng khu vực bảng+chart chi tiết trên trang report RFT.
+Route mới `POST /dyeing/rft/api/targets/<slug>/<fabric_type>`. Xem chi tiết đầy đủ ở mục -17
+bên dưới. Bản ghi trước đó (2026-09-19, RFT có quy tắc phân loại thật lần đầu) giữ nguyên
+ngay dưới đây.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-19 — Engine `rft` (Right First Time) có quy tắc phân loại
 THẬT lần đầu tiên (trước đó là scaffold `classify_rft_category()` luôn trả `None` từ
 2026-09-13). Nguồn dữ liệu mới: file "RFT report.xlsx" (QC xuất) -> bảng riêng
 `rft_dye_results` (`core/rft_importer.py`, luồng import riêng cùng pattern
@@ -276,6 +291,57 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-17. **Báo cáo RFT (cả 6 tab) — áp dụng lại pattern "3 loại vải cố định + Target + đường nét
+   đứt" đã làm cho "%Tank Loading"/"Batch/Day Trend"** (2026-09-19, theo yêu cầu người dùng
+   "mỗi báo cáo phân làm 3 loại cotton cvc polyester ... chuyển thành biểu đồ đường và có
+   thêm cột target ... làm hết cho cả 6 mục").
+
+   **Khác biệt so với %Tank Loading (mục -14)**:
+   - RFT có **6 tab độc lập** (Lab to Lab/Lab to Bulk/Bulk to Bulk/2nd Batch/Rework/Adjust
+     Color), mỗi tab cần Target RIÊNG theo từng loại vải — bảng `rft_targets` khoá GHÉP
+     **`(category, fabric_type)`** (KHÁC `tank_loading_targets`/`batch_day_trend_targets`
+     chỉ khoá `fabric_type` đơn, vì 2 báo cáo đó chỉ có 1 "trang" duy nhất).
+   - KPI card đầu trang (TOTAL BATCHES/OK/RATE) và `chart.values`/`chart.rate_values`/
+     `kpis.rate_pct` **GIỮ NGUYÊN Ý NGHĨA CŨ** — vẫn gộp CẢ tab (mọi loại vải, kể cả loại
+     ngoài Cotton/CVC/Polyester), KHÔNG thu hẹp phạm vi toàn báo cáo về 3 loại chính như
+     %Tank Loading đã làm (Tank Loading loại HẲN fabric khác 3 loại chính khỏi KPI tổng).
+     Lý do: field này được Dyeing Hub Dashboard đọc trực tiếp (4 mini-chart RFT) — quyết
+     định GIỮ NGUYÊN hành vi cũ để KHÔNG phải sửa `dyeing_hub.js` (đúng nguyên tắc đã áp
+     dụng khi thêm `rate_values` trước đó: "bổ sung THUẦN TUÝ, không đổi/xoá field cũ").
+     Phần chia-3-dòng-theo-vải là hoàn toàn MỚI (`rows`/`chart.series`), chỉ phục vụ khu vực
+     bảng+chart chi tiết bên dưới KPI card trên trang report RFT.
+   - Bỏ hẳn dropdown filter "Fabric Type" chung (trước đó cho phép lọc theo BẤT KỲ giá trị
+     Fabric Type nào xuất hiện trong dữ liệu) — không còn ý nghĩa khi mỗi tab đã LUÔN hiển
+     thị cố định đúng 3 loại. Filter Machine Type (>=500kg/Small Machine, dùng cho business
+     rule Rework/Adjust Color) và Brand Program GIỮ NGUYÊN, không liên quan tới thay đổi này.
+   - Route mới `POST /dyeing/rft/api/targets/<slug>/<fabric_type>` (`<slug>` là khoá URL 6
+     tab, VD `lab_to_lab` — route tự map sang tên hiển thị qua `RFT_CATEGORY_SLUGS`, cùng
+     cách `api_summary` đã làm).
+   - `MAIN_FABRIC_TYPES`/`_normalize_main_fabric_type()` định nghĩa RIÊNG trong
+     `rft/service.py` (KHÔNG import từ `tank_loading`) — giữ đúng Vertical Slice
+     Architecture, cùng quyết định trùng lặp có kiểm soát đã áp dụng ở mục -14.
+
+   Layout: mỗi tab đổi từ 1 chart `bar` + bảng 1-dòng sang **3 chart `line` cạnh nhau**
+   (trái=Cotton, giữa=CVC, phải=Polyester, dùng CHUNG class CSS `.trend-charts-row`/
+   `.trend-chart-col` đã có sẵn từ %Tank Loading) + bảng 3 dòng có cột Target editable
+   (`.case-note-cell`/`.case-note-input` tái dùng CSS có sẵn, không viết mới). JS
+   (`rft.js`) đổi cấu trúc `charts` từ 1-instance/category sang khoá ghép
+   `"${category}::${fabricType}"` (18 Chart instance tối đa, 6 tab x 3 vải) — `activatePage()`
+   resize TẤT CẢ chart thuộc đúng category đang active (lọc theo tiền tố khoá) thay vì 1
+   instance như bản cũ.
+
+   **Verify đầy đủ**: `tests/test_rft_classification.py` (5 kịch bản cũ, KHÔNG đổi assertion
+   nào — vì `kpis`/`other_stage_count`/`periods` giữ nguyên hành vi) — PASS 100% sau khi sửa.
+   `tests/test_permission_model.py` — PASS 100%, không regression Engine khác. Smoke test
+   thêm (ad-hoc, KHÔNG lưu vào `tests/`) dựng app Flask ĐẦY ĐỦ + DB tạm qua `init_db.py`:
+   trang `/dyeing/rft/` render 200, KHÔNG còn `fabric-type-toggle` trong HTML; API trả đúng
+   3 `rows` theo thứ tự Cotton/CVC/Polyester, `target=null` khi chưa cấu hình; POST target
+   lưu/đọc lại đúng giá trị; `/dyeing/` (Hub) vẫn render 200 với field cũ
+   (`kpis`/`chart.categories`/`chart.rate_values`/`classification_ready`) không đổi.
+
+   **Supabase production**: đã thêm bảng `rft_targets` vào `supabase/schema.sql` (kèm RLS) —
+   CHƯA CHẠY trên Supabase thật, cần admin áp DDL thủ công (bảng hoàn toàn mới).
+
 -16. **Redesign lại Dashboard Dyeing Hub (mục -15) theo review UI/UX chuyên gia MES/Andon**
    (2026-09-18, người dùng yêu cầu tôi đóng vai "nhà phê bình thiết kế" tự chấm bản (8) đầu
    tiên theo 4 tiêu chí: Hero Metric / Tinh giản / Exception-based / Quy tắc 3 giây — review

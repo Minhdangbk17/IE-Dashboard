@@ -243,6 +243,17 @@ create table if not exists rft_dye_results (
 );
 create index if not exists idx_rft_dye_results_dyelot_norm on rft_dye_results (lower(trim(dyelot)));
 
+-- Target (%) cho báo cáo RFT — khoá GHÉP (category, fabric_type): mỗi 1 trong 6 tab (Lab to
+-- Lab, Lab to Bulk, Bulk to Bulk, 2nd Batch, Rework, Adjust Color) có Target RIÊNG cho từng
+-- loại vải chính (Cotton/CVC/Polyester). Xem modules/dyeing/engines/rft/service.py.
+create table if not exists rft_targets (
+    category text not null,
+    fabric_type text not null,
+    target_value double precision not null default 0,
+    updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+    primary key (category, fabric_type)
+);
+
 create table if not exists performance_logs (
     id bigint generated always as identity primary key,
     dyelot text not null,
@@ -516,3 +527,4 @@ alter table cleaning_mc_daily_summary enable row level security;
 alter table brand_program_mapping enable row level security;
 alter table import_log_rows enable row level security;
 alter table rft_dye_results enable row level security;
+alter table rft_targets enable row level security;
