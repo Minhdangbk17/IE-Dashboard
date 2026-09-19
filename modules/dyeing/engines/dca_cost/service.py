@@ -178,10 +178,50 @@ def _dca_rows(selected_capacities: list[float], from_date: str | None, to_date: 
     return result
 
 
+# 4 tab hiển thị — "Overview" gộp CẢ 3 loại vải chính lại làm 1 (không phân biệt Fabric
+# Type, vẫn giữ nguyên phạm vi lọc "chỉ 3 loại chính", KHÔNG lẫn loại vải khác như Nylon),
+# 3 tab còn lại tách riêng từng loại — theo yêu cầu người dùng.
+REPORT_SECTIONS: tuple[str, ...] = ("Overview",) + MAIN_FABRIC_TYPES
+
+
 def _empty_fabric_section() -> dict[str, Any]:
     return {
         "rows": [{"color": color, "values": [], "total": 0.0} for color in COLOR_LABELS],
         "kpis": {"total_dye_cost": 0.0, "total_batches": 0, "dca_cost": 0.0},
+    }
+
+
+def _build_section(fabric_rows: list[dict[str, Any]], ordered_keys: list[str]) -> dict[str, Any]:
+    """Dựng 1 section (5 dòng màu + KPI) từ danh sách mẻ đã gán `dye_cost`/`period_key`/
+    `color` — dùng CHUNG cho cả 3 tab theo từng loại vải LẪN tab "Overview" (gộp mọi loại)."""
+    periods_by_color: dict[str, dict[str, dict[str, float]]] = {color: {} for color in COLOR_LABELS}
+    for item in fabric_rows:
+        period = periods_by_color[item["color"]].setdefault(item["period_key"], {"dye_cost": 0.0, "count": 0})
+        period["dye_cost"] += item["dye_cost"]
+        period["count"] += 1
+
+    color_rows: list[dict[str, Any]] = []
+    for color in COLOR_LABELS:
+        periods = periods_by_color[color]
+        values = [
+            round(periods[key]["dye_cost"] / periods[key]["count"], 2) if periods.get(key) and periods[key]["count"] else 0.0
+            for key in ordered_keys
+        ]
+        total_cost = sum(period["dye_cost"] for period in periods.values())
+        total_count = sum(period["count"] for period in periods.values())
+        total_value = round(total_cost / total_count, 2) if total_count else 0.0
+        color_rows.append({"color": color, "values": values, "total": total_value})
+
+    section_total_cost = sum(item["dye_cost"] for item in fabric_rows)
+    section_total_count = len(fabric_rows)
+    section_dca = round(section_total_cost / section_total_count, 2) if section_total_count else 0.0
+    return {
+        "rows": color_rows,
+        "kpis": {
+            "total_dye_cost": round(section_total_cost, 2),
+            "total_batches": section_total_count,
+            "dca_cost": section_dca,
+        },
     }
 
 
@@ -190,9 +230,11 @@ def get_dca_cost_data(
     brand_programs: str | list[str] | None = None,
     from_date: str | None = None, to_date: str | None = None, group_by: str = "date",
 ) -> dict[str, Any]:
-    """Bảng + biểu đồ DCA Cost theo Day/Week/Month — LUÔN 3 section cố định Cotton/CVC/
-    Polyester, mỗi section có 5 dòng màu (Dark/Light/Medium/Black/White). Mọi section dùng
-    CHUNG 1 trục kỳ (`periods`/`period_keys`) để 3 chart thẳng hàng nhau."""
+    """Bảng + biểu đồ DCA Cost theo Day/Week/Month — LUÔN trả đủ 4 section
+    (`REPORT_SECTIONS`): "Overview" (gộp CẢ 3 loại vải chính, không phân biệt Fabric Type) +
+    Cotton/CVC/Polyester (tách riêng từng loại) — UI hiển thị dưới dạng 4 tab. Mỗi section có
+    5 dòng màu (Dark/Light/Medium/Black/White). Mọi section dùng CHUNG 1 trục kỳ
+    (`periods`/`period_keys`) để 4 chart thẳng hàng nhau."""
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
     selected_capacities = _parse_capacities(capacities)
     selected_brand_programs = _parse_text_filter(brand_programs)
@@ -213,7 +255,7 @@ def get_dca_cost_data(
                 "from_date": from_date, "to_date": to_date, "group_by": group_by,
             },
             "periods": [], "period_keys": [],
-            "fabrics": {name: _empty_fabric_section() for name in MAIN_FABRIC_TYPES},
+            "fabrics": {name: _empty_fabric_section() for name in REPORT_SECTIONS},
             "available_brand_programs": available_brand_programs,
         }
 
@@ -245,38 +287,11 @@ def get_dca_cost_data(
             "color": _classify_color(row),
         })
 
-    fabrics_out: dict[str, Any] = {}
+    fabrics_out: dict[str, Any] = {
+        "Overview": _build_section([item for fabric_type in MAIN_FABRIC_TYPES for item in rows_by_fabric[fabric_type]], ordered_keys),
+    }
     for fabric_type in MAIN_FABRIC_TYPES:
-        fabric_rows = rows_by_fabric[fabric_type]
-        periods_by_color: dict[str, dict[str, dict[str, float]]] = {color: {} for color in COLOR_LABELS}
-        for item in fabric_rows:
-            period = periods_by_color[item["color"]].setdefault(item["period_key"], {"dye_cost": 0.0, "count": 0})
-            period["dye_cost"] += item["dye_cost"]
-            period["count"] += 1
-
-        color_rows: list[dict[str, Any]] = []
-        for color in COLOR_LABELS:
-            periods = periods_by_color[color]
-            values = [
-                round(periods[key]["dye_cost"] / periods[key]["count"], 2) if periods.get(key) and periods[key]["count"] else 0.0
-                for key in ordered_keys
-            ]
-            total_cost = sum(period["dye_cost"] for period in periods.values())
-            total_count = sum(period["count"] for period in periods.values())
-            total_value = round(total_cost / total_count, 2) if total_count else 0.0
-            color_rows.append({"color": color, "values": values, "total": total_value})
-
-        fabric_total_cost = sum(item["dye_cost"] for item in fabric_rows)
-        fabric_total_count = len(fabric_rows)
-        fabric_dca = round(fabric_total_cost / fabric_total_count, 2) if fabric_total_count else 0.0
-        fabrics_out[fabric_type] = {
-            "rows": color_rows,
-            "kpis": {
-                "total_dye_cost": round(fabric_total_cost, 2),
-                "total_batches": fabric_total_count,
-                "dca_cost": fabric_dca,
-            },
-        }
+        fabrics_out[fabric_type] = _build_section(rows_by_fabric[fabric_type], ordered_keys)
 
     return {
         "filters": {

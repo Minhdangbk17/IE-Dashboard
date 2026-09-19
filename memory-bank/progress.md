@@ -863,6 +863,13 @@
       bucket Unknown Date) + smoke test end-to-end + full regression
       (`test_permission_model.py`/`test_rft_classification.py`/
       `test_postgres_shim_translation.py`) PASS 100%.
+- [x] **DCA Cost đổi bố cục từ 3 section xếp dọc sang 4 tab (2026-09-19, khuya,
+      bản 2)**: tab "Overview" gộp cả 3 loại vải chính (vẫn loại Nylon/loại
+      khác), tab Cotton/CVC/Polyester giữ nguyên. Backend tách hàm dùng chung
+      `_build_section()`, vẫn 1 API call duy nhất. Frontend tái dùng cấu trúc
+      `.page-tabs` đã có (giống RFT). Chi tiết đầy đủ ở `activeContext.md`
+      mục -20. Verify: `tests/test_dca_cost.py` cập nhật + smoke test 4 tab +
+      full regression PASS 100%.
 
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn

@@ -5,7 +5,10 @@
     const capacityMenu = document.getElementById("capacity-menu");
     const capacityAll = document.getElementById("capacity-all");
     const capacityCheckboxes = [...document.querySelectorAll(".capacity-checkbox")];
-    const charts = {}; // fabric_type -> Chart instance (1 biểu đồ riêng/loại vải)
+    const charts = {}; // slug (overview/cotton/cvc/polyester) -> Chart instance
+
+    // slug (khoá URL/DOM, cố định) -> tên section thật trong response API (`data.fabrics`).
+    const SLUG_TO_FABRIC = { overview: "Overview", cotton: "Cotton", cvc: "CVC", polyester: "Polyester" };
 
     function escAttr(value) {
         return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
@@ -124,9 +127,10 @@
         return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
     }
 
-    function renderSection(fabricType, data) {
-        const section = document.querySelector(`.dca-section[data-fabric="${fabricType}"]`);
+    function renderSection(slug, data) {
+        const section = document.getElementById(`page-${slug}`);
         if (!section) return;
+        const fabricType = SLUG_TO_FABRIC[slug];
         const fabricData = (data.fabrics || {})[fabricType] || { rows: [], kpis: { total_dye_cost: 0, total_batches: 0, dca_cost: 0 } };
 
         section.querySelector(".dca-kpi-total-cost").textContent = formatMoney(fabricData.kpis.total_dye_cost);
@@ -151,8 +155,8 @@
             tension: .2,
             fill: false,
         }));
-        if (charts[fabricType]) charts[fabricType].destroy();
-        charts[fabricType] = new Chart(canvas, {
+        if (charts[slug]) charts[slug].destroy();
+        charts[slug] = new Chart(canvas, {
             type: "line",
             data: { labels: data.periods || [], datasets },
             options: {
@@ -176,7 +180,40 @@
         if (!response.ok) return;
         const data = await response.json();
         brandProgramFilter.setOptions(data.available_brand_programs || []);
-        ["Cotton", "CVC", "Polyester"].forEach((fabricType) => renderSection(fabricType, data));
+        Object.keys(SLUG_TO_FABRIC).forEach((slug) => renderSection(slug, data));
+    }
+
+    const pageTabsNav = document.getElementById("dca-tabs");
+    const pageTabs = pageTabsNav ? [...pageTabsNav.querySelectorAll(".page-tab")] : [];
+    const dcaPages = [...document.querySelectorAll(".dca-page")];
+    const pageTabsData = pageTabs.map((tab) => tab.dataset.page);
+    let activePageIndex = 0;
+
+    function activatePage(index) {
+        index = Math.max(0, Math.min(dcaPages.length - 1, index));
+        activePageIndex = index;
+        pageTabs.forEach((tab, i) => tab.classList.toggle("is-active", i === index));
+        dcaPages.forEach((page, i) => { page.hidden = i !== index; });
+        // Chart.js đo kích thước container lúc vẽ — canvas ở trang vừa hiện lại trước đó có
+        // thể 0x0 (bị "hidden"), phải resize lại sau khi hiện ra (cùng bug đã bắt được ở RFT).
+        requestAnimationFrame(() => {
+            const slug = pageTabsData[index];
+            if (charts[slug]) charts[slug].resize();
+        });
+    }
+
+    if (pageTabsNav) {
+        pageTabs.forEach((tab, index) => tab.addEventListener("click", () => activatePage(index)));
+
+        let wheelLocked = false;
+        pageTabsNav.addEventListener("wheel", (event) => {
+            if (Math.abs(event.deltaY) < 2) return;
+            event.preventDefault();
+            if (wheelLocked) return;
+            wheelLocked = true;
+            activatePage(activePageIndex + (event.deltaY > 0 ? 1 : -1));
+            window.setTimeout(() => { wheelLocked = false; }, 450);
+        }, { passive: false });
     }
 
     capacityToggle.addEventListener("click", () => {

@@ -9,9 +9,8 @@
     .capacity-menu[hidden] { display: none; }
     .capacity-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
     .capacity-option:hover { background: var(--color-neutral-muted, rgba(110, 118, 129, .15)); }
-    .dca-section { margin-bottom: 28px; }
-    .dca-section-title { display: flex; align-items: baseline; gap: 8px; }
-    .dca-chart-panel { min-height: 320px; height: 320px; }
+    .dca-chart-panel { min-height: 380px; height: 380px; }
+    .dca-page[hidden] { display: none; }
     @media (max-width: 800px) { .dca-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
 </style>{% endblock %}
 {% block content %}
@@ -45,19 +44,25 @@
     <p class="f6 color-fg-muted mt-2 mb-0">DCA Cost = Sum(Dye Cost) / count of dyelots, for every batch (Cleaning MC and Rework batches included).</p>
 </section>
 
-{% for fabric in ["Cotton", "CVC", "Polyester"] %}
-<section class="dca-section" data-fabric="{{ fabric }}">
-    <div class="dca-section-title mb-2"><h3 class="mt-0 mb-0">{{ fabric }}</h3></div>
+<nav class="page-tabs mb-3" id="dca-tabs" aria-label="DCA Cost report pages">
+    {% for slug, label in [("overview", "Overview"), ("cotton", "Cotton"), ("cvc", "CVC"), ("polyester", "Polyester")] %}
+    <button class="page-tab{% if loop.first %} is-active{% endif %}" type="button" data-page="{{ slug }}">{{ label }}</button>
+    {% endfor %}
+</nav>
+
+{% for slug, label in [("overview", "Overview"), ("cotton", "Cotton"), ("cvc", "CVC"), ("polyester", "Polyester")] %}
+<section class="dca-page" id="page-{{ slug }}" data-page="{{ slug }}"{% if not loop.first %} hidden{% endif %}>
     <div class="dca-kpis mb-3">
         <div class="widget-card"><span class="f6 color-fg-muted">TOTAL DYE COST</span><strong class="dca-kpi-total-cost">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
         <div class="widget-card"><span class="f6 color-fg-muted">TOTAL BATCHES</span><strong class="dca-kpi-total-batches">--</strong><span class="f6 color-fg-muted">dyelot count</span></div>
         <div class="widget-card"><span class="f6 color-fg-muted">DCA COST</span><strong class="dca-kpi-dca-cost">--</strong><span class="f6 color-fg-muted">Sum(Dye Cost) / dyelot count</span></div>
     </div>
     <div class="Box p-3 mb-3 dca-chart-panel">
-        <canvas class="dca-chart" data-fabric="{{ fabric }}" aria-label="{{ fabric }} DCA Cost chart"></canvas>
+        <h3 class="mt-0 mb-2">{{ label }} — DCA Cost trend</h3>
+        <canvas class="dca-chart" data-page="{{ slug }}" aria-label="{{ label }} DCA Cost chart"></canvas>
     </div>
     <div class="Box p-3" style="overflow-x:auto;">
-        <table class="preview-table dca-table" data-fabric="{{ fabric }}">
+        <table class="preview-table dca-table" data-page="{{ slug }}">
             <thead><tr class="dca-head"><th>Color</th></tr></thead>
             <tbody></tbody>
         </table>

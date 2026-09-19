@@ -121,7 +121,15 @@ def _scenario_formula_and_fabric_scope(failures: list[str]) -> None:
         )
         _insert_batch(conn, dyelot="CT-DARK-3", dye_cost=300, fabric_type="Cotton", shade="Dark", start_time="2026-09-08 08:00:00", end_time="2026-09-08 10:00:00")
 
-        # Nylon: PHẢI bị loại hoàn toàn khỏi báo cáo (không phải 1 trong 3 loại chính).
+        # 1 mẻ CVC/White (kỳ 1) — dùng để verify tab "Overview" gộp ĐÚNG cả Cotton lẫn CVC.
+        conn.execute(
+            "INSERT INTO availability_logs (batch, capacity_kg, start_time, end_time) VALUES (?, ?, ?, ?)",
+            ("CVC-WHITE-1", 600, "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
+        )
+        _insert_batch(conn, dyelot="CVC-WHITE-1", dye_cost=50, fabric_type="CVC", colour_no="WHITE SOLID", start_time="2026-09-01 08:00:00", end_time="2026-09-01 10:00:00")
+
+        # Nylon: PHẢI bị loại hoàn toàn khỏi báo cáo (không phải 1 trong 3 loại chính, kể cả
+        # tab "Overview").
         conn.execute(
             "INSERT INTO availability_logs (batch, capacity_kg, start_time, end_time) VALUES (?, ?, ?, ?)",
             ("NY-1", 600, "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
@@ -143,8 +151,16 @@ def _scenario_formula_and_fabric_scope(failures: list[str]) -> None:
         _check("Cotton KPI: total_dye_cost = 600.0", data["fabrics"]["Cotton"]["kpis"]["total_dye_cost"], 600.0, failures)
         _check("Cotton KPI: total_batches = 3", data["fabrics"]["Cotton"]["kpis"]["total_batches"], 3, failures)
         _check("Cotton KPI: dca_cost = 600/3 = 200.0", data["fabrics"]["Cotton"]["kpis"]["dca_cost"], 200.0, failures)
-        _check("CVC: không có dữ liệu -> total_batches = 0", data["fabrics"]["CVC"]["kpis"]["total_batches"], 0, failures)
-        _check("Nylon KHÔNG xuất hiện trong response (chỉ có đúng 3 key Cotton/CVC/Polyester)", sorted(data["fabrics"].keys()), ["CVC", "Cotton", "Polyester"], failures)
+        _check("CVC KPI: total_batches = 1 (mẻ CVC-WHITE-1)", data["fabrics"]["CVC"]["kpis"]["total_batches"], 1, failures)
+        _check("Chỉ có đúng 4 tab Overview/Cotton/CVC/Polyester (Nylon không có tab riêng)", sorted(data["fabrics"].keys()), ["CVC", "Cotton", "Overview", "Polyester"], failures)
+
+        overview_kpis = data["fabrics"]["Overview"]["kpis"]
+        _check("Overview: total_batches = 4 (3 Cotton + 1 CVC, KHÔNG tính Nylon)", overview_kpis["total_batches"], 4, failures)
+        _check("Overview: total_dye_cost = 650.0 (600 Cotton + 50 CVC)", overview_kpis["total_dye_cost"], 650.0, failures)
+        _check("Overview: dca_cost = 650/4 = 162.5", overview_kpis["dca_cost"], 162.5, failures)
+        overview_rows = {row["color"]: row for row in data["fabrics"]["Overview"]["rows"]}
+        _check("Overview/Dark: total = 200.0 (chỉ Cotton có màu Dark)", overview_rows["Dark"]["total"], 200.0, failures)
+        _check("Overview/White: total = 50.0 (chỉ CVC có màu White)", overview_rows["White"]["total"], 50.0, failures)
     finally:
         os.unlink(db_path)
 

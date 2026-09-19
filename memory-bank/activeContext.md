@@ -1,6 +1,23 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-19 (khuya) — **Engine MỚI `dca_cost`** (báo cáo "DCA Cost"),
+**Cập nhật lần cuối:** 2026-09-19 (khuya, bản 2) — Trang DCA Cost (mục -19 bên dưới) đổi từ
+**3 section xếp dọc** (Cotton/CVC/Polyester) sang **4 TAB** (`page-tabs`, cùng UI pattern
+RFT): tab 1 **"Overview"** gộp CẢ 3 loại vải chính lại (không phân biệt Fabric Type, vẫn giữ
+đúng phạm vi lọc "chỉ 3 loại chính" — Nylon/loại khác vẫn bị loại khỏi CẢ Overview), tab
+2/3/4 = Cotton/CVC/Polyester (không đổi so với bản 3-section). `get_dca_cost_data()` giờ
+LUÔN trả đủ 4 key trong `fabrics` (`REPORT_SECTIONS = ("Overview", "Cotton", "CVC",
+"Polyester")`) — tách logic dựng 1 section (5 dòng màu + KPI) ra hàm dùng chung
+`_build_section()`, gọi 1 lần cho mỗi fabric riêng + 1 lần cho danh sách GỘP CẢ 3 fabric
+(Overview) — VẪN chỉ 1 API call duy nhất (không tăng round-trip). Template/JS chuyển từ
+`<section class="dca-section">` lặp 3 lần luôn hiển thị sang `<section class="dca-page"
+hidden>` + `#dca-tabs` (y hệt cấu trúc RFT: `activatePage()`, chart resize khi tab hiện lại
+sau khi bị `hidden` — tránh đúng bug canvas 0-height đã gặp ở RFT). Verify: cập nhật
+`tests/test_dca_cost.py` (thêm case dữ liệu CVC vào kịch bản 2, assert đúng 4 key +
+Overview gộp đúng Sum(Cotton+CVC), loại đúng Nylon) + smoke test 4 tab qua Flask app đầy đủ +
+full regression PASS 100%. Bản ghi trước đó (2026-09-19 khuya — Engine mới `dca_cost` bản
+3-section đầu tiên) giữ nguyên ngay dưới đây.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-19 (khuya) — **Engine MỚI `dca_cost`** (báo cáo "DCA Cost"),
 domain `dyeing` giờ có **9 Engine** (thêm `dca_cost` vào danh sách 8 Engine cũ). Công thức
 `DCA Cost = Sum(dye_cost) / COUNT(dyelot)` theo nhóm `(fabric_type, color, kỳ)`, đọc TRỰC TIẾP
 từ `batch_details` (KHÔNG cần luồng import mới — dữ liệu đã có sẵn qua Import Batch Detail).
@@ -333,6 +350,41 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-20. **DCA Cost (mục -19) đổi từ 3 section xếp dọc sang 4 TAB** (2026-09-19, khuya, theo yêu
+   cầu người dùng ngay sau khi vừa xong bản đầu): "chia lại thành 4 tab, tab 1 overview:
+   không phân biệt cotton, cvc, poly. tab 2 cotton, tab 3 cvc, tab 4 polyester".
+
+   **Diễn giải "Overview"**: gộp CẢ 3 loại vải chính thành 1 (không tách theo Fabric Type
+   nữa) nhưng VẪN giữ đúng phạm vi lọc gốc "chỉ 3 loại chính" — batch Fabric Type khác (VD
+   Nylon) vẫn bị loại khỏi CẢ tab Overview, không lẫn vào (không suy diễn thành "gộp TOÀN BỘ
+   mọi loại vải trong hệ thống").
+
+   **Backend** (`dca_cost/service.py`): tách phần dựng 1 section (nhóm theo màu + tính KPI)
+   ra hàm dùng chung `_build_section(fabric_rows, ordered_keys)` — gọi 1 lần/loại vải (Cotton/
+   CVC/Polyester, không đổi) + 1 lần cho danh sách NỐI (concat) cả 3 danh sách đó (Overview).
+   `REPORT_SECTIONS = ("Overview",) + MAIN_FABRIC_TYPES` thay cho hardcode lặp lại
+   `MAIN_FABRIC_TYPES` ở 2 chỗ (nhánh rỗng + nhánh chính). **VẪN chỉ 1 API call** (không tăng
+   round-trip so với bản 3-section — response `fabrics` giờ có 4 key thay vì 3).
+
+   **Frontend**: đổi từ `<section class="dca-section">` lặp 3 lần LUÔN hiển thị cùng lúc sang
+   `<section class="dca-page" hidden>` + `<nav id="dca-tabs">` — TÁI DÙNG NGUYÊN cấu trúc/CSS
+   `.page-tabs`/`.page-tab` (định nghĩa toàn cục trong `app.css`, RFT đã dùng trước) và kỹ
+   thuật `activatePage()` (ẩn/hiện qua thuộc tính `hidden`, resize lại Chart instance khi tab
+   vừa hiện lại — tránh ĐÚNG bug canvas 0-height khi vẽ chart trong container đang `hidden`
+   đã bắt được ở RFT mục -15/-16 cũ, không tái phạm). JS thêm map `SLUG_TO_FABRIC` (khoá URL/
+   DOM slug thường `overview/cotton/cvc/polyester` -> tên section thật trong JSON
+   `Overview/Cotton/CVC/Polyester`) vì response giữ tên viết hoa để nhất quán với
+   `MAIN_FABRIC_TYPES`/`COLOR_LABELS` toàn dự án.
+
+   Verify: cập nhật `tests/test_dca_cost.py` kịch bản 2 (thêm 1 mẻ CVC/White vào bộ dữ liệu
+   sẵn có 3 mẻ Cotton/Dark) — assert đúng 4 key `Overview/Cotton/CVC/Polyester` (không còn
+   assert cũ "chỉ 3 key"), Overview.kpis đúng Sum(Cotton+CVC) (`total_batches=4,
+   total_dye_cost=650.0, dca_cost=162.5`), Overview.rows đúng từng màu tách riêng (Dark=200
+   từ Cotton, White=50 từ CVC), Nylon vẫn không xuất hiện ở đâu kể cả Overview. Smoke test
+   end-to-end (Flask app đầy đủ + DB tạm): trang có đủ 4 `id="page-<slug>"`, API trả đúng 4
+   section. Full regression `test_permission_model.py`/`test_rft_classification.py` PASS
+   100%.
+
 -19. **Engine MỚI `dca_cost` (báo cáo "DCA Cost")** (2026-09-19, khuya, theo yêu cầu người
    dùng — đã hỏi-đáp 3 câu qua `AskUserQuestion` trước khi code, không tự đoán).
 
