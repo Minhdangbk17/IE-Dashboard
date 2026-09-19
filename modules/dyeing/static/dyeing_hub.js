@@ -75,6 +75,15 @@
 
     const FABRIC_COLORS = { Cotton: "#3fb950", CVC: "#2862d7", Polyester: "#f778ba" };
     const MAIN_FABRIC_TYPES = Object.keys(FABRIC_COLORS);
+
+    // Đúng 9 CATEGORY + màu của báo cáo Downtime gốc (`downtime/service.py::CATEGORIES`,
+    // màu lấy từ `downtime.js::updateChart()`) — DÙNG CHUNG để cột chồng trên Dashboard
+    // đọc được nhất quán với trang report chi tiết (bấm "View details" thấy đúng màu đó).
+    const DOWNTIME_CATEGORY_COLORS = {
+        "Rework": "#2862d7", "Color Adjustment": "#625fff", "Sample checking": "#3fb950",
+        "Fabric loading": "#d29922", "Fabric unloading": "#db61a2", "Bleaching/Washing": "#85a6e9",
+        "PH checking": "#f778ba", "Chemical load": "#79c0ff", "Others": "#abaebb",
+    };
     const charts = {}; // key -> Chart instance, để destroy() trước khi vẽ lại
 
     function destroyChart(key) {
@@ -131,9 +140,12 @@
         });
     }
 
-    // Biểu đồ cột chồng (stacked bar) — dùng cho Downtime % theo 3 loại vải/kỳ. Cùng tinh
-    // thần tối giản với renderSparkline() (ẩn trục/lưới/chú giải, giữ tooltip để admin xem
-    // giá trị chính xác khi cần) nhưng giữ type "bar" + stacked thay vì "line".
+    // Biểu đồ cột chồng (stacked bar) — dùng cho Downtime %: MỖI CỘT (trục X) = 1 loại vải
+    // (Cotton/CVC/Polyester), các THÀNH PHẦN chồng trong 1 cột = 9 category Downtime gốc
+    // (Rework/Fabric loading/.../Others — đúng CATEGORIES của báo cáo Downtime chi tiết).
+    // Khác `renderSparkline()` (ẩn cả 2 trục vì là trend theo thời gian, chỉ cần giữ HÌNH
+    // DẠNG) — ở đây trục X là 3 NHÃN CỐ ĐỊNH (tên loại vải) nên PHẢI hiện để đọc được cột
+    // nào là loại nào; trục Y (thang %) vẫn ẩn vì đã có %/loại vải hiển thị riêng phía trên.
     function renderStackedBarChart(canvasKey, canvas, labels, series) {
         if (!canvas) return;
         const wrap = canvas.parentElement;
@@ -153,12 +165,13 @@
         if (emptyNote) emptyNote.remove();
         if (typeof Chart === "undefined") return;
         destroyChart(canvasKey);
+        const axisColor = getComputedStyle(document.documentElement).getPropertyValue("--text-tertiary").trim() || "#abaebb";
         charts[canvasKey] = new Chart(canvas, {
             type: "bar",
             data: {
                 labels,
                 datasets: series.map((s) => ({
-                    label: s.label, data: s.values, backgroundColor: s.color, borderWidth: 0, borderRadius: 2, maxBarThickness: 18,
+                    label: s.label, data: s.values, backgroundColor: s.color, borderWidth: 0, maxBarThickness: 48,
                 })),
             },
             options: {
@@ -167,7 +180,7 @@
                 animation: false,
                 interaction: { mode: "index", intersect: false },
                 scales: {
-                    x: { stacked: true, display: false },
+                    x: { stacked: true, grid: { display: false }, ticks: { color: axisColor, font: { size: 12 } } },
                     y: { stacked: true, display: false, beginAtZero: true },
                 },
                 plugins: { legend: { display: false }, tooltip: { enabled: true } },
@@ -230,13 +243,15 @@
     }
 
     // Widget hiện: (1) số tổng gộp cả 3 loại vải (đúng nghĩa "Downtime % chung ca sản
-    // xuất", tô màu theo ngưỡng) + (2) 3 số phụ + (3) biểu đồ cột chồng Downtime %/kỳ theo
-    // TỪNG loại vải — API `downtime.api_summary` chỉ nhận filter `fabric_types` cho 1 lần
-    // gọi (không trả breakdown-theo-vải trong 1 response), nên gọi RIÊNG mỗi loại vải
-    // (giống pattern loadHeroWidget/loadTankLoadingWidget), rồi canh lại theo `period_keys`
-    // của response KHÔNG filter (nguồn "trục thời gian chuẩn") — tránh lệch cột nếu 1 loại
-    // vải thiếu dữ liệu đúng 1 ngày nào đó trong khoảng (response filter riêng loại đó sẽ
-    // không có period_key ngày đó, PHẢI fill 0 chứ không được lệch chỉ số mảng).
+    // xuất", tô màu theo ngưỡng) + (2) 3 số phụ theo loại vải + (3) biểu đồ cột chồng — MỖI
+    // CỘT là 1 loại vải, chồng bên trong là 9 category Downtime gốc (`total_pct` của
+    // TOÀN BỘ khoảng ngày Dashboard, không chia theo kỳ — đây là ảnh chụp cơ cấu Downtime
+    // hiện tại, không phải xu hướng theo thời gian như Hero/%Tank Loading).
+    //
+    // API `downtime.api_summary` chỉ trả breakdown cho ĐÚNG 1 filter/lần gọi, nên gọi
+    // RIÊNG mỗi loại vải (giống pattern loadHeroWidget/loadTankLoadingWidget). `rows` trả
+    // về LUÔN đủ 9 category theo ĐÚNG thứ tự cố định (kể cả khi rỗng dữ liệu — xem
+    // `_empty_result()`), nên có thể tra theo tên category an toàn.
     async function loadDowntimeWidget() {
         const el = document.getElementById("dash-downtime-value");
         const canvas = document.getElementById("dash-downtime-chart");
@@ -249,26 +264,34 @@
             el.textContent = `${fmt1(pct)}%`;
             el.style.color = downtimeColorFor(pct);
 
-            const periodKeys = overall.period_keys || [];
-            const periods = overall.periods || [];
             const fabricResponses = await Promise.all(
                 MAIN_FABRIC_TYPES.map((fabric) => fetch(`${downtimeUrl}?${new URLSearchParams({ ...baseParams, fabric_types: fabric })}`))
             );
             const fabricData = await Promise.all(fabricResponses.map((res) => (res.ok ? res.json() : null)));
 
-            const byFabricValue = {};
-            const series = MAIN_FABRIC_TYPES.map((fabric, index) => {
+            MAIN_FABRIC_TYPES.forEach((fabric, index) => {
                 const data = fabricData[index];
                 const total = data ? Number(data.kpis.downtime_rate_pct) || 0 : null;
-                byFabricValue[fabric] = total;
-                const byKey = {};
-                if (data) (data.period_keys || []).forEach((key, i) => { byKey[key] = data.total_row[i]; });
-                return { label: fabric, values: periodKeys.map((key) => byKey[key] || 0), color: FABRIC_COLORS[fabric] || "#abaebb" };
+                const el2 = document.getElementById(`dash-downtime-${fabric.toLowerCase()}`);
+                if (el2) el2.textContent = total !== null ? `${fmt1(total)}%` : "--";
             });
-            document.getElementById("dash-downtime-cotton").textContent = byFabricValue.Cotton !== null ? `${fmt1(byFabricValue.Cotton)}%` : "--";
-            document.getElementById("dash-downtime-cvc").textContent = byFabricValue.CVC !== null ? `${fmt1(byFabricValue.CVC)}%` : "--";
-            document.getElementById("dash-downtime-polyester").textContent = byFabricValue.Polyester !== null ? `${fmt1(byFabricValue.Polyester)}%` : "--";
-            renderStackedBarChart("downtime", canvas, periods, series);
+
+            // `rows` LUÔN có đủ 9 category kể cả khi rỗng dữ liệu (giá trị 0 — xem
+            // `_empty_result()`), nên KHÔNG dùng rows.length để biết "có dữ liệu thật hay
+            // không" — phải tra `overall.periods` (chỉ khác rỗng khi THẬT SỰ có dòng
+            // availability_logs nào khớp bộ lọc trong khoảng ngày).
+            const hasAnyData = (overall.periods || []).length > 0;
+            const series = Object.keys(DOWNTIME_CATEGORY_COLORS).map((category) => ({
+                label: category,
+                color: DOWNTIME_CATEGORY_COLORS[category],
+                values: MAIN_FABRIC_TYPES.map((_, index) => {
+                    const data = fabricData[index];
+                    if (!data) return 0;
+                    const row = (data.rows || []).find((r) => r.category === category);
+                    return row ? Number(row.total_pct) || 0 : 0;
+                }),
+            }));
+            renderStackedBarChart("downtime", canvas, hasAnyData ? MAIN_FABRIC_TYPES : [], series);
         } catch (err) {
             console.error("Lỗi tải widget Downtime:", err);
             el.textContent = "Error";
