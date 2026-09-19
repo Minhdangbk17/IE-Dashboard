@@ -82,11 +82,24 @@ PERFORMANCE_COLUMNS: dict[str, str] = {
 BATCH_SIGNATURE = {"dyelot", "treatmentprogram", "shade", "recipeno"}
 PERFORMANCE_SIGNATURE = {"mc", "shift", "program", "runtime"}
 AVAILABILITY_SIGNATURE = {"dyelot", "availability", "reason"}
+# Báo cáo RFT (Right First Time, QC xuất) — dyelot + resultdye + stage không trùng với bất kỳ
+# signature nào ở trên (Batch không có resultdye/stage, Availability không có resultdye).
+RFT_SIGNATURE = {"dyelot", "resultdye", "stage"}
 BATCH_ALIASES = {
     "dyelot": "dyelot", "dyelot no": "dyelot", "customer": "customer", "brand_name": "customer",
     "customer name": "customer", "machine": "machine", "mc": "machine", "treatmentprogram": "program",
     "program": "program", "processtype": "program", "shade": "shade", "colourno": "colour_no",
     "colour_no": "colour_no", "weight": "weight", "capacity": "weight", "weight (kg)": "weight",
+}
+# Alias tối giản CHỈ để preview/auto-detect (KHÔNG dùng cho import thật — import thật đi qua
+# `core/rft_importer.py::sync_rft_results()`, cùng nguyên tắc BATCH_ALIASES/nhánh BATCH bên
+# dưới trong `detect_and_parse_file()`).
+RFT_PREVIEW_ALIASES = {
+    "customer": "customer", "color": "color", "orderno": "order_no", "order no": "order_no",
+    "greigecode": "greige_code", "dyelot": "dyelot", "machinetype": "machine_type",
+    "machine type": "machine_type", "nc-dg": "nc_dg", "resultdye": "result_dye",
+    "newbatch2": "new_batch2", "rework count": "rework_count", "stage": "stage",
+    "recipe": "recipe", "body/rib": "body_rib",
 }
 
 
@@ -95,9 +108,11 @@ def _normalized_headers(headers: list[str]) -> set[str]:
 
 
 def detect_file_type_from_headers(headers: list[str]) -> str:
-    """Detect Availability, Performance or Batch from header signatures."""
+    """Detect Availability, Performance, Batch or RFT report from header signatures."""
     normalized = _normalized_headers(headers)
     compact = {header.replace(" ", "") for header in normalized}
+    if RFT_SIGNATURE <= compact:
+        return "RFT"
     if BATCH_SIGNATURE <= compact:
         return "BATCH"
     if PERFORMANCE_SIGNATURE <= compact:
@@ -106,7 +121,8 @@ def detect_file_type_from_headers(headers: list[str]) -> str:
         return "AVAILABILITY"
     raise ValueError(
         "Không nhận diện được loại file. Signature yêu cầu: Batch (Dyelot, TreatmentProgram, Shade, RecipeNo), "
-        "Performance (MC, Shift, Program, Run time) hoặc Availability (Dyelot, Availability, Reason)."
+        "Performance (MC, Shift, Program, Run time), Availability (Dyelot, Availability, Reason) hoặc "
+        "RFT report (Dyelot, ResultDYE, Stage)."
     )
 
 _AVAILABILITY_REQUIRED = {"batch", "machine", "start_time"}
@@ -893,6 +909,24 @@ def detect_and_parse_file(file_path: str) -> dict[str, Any]:
                 continue
             rows.append(record)
         return {"file_type": "BATCH", "columns": fields, "rows": rows, "errors": errors}
+
+    if detected_type == "RFT":
+        # Chỉ preview/auto-detect — import THẬT đi qua `core/rft_importer.py::sync_rft_results()`
+        # (validate ResultDYE/Stage đầy đủ hơn), cùng nguyên tắc nhánh BATCH ở trên.
+        mapping = RFT_PREVIEW_ALIASES
+        indexes = {field: index for index, header in enumerate(headers) for alias, field in mapping.items() if str(header).strip().lower() == alias}
+        fields = sorted(set(indexes))
+        rows = []
+        errors = []
+        for row_number, values in raw_rows:
+            if _is_blank_row(values):
+                continue
+            record = {field: str(_raw_cell(values[indexes[field]]) or "").strip() if indexes[field] < len(values) else None for field in fields}
+            if not record.get("dyelot"):
+                errors.append({"row": row_number, "error": "Thiếu cột/giá trị bắt buộc Dyelot."})
+                continue
+            rows.append(record)
+        return {"file_type": "RFT", "columns": fields, "rows": rows, "errors": errors}
 
     availability_index = _raw_mapping(headers, AVAILABILITY_COLUMNS)
     performance_index = _raw_mapping(headers, PERFORMANCE_COLUMNS)

@@ -231,6 +231,18 @@ create table if not exists batch_details (
 );
 create index if not exists idx_batch_details_dyelot_norm on batch_details (lower(trim(dyelot)));
 
+-- RFT (Right First Time) report — import từ file "RFT report.xlsx" (QC xuất), khoá dyelot.
+-- Xem core/rft_importer.py / modules/dyeing/engines/rft/service.py.
+create table if not exists rft_dye_results (
+    id bigint generated always as identity primary key,
+    dyelot text not null unique,
+    customer text, color text, order_no text, greige_code text,
+    machine_type text, nc_dg text, result_dye text, new_batch2 text,
+    rework_count text, stage text not null, recipe text, body_rib text,
+    import_log_id bigint, created_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+create index if not exists idx_rft_dye_results_dyelot_norm on rft_dye_results (lower(trim(dyelot)));
+
 create table if not exists performance_logs (
     id bigint generated always as identity primary key,
     dyelot text not null,
@@ -503,3 +515,4 @@ alter table batch_day_trend_targets enable row level security;
 alter table cleaning_mc_daily_summary enable row level security;
 alter table brand_program_mapping enable row level security;
 alter table import_log_rows enable row level security;
+alter table rft_dye_results enable row level security;

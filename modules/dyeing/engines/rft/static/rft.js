@@ -66,6 +66,7 @@
             },
         };
     }
+    const machineTypeFilter = makeMultiSelectDropdown("machine-type-toggle", "machine-type-menu", "All machine types", loadAll);
     const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", loadAll);
     const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", loadAll);
 
@@ -105,6 +106,7 @@
         return new URLSearchParams({
             category,
             capacities: selectedCapacities().join(","),
+            machine_types: machineTypeFilter.selected().join(","),
             fabric_types: fabricTypeFilter.selected().join(","),
             brand_programs: brandProgramFilter.selected().join(","),
             from_date: document.getElementById("from-date").value,
@@ -126,7 +128,7 @@
         head.innerHTML = `<th>${label}</th>` + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
         const row = data.rows[0];
         section.querySelector(".rft-table tbody").innerHTML =
-            `<tr><th>${row.label}</th>${row.values.map((value) => `<td>${value}</td>`).join("")}<td><strong>${row.total}</strong></td></tr>`;
+            `<tr><th>${row.label}</th>${row.values.map((value) => `<td>${value.toFixed(1)}%</td>`).join("")}<td><strong>${row.total.toFixed(1)}%</strong></td></tr>`;
     }
 
     function updateChart(category, data) {
@@ -145,9 +147,9 @@
                 interaction: { mode: "index", intersect: false },
                 scales: {
                     x: { ticks: { color: textColor }, grid: { color: gridColor } },
-                    y: { beginAtZero: true, ticks: { color: textColor, precision: 0 }, grid: { color: gridColor }, title: { display: true, text: "Number of batches", color: textColor } },
+                    y: { beginAtZero: true, max: 100, ticks: { color: textColor, callback: (value) => `${value}%` }, grid: { color: gridColor }, title: { display: true, text: "RFT rate (%)", color: textColor } },
                 },
-                plugins: { legend: { display: false } },
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => `${context.formattedValue}%` } } },
             },
         });
     }
@@ -158,11 +160,21 @@
         const response = await fetch(`${window.RFT_API_URL}?${filters(category)}`);
         if (!response.ok) return;
         const data = await response.json();
+        machineTypeFilter.setOptions(data.available_machine_types || []);
         fabricTypeFilter.setOptions(data.available_fabric_types || []);
         brandProgramFilter.setOptions(data.available_brand_programs || []);
         section.querySelector(".kpi-total-batches").textContent = data.kpis.total_batches.toLocaleString();
-        section.querySelector(".kpi-category-batches").textContent = data.kpis.category_batches.toLocaleString();
+        section.querySelector(".kpi-ok-batches").textContent = data.kpis.ok_batches.toLocaleString();
         section.querySelector(".kpi-rate").textContent = `${data.kpis.rate_pct.toFixed(1)}%`;
+        const otherStageEl = section.querySelector(".rft-other-stage");
+        if (otherStageEl) {
+            if (data.other_stage_count > 0) {
+                otherStageEl.hidden = false;
+                otherStageEl.textContent = `${data.other_stage_count} batch(es) have an unrecognized Stage value (outside the 6 known stages) and are excluded from every tab.`;
+            } else {
+                otherStageEl.hidden = true;
+            }
+        }
         renderTable(section, data);
         updateChart(category, data);
     }

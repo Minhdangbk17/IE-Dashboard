@@ -32,6 +32,7 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             data = service.get_rft_pivot_data(
                 category=category,
                 capacities=request.args.get("capacities") or None,
+                machine_types=request.args.get("machine_types") or None,
                 fabric_types=request.args.get("fabric_types") or None,
                 brand_programs=request.args.get("brand_programs") or None,
                 from_date=request.args.get("from_date") or None,

@@ -56,6 +56,8 @@
 - `machine_telemetry` — dữ liệu vận hành máy theo thời gian.
 - `downtime_logs` — lịch sử dừng máy.
 - `import_logs` — lịch sử các lần import Excel/CSV.
+- `rft_dye_results` — kết quả phân loại RFT (import từ file "RFT report.xlsx",
+  khoá `dyelot`; xem `core/rft_importer.py`).
 
 (Danh sách trên chỉ liệt kê nhóm bảng CỐT LÕI/hạ tầng — mỗi Engine còn tự sở
 hữu thêm bảng riêng, vd `*_daily_summary` của Daily Rollup Pattern — xem

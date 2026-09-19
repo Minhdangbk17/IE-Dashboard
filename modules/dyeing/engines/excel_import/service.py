@@ -17,6 +17,7 @@ from core.database import execute_query, get_db, get_dialect, insert_returning_i
 from core.excel_importer import AVAILABILITY_COLUMNS, PERFORMANCE_COLUMNS, ColumnSpec, ImportResult, ImportSchema, run_import
 from core.excel_importer import detect_and_parse_file, save_to_db, record_import_rows, export_rows_to_excel
 from core.batch_importer import parse_batch_file, sync_batch_details
+from core.rft_importer import parse_rft_file, sync_rft_results
 from core.brand_program_importer import preview_brand_program_file, sync_brand_program_mapping
 from core.production_time import get_production_date, normalize_production_date, production_bounds, production_date_sql_expr
 from core.rollup import trigger_recompute
@@ -281,6 +282,9 @@ def preview_import_file(filename: str, file_bytes: bytes, requested_type: str = 
     if requested_type == "batch":
         parsed = parse_batch_file(file_bytes)
         return {"status": "preview", "file_type": "BATCH", "columns": list(parsed["rows"][0]) if parsed["rows"] else [], "preview": parsed["rows"][:5], "valid_rows": len(parsed["rows"]), "total_rows": parsed["total_records"], "errors": parsed["errors"]}
+    if requested_type == "rft":
+        parsed = parse_rft_file(file_bytes)
+        return {"status": "preview", "file_type": "RFT", "columns": list(parsed["rows"][0]) if parsed["rows"] else [], "preview": parsed["rows"][:5], "valid_rows": len(parsed["rows"]), "total_rows": parsed["total_records"], "errors": parsed["errors"]}
     if requested_type == "brand_program":
         return preview_brand_program_file(file_bytes)
     result = preview_raw_file(filename, file_bytes)
@@ -293,12 +297,16 @@ def preview_import_file(filename: str, file_bytes: bytes, requested_type: str = 
 def import_selected_file(filename: str, file_bytes: bytes, imported_by: str, requested_type: str = "auto") -> dict[str, Any]:
     if requested_type == "batch":
         return sync_batch_details(file_bytes, imported_by, filename)
+    if requested_type == "rft":
+        return sync_rft_results(file_bytes, imported_by, filename)
     if requested_type == "brand_program":
         return sync_brand_program_mapping(file_bytes, imported_by, filename)
     if requested_type == "auto":
         detected = preview_import_file(filename, file_bytes, "auto")
         if detected.get("file_type") == "BATCH":
             return sync_batch_details(file_bytes, imported_by, filename)
+        if detected.get("file_type") == "RFT":
+            return sync_rft_results(file_bytes, imported_by, filename)
     result = import_raw_file(filename, file_bytes, imported_by)
     if requested_type not in {"", "auto"} and result["file_type"].lower() != requested_type.lower():
         raise ValueError(f"File uploaded thuộc dạng {result['file_type']} Data, vui lòng chuyển loại dữ liệu sang {result['file_type'].title()} hoặc chọn Auto-detect.")

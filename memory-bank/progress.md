@@ -792,11 +792,27 @@
       nhau (16:9, ultrawide, laptop phổ biến, vuông) + đo `scrollHeight` thật
       bằng JS — xác nhận không cuộn ở tỉ lệ nào. Chi tiết đầy đủ ở
       `activeContext.md` mục -16.
+- [x] **Quy tắc phân loại 6 nhóm của `rft` (Lab to Lab/Lab to Bulk/Bulk to
+      Bulk/2nd Batch/Rework/Adjust Color) — HOÀN THÀNH 2026-09-19**: nguồn dữ
+      liệu mới là file "RFT report.xlsx" (QC xuất) -> bảng riêng
+      `rft_dye_results` (`core/rft_importer.py`, import qua signature-detect
+      chung + luồng ghi riêng cùng pattern `batch_importer.py`). Cột `Stage`
+      map trực tiếp sang 6 tab qua `STAGE_TO_CATEGORY`; Stage lạ đếm riêng
+      (`other_stage_count`), không gộp vào tab nào. `production_date` suy qua
+      JOIN Dyelot sang `availability_logs`, dòng không khớp rơi vào cột pivot
+      "Unknown Date" (giữ khi không lọc ngày, loại khi lọc ngày tường minh).
+      Tab Rework/Adjust Color CHỈ tính máy MachineType ">=500kg". **Đổi hẳn
+      công thức KPI**: `rate_pct = OK/tổng-mẻ-CỦA-CHÍNH-TAB` (trước là tỷ
+      trọng so với tổng 6 tab), cell pivot hiển thị %. Cờ
+      `RFT_CLASSIFICATION_READY` đổi sang `True` — Dyeing Hub Dashboard (4
+      mini chart RFT) tự động hết hiện "Đang chờ cấu hình". Thêm filter mới
+      Machine Type (độc lập Capacity). `tests/test_rft_classification.py`
+      (MỚI, 5 kịch bản, dùng CHÍNH file mẫu thật) + full regression 7 test
+      suite cũ PASS 100%. Chi tiết đầy đủ (bao gồm 4 quyết định nghiệp vụ đã
+      hỏi-đáp với người dùng trước khi code) ở `activeContext.md` mục "Đang
+      làm" (Engine `rft`).
 
 ## Backlog (Phase 2+)
-- [ ] **Quy tắc phân loại 6 nhóm của `rft`** (Lab to Lab/Lab to Bulk/Bulk to
-      Bulk/2nd Batch/Rework/Adjust Color) — CHỜ người dùng cung cấp chi tiết,
-      chỉ cần sửa `classify_rft_category()` khi có.
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn
       trong yêu cầu gốc của Permission Model, chưa triển khai để tập trung
       đúng phạm vi bắt buộc.

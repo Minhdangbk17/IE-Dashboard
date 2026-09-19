@@ -1,6 +1,21 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-19 — 2 việc nhỏ trên Dyeing Hub Dashboard (mục -15/-16):
+**Cập nhật lần cuối:** 2026-09-19 — Engine `rft` (Right First Time) có quy tắc phân loại
+THẬT lần đầu tiên (trước đó là scaffold `classify_rft_category()` luôn trả `None` từ
+2026-09-13). Nguồn dữ liệu mới: file "RFT report.xlsx" (QC xuất) -> bảng riêng
+`rft_dye_results` (`core/rft_importer.py`, luồng import riêng cùng pattern
+`batch_importer.py`). Cột `Stage` map trực tiếp sang 6 tab; Stage lạ đếm riêng qua
+`other_stage_count`, không gộp vào tab nào. `production_date` suy qua JOIN Dyelot sang
+`availability_logs`, dòng không khớp rơi vào cột "Unknown Date" (giữ lại khi không lọc
+ngày, loại khi lọc ngày tường minh). Tab Rework/Adjust Color CHỈ tính máy MachineType
+">=500kg". **Đổi hẳn công thức KPI**: `rate_pct = OK/tổng-mẻ-CỦA-CHÍNH-TAB` (trước đó là tỷ
+trọng so với tổng 6 tab) — pivot cell hiển thị %. Cờ `RFT_CLASSIFICATION_READY` đổi sang
+`True`, Dyeing Hub Dashboard tự động hết hiện "Awaiting classification rules". Xem chi tiết
+đầy đủ (bao gồm 4 quyết định nghiệp vụ đã hỏi-đáp với người dùng trước khi code) ở mục
+"Đang làm" bên dưới. Bản ghi trước đó (2026-09-19 sáng — 2 việc nhỏ Dashboard) giữ nguyên
+ở mục -15/-16.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-19 (sáng) — 2 việc nhỏ trên Dyeing Hub Dashboard (mục -15/-16):
 (1) Xác nhận "%Tank Loading chưa thấy biểu đồ đường" KHÔNG phải bug — người dùng chưa
 upload Performance tháng 09, `performance_logs` rỗng nên không có gì để vẽ (Batch/Day vẫn
 vẽ được vì dùng nguồn `availability_logs` khác). Tiện thể thêm UX: sparkline rỗng giờ hiện
@@ -113,46 +128,97 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   `manual_entry`, `reports`, `batch_matrix`, `rft`, `tank_loading` (bản ghi cũ
   của file này từng chỉ liệt kê 3/6 rồi 7/7 — lưu ý cập nhật lại mỗi khi thêm
   Engine mới, đừng để lệch).
-- **Engine `rft` (Right First Time) — MỚI THÊM 2026-09-13, mới ở dạng KHUNG
-  SƯỜN (scaffold), CHƯA có quy tắc phân loại thật**: báo cáo 6 bảng (tab)
-  phân loại mẻ nhuộm theo loại lần chạy — Lab to Lab, Lab to Bulk, Bulk to
-  Bulk, 2nd Batch, Rework, Adjust Color (đúng thứ tự người dùng yêu cầu).
-  Điều hướng bằng `page-tabs` ở đầu trang (click hoặc lăn chuột) — CÙNG cơ
-  chế UI đã có ở trang Downtime (`activatePage()`/wheel handler copy gần như
-  nguyên vẹn). Bộ lọc CÙNG Downtime: Capacity (Kg) multi-select (mặc định
-  500/600/1200/2400), From/To Date, Group By Day/Week/Month (mặc định Week,
-  khoảng ngày mặc định 6 tuần từ tuần hiện tại). Mỗi tab có 3 KPI (Total Valid
-  Batches / <Category> Batches / Rate %) + 1 biểu đồ cột (Chart.js) + 1 bảng
-  pivot 1-dòng theo period, route `GET /dyeing/rft/api/summary?category=<slug>&
-  capacities=&from_date=&to_date=&group_by=` (`modules/dyeing/engines/rft/
-  service.py::get_rft_pivot_data()`), gate bằng
-  `permission_required("dyeing","rft","view")` (đã tự động xuất hiện đúng
-  trong `/admin/accounts/<id>/permissions` nhờ `discover_engines()` động,
-  KHÔNG cần sửa gì thêm ở Permission Model).
-  **Nguồn dữ liệu**: `availability_logs` (capacity_kg/production_date/
-  fabric_type, lọc `INVALID_FABRIC_TYPES` giống Downtime/Batch Matrix) LEFT
-  JOIN `batch_details` (khoá `lower(trim(a.batch))=lower(trim(b.dyelot))`,
-  cùng khoá JOIN đã verify 99.7% khớp ở `batch_matrix`). CHƯA có Daily Rollup
-  (query trực tiếp mỗi request, chấp nhận được ở quy mô hiện tại) — cùng
-  quyết định "tạm hoãn rollup tới khi công thức ổn định" đã áp dụng cho `oee`.
-  **PHẦN CÒN THIẾU (người dùng sẽ hướng dẫn sau)**: hàm
-  `classify_rft_category(row)` (`rft/service.py`) — quy tắc phân loại 1 mẻ
-  vào ĐÚNG 1 trong 6 nhóm trên — hiện LUÔN trả về `None` nên mọi bảng/biểu đồ
-  hiển thị đúng cấu trúc/đúng pipeline lọc nhưng số liệu category = 0 (KPI
-  "Total Valid Batches" vẫn ra số thật, chứng minh pipeline lọc/JOIN/
-  production_date đúng). Các cột `batch_details` có khả năng liên quan tới
-  quy tắc phân loại sau này (CHƯA xác nhận ý nghĩa từng giá trị):
-  `batch_type`, `formula_type`, `process_type`, `redye`, `is_rework`,
-  `correction_cnt`. Khi có quy tắc cụ thể, CHỈ cần sửa hàm này (và có thể
-  thêm cột chi tiết vào bảng pivot nếu người dùng muốn nhiều hơn 1 dòng) —
-  routes/template/JS không cần đổi cấu trúc.
-  **Verify đã làm**: dựng Flask app + DB SQLite tạm (script scratch, không
-  lưu lại trong `tests/` vì logic phân loại thật chưa tồn tại để test có ý
-  nghĩa) — xác nhận mẻ qua đêm (StartTime 21:00 hôm trước/EndTime 02:00 hôm
-  sau) được gán đúng `production_date` hôm trước (cắt ca 7h sáng), mẻ
-  FabricType "Unknow" và Capacity ngoài bộ lọc bị loại đúng, JSON trả về đúng
-  cấu trúc JS cần. Full regression qua Flask test client: trang `/dyeing/rft/`
-  200, xuất hiện đúng trên Hub + Sidebar + ma trận quyền admin.
+- **Engine `rft` (Right First Time) — CÓ QUY TẮC PHÂN LOẠI THẬT (2026-09-19,
+  trước đó chỉ là scaffold `classify_rft_category()` luôn trả `None` từ
+  2026-09-13)**: báo cáo 6 tab phân loại mẻ nhuộm theo loại lần chạy — Lab to
+  Lab, Lab to Bulk, Bulk to Bulk, 2nd Batch, Rework, Adjust Color. Nguồn dữ
+  liệu phân loại là file **"RFT report.xlsx"** (QC xuất, 13 cột: Customer,
+  Color, OrderNo, GreigeCode, Dyelot, MachineType, NC-DG, ResultDYE,
+  NewBatch2, Rework Count, Stage, recipe, body/rib) — người dùng cung cấp file
+  mẫu (`tests/fixtures/sample_imports/RFT report.xlsx`) và xác nhận rõ 4
+  quyết định nghiệp vụ qua hỏi-đáp trước khi code (không tự đoán):
+  1. **Nguồn nạp dữ liệu**: bảng RIÊNG `rft_dye_results` (khoá `dyelot`,
+     `core/rft_importer.py`) — KHÔNG mở rộng `batch_details` (tránh 2 luồng
+     import khác nhau cùng ghi 1 bảng). Import qua luồng signature-detect
+     CHUNG với Availability/Performance/Batch (`core/excel_importer.py::
+     detect_file_type_from_headers()` thêm `RFT_SIGNATURE =
+     {"dyelot","resultdye","stage"}`), nhưng ghi dữ liệu THẬT qua module riêng
+     `core/rft_importer.py::sync_rft_results()` (CÙNG pattern
+     `core/batch_importer.py::sync_batch_details()` — KHÔNG dùng
+     `detect_and_parse_file()`'s nhánh RFT nội bộ cho import thật, nhánh đó
+     CHỈ phục vụ preview/auto-detect, giống nguyên tắc đã áp dụng cho BATCH).
+     Modal Import trên Dyeing Hub có thêm option "RFT Report"
+     (`value="rft"`), auto-detect cũng nhận diện được.
+  2. **Quy tắc map Stage -> tab**: cột `Stage` (chuẩn hoá `.strip().lower()`)
+     map TRỰC TIẾP qua `STAGE_TO_CATEGORY` (`rft/service.py`) sang 1 trong 6
+     tab — người dùng xác nhận Stage trong dữ liệu đầy đủ THẬT sẽ tự có đủ 6
+     giá trị (file mẫu 32 dòng chỉ là 1 phần nhỏ, không có `lab to lab`/
+     `rework`/`adjust color` là bình thường). Giá trị Stage KHÔNG khớp 6 tên
+     trên **KHÔNG bị gộp vào tab nào** (không bịa nhóm "Unclassified" như
+     Color Group ở `batch_matrix`) — đếm riêng qua field `other_stage_count`
+     trả về cùng response, UI hiển thị dòng cảnh báo nhỏ trên mỗi tab khi > 0
+     (chỉ báo dữ liệu nguồn cần rà soát, không phải lỗi tính toán).
+  3. **Nguồn `production_date`** (file RFT report không có cột ngày): LEFT
+     JOIN `availability_logs` theo `lower(trim(a.batch))=lower(trim(r.dyelot))`
+     (cùng khoá JOIN đã verify 99.7% khớp ở `batch_matrix`/`downtime`) lấy
+     StartTime/EndTime. Dòng KHÔNG khớp (thường là MachineType "Small
+     Machine", chưa theo dõi Availability) **vẫn được GIỮ LẠI** khi KHÔNG có
+     filter ngày (rơi vào 1 cột pivot riêng **"Unknown Date"**, luôn xếp CUỐI
+     bảng — không sort theo alphabet chung vì chữ 'u' có thể chen giữa key
+     ngày/tuần/tháng dạng số), nhưng bị LOẠI khi người dùng chủ động lọc
+     From/To Date (không đủ căn cứ xác nhận nằm trong khoảng).
+  4. **Công thức KPI ĐỔI HẲN** so với thiết kế scaffold ban đầu: `rate_pct =
+     số mẻ ResultDYE='OK' trong CHÍNH tab đó / tổng số mẻ CỦA CHÍNH tab đó`
+     (đo "tỷ lệ đạt ngay lần đầu" của loại lần chạy đó) — KHÔNG còn là tỷ
+     trọng so với tổng 6 tab như bản cũ. Cell/Total trên bảng pivot hiển thị
+     **dạng %** (không phải số mẻ thô). KPI card đổi tên: "TOTAL BATCHES" (mẻ
+     của tab này)/"OK (RIGHT FIRST TIME)" (thay "category_batches")/"RATE".
+  **Business rule riêng cho 2 tab "Rework"/"Adjust Color"**: CHỈ tính mẻ có
+  `MachineType = ">=500kg"` (loại "Small Machine") — `RESTRICTED_TO_LARGE_MACHINE`
+  trong `rft/service.py`, áp dụng SAU khi đã phân loại theo Stage (không ảnh
+  hưởng 4 tab còn lại). Filter Machine Type (>=500kg / Small Machine) là filter
+  MỚI, độc lập với Capacity (Kg) cũ — lấy trực tiếp từ `rft_dye_results.machine_type`
+  (không phụ thuộc JOIN `availability_logs`, nên "Small Machine" — vốn thường
+  không khớp Availability — vẫn lọc được đầy đủ, theo đúng yêu cầu "đây là dữ
+  liệu thật, không được mất").
+  Bộ lọc đầy đủ: Capacity (Kg), Machine Type (mới), Fabric Type, Brand
+  Program, From/To Date, Group By Day/Week/Month — `available_fabric_types`/
+  `available_brand_programs`/`available_machine_types` đều tính từ CÙNG 1 lần
+  query (sau lọc Capacity+Date, TRƯỚC khi áp 3 filter kia), độc lập với chính
+  3 filter đó (cùng nguyên tắc downtime/batch_matrix).
+  Cờ `RFT_CLASSIFICATION_READY` (`rft/service.py`) đã đổi từ `False` sang
+  **`True`** — Dyeing Hub Dashboard (4 mini chart Lab to Lab/Lab to Bulk/Bulk
+  to Bulk/2nd Batch, thêm ở bản ghi 2026-09-18 mục -16) tự động hết hiện
+  "Awaiting classification rules", hiện đúng % thật (KHÔNG cần sửa gì ở
+  `dyeing_hub.js` — response `kpis.rate_pct`/`chart.rate_values`/
+  `chart.categories` giữ NGUYÊN tên field, chỉ đổi Ý NGHĨA công thức).
+  **File mới**: `core/rft_importer.py` (`RFT_HEADER_MAP`, `parse_rft_file()`,
+  `sync_rft_results()` — UPSERT theo `dyelot`, cùng kỹ thuật khử trùng trước
+  `executemany()` để tránh `CardinalityViolation` trên Postgres đã áp dụng ở
+  Batch). `supabase/schema.sql` đã thêm bảng `rft_dye_results` + bật RLS —
+  **CHƯA CHẠY trên Supabase production** (xem "Việc tiếp theo").
+  **Verify đã làm**: `tests/test_rft_classification.py` (MỚI, `python
+  tests/test_rft_classification.py`, không dùng pytest) — 5 kịch bản: (1) map
+  đúng 6 Stage + Stage lạ trả `None`; (2) `parse_rft_file()` +
+  `detect_file_type_from_headers()` trên CHÍNH file mẫu thật (31 dòng, 21
+  OK/10 NG, 0 lỗi); (3) công thức KPI OK/tổng-trong-tab ĐÚNG số tay tính +
+  giới hạn >=500kg cho Rework loại đúng mẻ Small Machine + `other_stage_count`
+  đếm đúng; (4) mẻ không khớp `availability_logs` rơi đúng bucket "Unknown
+  Date" khi không lọc ngày, bị loại khi lọc ngày tường minh; (5)
+  `sync_rft_results()` end-to-end trên file mẫu thật, import 2 LẦN xác nhận
+  UPSERT idempotent (không nhân đôi dòng, `import_logs` vẫn ghi đủ audit
+  trail 2 lần). Full regression: `test_permission_model.py` (28 case,
+  `/dyeing/rft/` vẫn gate đúng permission, không đổi hành vi Engine khác) +
+  `test_batch_matrix_formula.py`/`test_production_date.py`/
+  `test_postgres_shim_translation.py`/`test_downtime_brand_fabric_filters.py`/
+  `test_batch_matrix_brand_fabric_filters.py`/
+  `test_downtime_case_notes_context.py`/`test_batch_day_trend_recompute_all.py`
+  đều PASS 100% (không regression). **Lưu ý phát hiện phụ, KHÔNG phải do thay
+  đổi lần này**: `verify_rollup_parity.py` đang lệch 3 scenario trên DB dev cục
+  bộ — đã cô lập bằng `git stash` (chạy lại đúng script trên code CHƯA có thay
+  đổi RFT vẫn lệch y hệt) — nguyên nhân là `cleaning_mc_daily_summary` cục bộ
+  chưa được `flask rebuild-summaries` lại sau đợt pull code mới nhất (mục -11
+  bên dưới), không liên quan gì tới RFT.
 - **Engine `batch_matrix`**: pivot Fabric Type x Color Group x Ngày sản xuất.
   **Nguồn dữ liệu (bản mới nhất, đã đổi so với bản đầu)**:
   - Tử số (số mẻ) đếm từ `availability_logs` — MỖI DÒNG = 1 MẺ (không còn
@@ -1058,6 +1124,14 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 8. Quality trong công thức OEE tạm giả định 100% (giữ nguyên, chưa đổi).
 
 ## Việc tiếp theo
+- **CHỜ XÁC NHẬN**: tạo bảng MỚI `rft_dye_results` trên Supabase production (áp DDL trong
+  `supabase/schema.sql`, bảng hoàn toàn mới nên không cần migration script) — trước khi
+  chạy, Engine `rft` vẫn hoạt động (trả empty state đúng, không lỗi 500) trên CẢ SQLite lẫn
+  Postgres vì `_rft_rows()` bắt `DatabaseError` khi bảng chưa tồn tại, nhưng trên
+  Postgres/Vercel sẽ KHÔNG import/hiển thị được dữ liệu RFT thật cho tới khi bảng tồn tại.
+  Cũng cần import file "RFT report.xlsx" thật (qua Modal Import trên Dyeing Hub, chọn "RFT
+  Report" hoặc để Auto-detect) sau khi có bảng — DB dev cục bộ hiện CHƯA có dữ liệu
+  `rft_dye_results` nào (chỉ mới verify bằng test tạm + file mẫu).
 - **ĐÃ XÁC NHẬN** (2026-09-19): người dùng report "%Tank Loading chưa thấy biểu đồ đường"
   — điều tra xác nhận KHÔNG phải bug code (đối chiếu công thức/filter Tank Loading giống
   hệt Batch/Day, đã hoạt động đúng khi có dữ liệu). Nguyên nhân THẬT: **người dùng CHƯA

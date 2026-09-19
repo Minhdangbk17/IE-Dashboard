@@ -33,6 +33,11 @@
             </div>
         </div>
         <div class="form-group mb-0 mr-3 capacity-dropdown">
+            <label for="machine-type-toggle">Machine Type</label>
+            <button id="machine-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All machine types</button>
+            <div id="machine-type-menu" class="capacity-menu" hidden></div>
+        </div>
+        <div class="form-group mb-0 mr-3 capacity-dropdown">
             <label for="fabric-type-toggle">Fabric Type</label>
             <button id="fabric-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All fabric types</button>
             <div id="fabric-type-menu" class="capacity-menu" hidden></div>
@@ -57,13 +62,17 @@
 {% for slug, label in categories %}
 <section class="rft-page" id="page-{{ slug }}" data-page="{{ slug }}"{% if not loop.first %} hidden{% endif %}>
     <div class="rft-kpis mb-4">
-        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL VALID BATCHES</span><strong class="kpi-total-batches">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">{{ label|upper }} BATCHES</span><strong class="kpi-category-batches">--</strong><span class="f6 color-fg-muted">classified</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">RATE</span><strong class="kpi-rate">--%</strong><span class="f6 color-fg-muted">of valid batches</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL BATCHES</span><strong class="kpi-total-batches">--</strong><span class="f6 color-fg-muted">in this stage</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">OK (RIGHT FIRST TIME)</span><strong class="kpi-ok-batches">--</strong><span class="f6 color-fg-muted">ResultDYE = OK</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">RATE</span><strong class="kpi-rate">--%</strong><span class="f6 color-fg-muted">OK / total this stage</span></div>
     </div>
+    {% if slug in ("rework", "adjust_color") %}
+    <p class="f6 color-fg-muted mb-3">This tab only counts batches with Machine Type &ge;500kg (Small Machine excluded).</p>
+    {% endif %}
+    <p class="f6 color-fg-muted mb-3 rft-other-stage" data-category="{{ slug }}" hidden></p>
 
     <div class="Box p-3 mb-4 chart-panel">
-        <h3 class="mt-0 mb-2">{{ label }} — batch trend</h3>
+        <h3 class="mt-0 mb-2">{{ label }} — RFT rate trend</h3>
         <canvas class="rft-chart" data-category="{{ slug }}" aria-label="{{ label }} chart"></canvas>
     </div>
 
@@ -72,7 +81,7 @@
             <thead><tr class="rft-head"><th>{{ label }}</th><th>Total</th></tr></thead>
             <tbody></tbody>
         </table>
-        <p class="f6 color-fg-muted mt-2 mb-0">Classification rules for this table are not configured yet — the chart/table structure is ready and will populate once the business rules are defined.</p>
+        <p class="f6 color-fg-muted mt-2 mb-0">Values shown are RFT rate (% ResultDYE = OK) per period.</p>
     </div>
 </section>
 {% endfor %}
