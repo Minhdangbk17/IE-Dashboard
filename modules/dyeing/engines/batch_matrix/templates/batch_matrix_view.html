@@ -226,6 +226,11 @@
                 render();
                 updateLabel();
             },
+            setSelected(newSelected) {
+                selected = new Set((newSelected || []).filter((value) => options.includes(value)));
+                render();
+                updateLabel();
+            },
         };
     }
 
@@ -505,6 +510,13 @@
     const trendCapacityFilter = makeMultiSelectDropdown("trend-capacity-toggle", "trend-capacity-menu", "All capacities", loadTrend);
     const trendBrandProgramFilter = makeMultiSelectDropdown("trend-brand-program-toggle", "trend-brand-program-menu", "All brand programs", loadTrend);
 
+    // Mặc định lọc Capacity >= 500Kg khi vào trang lần đầu (chưa ai chỉnh filter) — dropdown
+    // này data-driven (option lấy từ `available_capacities` thật trong DB, KHÔNG phải danh
+    // sách checkbox cố định như RFT/%Tank Loading), nên phải chờ có response ĐẦU TIÊN mới
+    // biết được các mức Capacity thật để chọn đúng, rồi gọi lại `loadTrend()` 1 lần với filter
+    // đã áp — sau đó cờ này khoá lại, không tự áp lại nữa dù người dùng có xoá hết lựa chọn.
+    let trendCapacityDefaultApplied = false;
+
     function loadTrend() {
         const params = new URLSearchParams({
             from_date: document.getElementById("trend-from").value,
@@ -516,6 +528,15 @@
         fetch(`${trendUrl}?${params}`).then((response) => response.json()).then((data) => {
             trendCapacityFilter.setOptions((data.available_capacities || []).map(String));
             trendBrandProgramFilter.setOptions(data.available_brand_programs || []);
+            if (!trendCapacityDefaultApplied) {
+                trendCapacityDefaultApplied = true;
+                const defaultCapacities = (data.available_capacities || []).filter((value) => Number(value) >= 500).map(String);
+                if (defaultCapacities.length) {
+                    trendCapacityFilter.setSelected(defaultCapacities);
+                    loadTrend();
+                    return;
+                }
+            }
             document.querySelector(".kpi-batch-per-day").textContent = Number(data.kpis.batch_per_day).toFixed(2);
             document.querySelector(".kpi-valid-batches").textContent = Number(data.kpis.valid_batches).toLocaleString();
             document.querySelector(".kpi-total-hours").textContent = Number(data.kpis.total_planned_hours).toLocaleString();

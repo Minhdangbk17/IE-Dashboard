@@ -870,6 +870,17 @@
       `.page-tabs` đã có (giống RFT). Chi tiết đầy đủ ở `activeContext.md`
       mục -20. Verify: `tests/test_dca_cost.py` cập nhật + smoke test 4 tab +
       full regression PASS 100%.
+- [x] **Tab "Batch/Day Trend" mặc định lọc Capacity >= 500Kg (2026-09-19,
+      khuya, bản 3)**: dropdown Capacity của tab này là data-driven (khác
+      checkbox tĩnh của RFT/%Tank Loading/DCA Cost) nên phải chờ response đầu
+      tiên biết Capacity thật rồi JS mới tự chọn các giá trị >= 500 và gọi
+      lại API 1 lần — thêm method `setSelected()` vào
+      `makeMultiSelectDropdown()` dùng chung. Chỉ áp dụng tab Trend, không
+      đổi tab Fabric/Color Matrix. Chi tiết đầy đủ (gồm bài học verify: phải
+      `flask rebuild-summaries` vì báo cáo đọc từ Daily Rollup, không quét
+      raw data trực tiếp) ở `activeContext.md` mục -21. Verify: Playwright
+      thật (Chromium headless) xác nhận dropdown tự chọn đúng, KPI lọc đúng
+      + full regression PASS 100%.
 
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn

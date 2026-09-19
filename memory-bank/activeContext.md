@@ -1,6 +1,25 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-19 (khuya, bản 2) — Trang DCA Cost (mục -19 bên dưới) đổi từ
+**Cập nhật lần cuối:** 2026-09-19 (khuya, bản 3) — Tab "Batch/Day Trend" (`batch_matrix`) giờ
+**mặc định lọc Capacity >= 500Kg** khi vào trang lần đầu (trước đó mặc định "All capacities",
+theo yêu cầu người dùng). Dropdown Capacity của tab này là DATA-DRIVEN (option lấy từ
+`available_capacities` thật trả về từ API, KHÁC danh sách checkbox cố định `[25,50,300,500,
+600,1200,2400]` mà RFT/%Tank Loading/DCA Cost dùng) — không thể "check sẵn" bằng Jinja lúc
+render HTML như 3 báo cáo kia, phải chờ có response ĐẦU TIÊN (không filter gì) để biết các
+mức Capacity thật trong dữ liệu, rồi JS tự chọn các giá trị >= 500 và gọi lại API 1 lần nữa
+(cờ `trendCapacityDefaultApplied` khoá lại sau lần đó — không tự áp lại nếu người dùng sau này
+tự xoá hết lựa chọn). Thêm method `setSelected(values)` vào factory `makeMultiSelectDropdown()`
+dùng chung cho CẢ 2 tab của Engine này (trước đó chỉ có `selected()`/`setOptions()`) — chỉ
+tab "Batch/Day Trend" dùng method mới, tab "Fabric/Color Matrix" không đổi hành vi. Verify
+bằng Playwright THẬT (dựng DB tạm + `flask rebuild-summaries` — báo cáo này đọc từ bảng
+Daily Rollup `batch_day_trend_daily_summary`, KHÔNG phải raw data trực tiếp, nên PHẢI chạy
+rebuild sau khi chèn dữ liệu test bằng SQL thô, bài học đã từng gặp ở việc test Engine khác):
+2 mẻ capacity 300 + 2 mẻ capacity 600/1200, xác nhận dropdown tự chọn đúng "600, 1200" (loại
+300), KPI "Valid Batches" chỉ đếm 2 mẻ thuộc máy >=500Kg. Full regression (`test_permission_
+model.py`/`test_batch_day_trend_recompute_all.py`) PASS 100%. Bản ghi trước đó (2026-09-19
+khuya, bản 2 — DCA Cost đổi 3 section sang 4 tab) giữ nguyên ngay dưới đây.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-19 (khuya, bản 2) — Trang DCA Cost (mục -19 bên dưới) đổi từ
 **3 section xếp dọc** (Cotton/CVC/Polyester) sang **4 TAB** (`page-tabs`, cùng UI pattern
 RFT): tab 1 **"Overview"** gộp CẢ 3 loại vải chính lại (không phân biệt Fabric Type, vẫn giữ
 đúng phạm vi lọc "chỉ 3 loại chính" — Nylon/loại khác vẫn bị loại khỏi CẢ Overview), tab
@@ -350,6 +369,51 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-21. **Tab "Batch/Day Trend" mặc định lọc Capacity >= 500Kg** (2026-09-19, khuya, theo yêu
+   cầu người dùng — "Batch/day trend mặc đinh filter các máy có capacity >= 500").
+
+   Điểm khác biệt kỹ thuật quan trọng so với RFT/%Tank Loading/DCA Cost (những báo cáo đã có
+   sẵn cách "mặc định check trước 500/600/1200/2400"): 3 báo cáo đó dùng CHECKBOX TĨNH (Jinja
+   render sẵn `{% for capacity in [25,50,300,500,600,1200,2400] %}` + `checked` cứng cho
+   500/600/1200/2400) — có thể "check sẵn" ngay lúc render HTML vì danh sách Capacity đã biết
+   trước, hardcode được. Tab "Batch/Day Trend" lại dùng DROPDOWN DATA-DRIVEN
+   (`makeMultiSelectDropdown()`, option list lấy từ `data.available_capacities` — mức Capacity
+   THẬT có trong dữ liệu, không hardcode) — nên KHÔNG check sẵn được lúc render, phải:
+   1. Gọi API lần 1 KHÔNG filter gì (như cũ) để biết `available_capacities` thật.
+   2. Nếu đây là lần tải ĐẦU TIÊN (cờ `trendCapacityDefaultApplied` chưa bật), tự động chọn
+      các giá trị >= 500 trong `available_capacities`, gọi `trendCapacityFilter.setSelected(...)`
+      (method MỚI thêm vào factory `makeMultiSelectDropdown()`, dùng chung cho cả 2 tab của
+      Engine `batch_matrix` — trước đó chỉ có `selected()`/`setOptions()`), rồi gọi lại
+      `loadTrend()` LẦN 2 với filter đã áp, return sớm để không render lần 1 (dữ liệu chưa
+      lọc).
+   3. Bật cờ `trendCapacityDefaultApplied = true` NGAY khi vào nhánh này (dù
+      `available_capacities` rỗng hay không) — đảm bảo chỉ tự áp default ĐÚNG 1 LẦN, không
+      ép lại nếu người dùng sau đó tự xoá hết lựa chọn Capacity (tôn trọng thao tác thủ công).
+
+   **Chỉ áp dụng cho tab "Batch/Day Trend"** — tab "Fabric/Color Matrix" (cùng Engine
+   `batch_matrix`, filter Capacity RIÊNG `capacityFilter`) KHÔNG đổi, vẫn mặc định "All
+   capacities" như cũ (người dùng chỉ định rõ "Batch/day trend", không nói tab Matrix).
+
+   **BÀI HỌC VERIFY quan trọng**: lúc đầu viết script Playwright chèn dữ liệu test thẳng vào
+   `availability_logs`/`batch_details` bằng SQL thô rồi mở trang ngay — kết quả RỖNG hoàn
+   toàn (dropdown không có option nào, KPI = 0). Nguyên nhân: `batch_day_trend.py` đọc dữ
+   liệu TỪ BẢNG DAILY ROLLUP `batch_day_trend_daily_summary` (xem `systemPatterns.md` mục
+   6.2), KHÔNG quét raw data trực tiếp mỗi request — chèn thẳng SQL vào raw table không tự
+   kích hoạt `recompute_daily()`/`trigger_recompute()` (cơ chế đó chỉ chạy sau khi COMMIT qua
+   luồng Import Excel thật, không chạy khi INSERT tay qua sqlite3 script). Phải chạy
+   `flask rebuild-summaries` (subprocess, cùng `DATABASE_PATH` trỏ DB tạm) SAU khi chèn dữ
+   liệu test mới thấy đúng kết quả — đây là bài học ĐÃ BIẾT trước cho `batch_matrix` (ghi ở
+   `systemPatterns.md`) nhưng dễ quên khi viết script test mới cho 1 tính năng khác trong
+   CÙNG Engine, cần nhắc lại rõ ràng ở đây.
+
+   Verify: Playwright THẬT (Chromium headless, dựng server Flask thật ở port ngẫu nhiên rảnh,
+   DB tạm qua `init_db.py` + `flask rebuild-summaries`) — 4 mẻ test (2 capacity=300, 1
+   capacity=600, 1 capacity=1200), xác nhận: request ĐẦU TIÊN gọi API không filter
+   (`capacities=`), request THỨ 2 tự động gọi lại với `capacities=600,1200`; nút dropdown
+   hiển thị "2 selected"; checkbox đã tick đúng đúng 2 giá trị `600`/`1200` (KHÔNG có `300`);
+   KPI "Valid Batches" = 2 (chỉ đếm 2 mẻ Capacity >=500). Full regression
+   `test_permission_model.py`/`test_batch_day_trend_recompute_all.py` PASS 100%.
+
 -20. **DCA Cost (mục -19) đổi từ 3 section xếp dọc sang 4 TAB** (2026-09-19, khuya, theo yêu
    cầu người dùng ngay sau khi vừa xong bản đầu): "chia lại thành 4 tab, tab 1 overview:
    không phân biệt cotton, cvc, poly. tab 2 cotton, tab 3 cvc, tab 4 polyester".
