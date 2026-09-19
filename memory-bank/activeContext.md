@@ -1,6 +1,23 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-19 (tối) — **BUG THẬT phát hiện + sửa NGAY SAU KHI vừa làm
+**Cập nhật lần cuối:** 2026-09-19 (khuya) — **Engine MỚI `dca_cost`** (báo cáo "DCA Cost"),
+domain `dyeing` giờ có **9 Engine** (thêm `dca_cost` vào danh sách 8 Engine cũ). Công thức
+`DCA Cost = Sum(dye_cost) / COUNT(dyelot)` theo nhóm `(fabric_type, color, kỳ)`, đọc TRỰC TIẾP
+từ `batch_details` (KHÔNG cần luồng import mới — dữ liệu đã có sẵn qua Import Batch Detail).
+Phân theo **3 loại vải chính** (Cotton/CVC/Polyester, cùng `MAIN_FABRIC_TYPES` pattern đã dùng
+cho Tank Loading/Batch Day Trend/RFT) **× 5 nhóm màu** (Dark/Light/Medium/Black/White, tái
+hiện lại Bước 3 của `classify_batch_badge()` trong `reports/cleaning_matrix.py` — KHÔNG gọi
+thẳng hàm đó vì nó short-circuit trả "CM" cho mẻ rửa máy mà không xác định màu, trong khi yêu
+cầu là tính TẤT CẢ mẻ kể cả CM/Rework). Mỗi trong 3 loại vải là 1 section riêng: KPI card +
+1 chart đường 5 màu + 1 bảng 5 dòng màu × cột theo kỳ. Filter: Capacity (qua LEFT JOIN
+`availability_logs`, khoá `batch=dyelot`, CHỈ dùng để lấy `capacity_kg` — cùng rủi ro
+miss-match đã biết ở RFT, đã hỏi người dùng trước và được xác nhận chấp nhận), Brand Program
+(qua `greige_code` có sẵn trong `batch_details`), From/To Date, Group By. KHÔNG có Target
+(không được yêu cầu). Xem chi tiết đầy đủ (bao gồm 3 quyết định đã hỏi-đáp với người dùng
+trước khi code) ở mục -19 bên dưới. Bản ghi trước đó (2026-09-19 tối — sửa bug RFT fabric
+trống) giữ nguyên ngay dưới đây.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-19 (tối) — **BUG THẬT phát hiện + sửa NGAY SAU KHI vừa làm
 xong mục -17** (người dùng report: biểu đồ 3-loại-vải RFT không hiện gì cả). Nguyên nhân: file
 "RFT report.xlsx" KHÔNG có cột Fabric Type — `fabric_type` PHẢI suy qua LEFT JOIN
 `availability_logs` (khoá `batch=dyelot`), nhưng RẤT NHIỀU dyelot không khớp bảng đó (không
@@ -162,10 +179,12 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 ## Đang làm
 - Khung Phase 1 (Application Factory, Auto-loader 2 cấp, SQLite WAL, Graphify,
   Memory Bank) đã ổn định, không đổi.
-- Domain `dyeing` hiện có 8 Engine: `oee`, `downtime`, `excel_import`,
-  `manual_entry`, `reports`, `batch_matrix`, `rft`, `tank_loading` (bản ghi cũ
-  của file này từng chỉ liệt kê 3/6 rồi 7/7 — lưu ý cập nhật lại mỗi khi thêm
-  Engine mới, đừng để lệch).
+- Domain `dyeing` hiện có 9 Engine: `oee`, `downtime`, `excel_import`,
+  `manual_entry`, `reports`, `batch_matrix`, `rft`, `tank_loading`, `dca_cost`
+  (bản ghi cũ của file này từng chỉ liệt kê 3/6 rồi 7/7 rồi 8/8 — lưu ý cập
+  nhật lại mỗi khi thêm Engine mới, đừng để lệch).
+- **Engine `dca_cost` (DCA Cost) — báo cáo Sum(DyeCost)/Sum(số dyelot), phân
+  Fabric Type × Color (2026-09-19, khuya)**: xem chi tiết đầy đủ ở mục -19.
 - **Engine `rft` (Right First Time) — CÓ QUY TẮC PHÂN LOẠI THẬT (2026-09-19,
   trước đó chỉ là scaffold `classify_rft_category()` luôn trả `None` từ
   2026-09-13)**: báo cáo 6 tab phân loại mẻ nhuộm theo loại lần chạy — Lab to
@@ -314,6 +333,79 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chạy, chờ xác nhận) hoặc admin gán tay qua `/admin/accounts`.
 
 ## Quyết định gần đây (theo thứ tự thời gian, mới nhất trước)
+-19. **Engine MỚI `dca_cost` (báo cáo "DCA Cost")** (2026-09-19, khuya, theo yêu cầu người
+   dùng — đã hỏi-đáp 3 câu qua `AskUserQuestion` trước khi code, không tự đoán).
+
+   **3 quyết định đã chốt qua hỏi-đáp**:
+   1. **Trục thời gian**: Trend theo kỳ Day/Week/Month (line chart 5 đường màu/section) —
+      KHÔNG phải bảng/biểu đồ tĩnh 1 giá trị/màu. Nhất quán với Batch/Day Trend/%Tank
+      Loading/RFT.
+   2. **Phạm vi mẻ**: TÍNH TẤT CẢ mẻ có Dye Cost — KHÔNG loại CM (Dyelot chứa "-WA")/Rework
+      như "Normal Dyeing Batches by Colour" của `reports/cleaning_matrix.py` (người dùng
+      chọn ngược với đề xuất mặc định của tôi — DCA Cost phải phản ánh TOÀN BỘ chi phí thực
+      tế phát sinh, bao gồm cả rửa máy/sửa lỗi).
+   3. **Filter Capacity**: CÓ cần, chấp nhận LEFT JOIN `availability_logs` (cùng rủi ro
+      miss-match vừa gặp ở mục -18) — CHỈ dùng để lấy `capacity_kg`, không ảnh hưởng tới
+      `fabric_type`/màu/`production_date` (3 trường này lấy TRỰC TIẾP từ `batch_details`,
+      không phụ thuộc JOIN).
+
+   **Nguồn dữ liệu — ĐƠN GIẢN HƠN RFT đáng kể**: đọc TRỰC TIẾP `batch_details` (không có bảng
+   import riêng nào — Engine này THUẦN ĐỌC, không có route ghi, không cần luồng import mới).
+   `dyelot` là khoá chính bảng này (mỗi dòng = 1 mẻ, KHÔNG có rủi ro đếm trùng kiểu COUNT
+   DISTINCT như `batch_matrix` từng gặp). `fabric_type`/`shade`/`colour_no`/`recipe_no`/
+   `customer_color`/`greige_code`/`start_time`/`end_time` đều có SẴN trong chính bảng này —
+   CHỈ `capacity_kg` (batch_details không có cột này) mới cần LEFT JOIN `availability_logs`
+   (khoá `lower(trim(a.batch)) = lower(trim(bd.dyelot))`, cùng khoá JOIN đã verify 99.7% khớp
+   ở `batch_matrix`/`downtime`/`rft`).
+
+   **Công thức**: mỗi ô `(fabric_type, color, kỳ)`: `DCA Cost = Sum(dye_cost) / COUNT(dyelot)`
+   — nguyên tắc Sum/Sum ở MỌI cấp gộp (ô-theo-kỳ VÀ Total), TUYỆT ĐỐI KHÔNG lấy trung bình
+   cộng các ô-theo-kỳ (cùng bài học đã rút ra từ `batch_matrix`/`downtime` — verify bằng test
+   case cụ thể: 3 mẻ 100/200/300 chia 2 kỳ (150 và 300) → Total ĐÚNG = (100+200+300)/3 = 200,
+   KHÔNG PHẢI (150+300)/2 = 225).
+
+   **Phân loại 5 màu (`_classify_color()`, `dca_cost/service.py`)**: COPY LẠI (không import)
+   đúng **Bước 3** (xác định tông màu cơ bản) của `classify_batch_badge()`
+   (`reports/cleaning_matrix.py`) — check BLACK/WHITE trong ColourNo+RecipeNo+CustomerColor
+   trước, rồi Shade=Dark/Medium/Light, rồi fallback qua `DARK_KEYWORDS`/`LIGHT_KEYWORDS`
+   (copy nguyên văn 2 danh sách từ khoá), mặc định "Medium" khi hoàn toàn không có tín hiệu.
+   **KHÔNG gọi thẳng `classify_batch_badge()`** vì hàm gốc CÓ Bước 1 short-circuit: Dyelot
+   chứa "-WA" → trả "CM" NGAY, không chạy tới Bước 3 xác định màu — nếu tái dùng thẳng, mọi
+   mẻ CM sẽ KHÔNG có màu (mất khỏi cả 5 dòng), sai với yêu cầu "tính tất cả mẻ" (quyết định
+   2 ở trên). Đây là kiểu "trùng lặp có kiểm soát" đã áp dụng nhiều lần trong dự án
+   (`MAIN_FABRIC_TYPES` ở `tank_loading`/`rft`) — nếu sau này từ khoá màu ở
+   `classify_batch_badge()` đổi, PHẢI đồng bộ tay lại đây (đã ghi rõ trong docstring/comment
+   của `_classify_color()`).
+
+   **Bố cục trang**: 3 section XẾP DỌC (Cotton/CVC/Polyester, KHÔNG đặt cạnh nhau như %Tank
+   Loading/RFT vì mỗi section cần cả bảng 5-dòng LẪN chart 5-đường — quá chật nếu ép 3 cột).
+   Mỗi section: 3 KPI card (Total Dye Cost/Total Batches/DCA Cost) + 1 chart đường 5 màu +
+   1 bảng 5 dòng màu × cột theo kỳ + cột Total. Bảng màu chart (`DCA_COLOR_PALETTE` trong
+   `dca_cost.js`) tự chọn 5 mã hex phân biệt (tím/xanh dương/cam/xám/xanh lá) — KHÔNG dùng
+   đen/trắng thuần vì khó thấy ở cả 2 theme, và đây chỉ là màu PHÂN BIỆT đường trên chart chứ
+   không phải màu vải thật (cùng tinh thần các báo cáo khác dùng xanh lá/xanh dương/hồng cho
+   Cotton/CVC/Polyester).
+
+   **Engine mới, KHÔNG sửa `app.py`/`__init__.py` của Engine khác** — chỉ thêm 1 dòng map tên
+   hiển thị `"dca_cost": "DCA Cost"` vào `_engine_display_name()` (`modules/dyeing/__init__.py`,
+   hàm duy nhất map tên kỹ thuật -> nhãn Sidebar, KHÔNG hardcode danh sách Engine nào khác).
+   Auto-loader tự phát hiện + gắn Blueprint + mục nav + đưa vào ma trận phân quyền Admin
+   (`engine_registry.discover_engines()`) mà không cần code gì thêm.
+
+   Verify: `tests/test_dca_cost.py` (MỚI, 4 kịch bản: `_classify_color()` đúng cả 5 nhóm màu
+   + fallback; công thức Sum/Sum đúng ở cả ô-theo-kỳ lẫn Total, loại đúng Fabric Type ngoài 3
+   loại chính; filter Capacity loại đúng dòng miss-match; mẻ thiếu ngày rơi đúng "Unknown
+   Date") — PASS 100%. Smoke test end-to-end (Flask app đầy đủ + DB tạm qua `init_db.py`):
+   trang `/dyeing/dca_cost/` render 200, API trả đúng cấu trúc `fabrics.{Cotton,CVC,
+   Polyester}.{rows,kpis}`, Hub/Admin Accounts không bị ảnh hưởng, log Auto-loader xác nhận
+   nạp đủ 9 Engine. Full regression `test_permission_model.py`/`test_rft_classification.py`/
+   `test_postgres_shim_translation.py` PASS 100%, không regression Engine khác.
+
+   **Chưa làm** (ngoài phạm vi yêu cầu lần này, để dành backlog nếu cần sau): chưa thêm widget
+   DCA Cost vào Dyeing Hub Dashboard; chưa có Target; chưa có Daily Rollup (query trực tiếp
+   mỗi request, cùng quyết định "tạm hoãn tới khi đo được chậm thật" đã áp dụng cho
+   `rft`/`tank_loading`).
+
 -18. **BUG THẬT (người dùng report NGAY SAU khi làm xong mục -17) + sửa: biểu đồ 3-loại-vải
    RFT trống trơn vì `fabric_type` không suy được từ `availability_logs`** (2026-09-19, tối).
 

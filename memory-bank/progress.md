@@ -846,6 +846,23 @@
       tối giản vào `_init_schema()`. Full regression (`test_rft_classification.py`
       6 kịch bản + `test_permission_model.py` + `test_postgres_shim_translation.py`)
       PASS 100%. Chi tiết đầy đủ ở `activeContext.md` mục -18.
+- [x] **Engine MỚI `dca_cost` (báo cáo "DCA Cost", 2026-09-19, khuya)**: domain
+      `dyeing` giờ có 9 Engine. Công thức `Sum(dye_cost)/COUNT(dyelot)` theo
+      `(fabric_type, color, kỳ)`, đọc TRỰC TIẾP `batch_details` (KHÔNG cần
+      luồng import mới, KHÔNG có route ghi). Phân 3 loại vải chính (Cotton/
+      CVC/Polyester) × 5 nhóm màu (Dark/Light/Medium/Black/White — tái hiện
+      lại Bước 3 của `classify_batch_badge()` trong `reports/cleaning_
+      matrix.py`, KHÔNG gọi thẳng hàm đó vì nó short-circuit trả "CM" cho mẻ
+      rửa máy mà không xác định màu, trong khi yêu cầu tính TẤT CẢ mẻ kể cả
+      CM/Rework). Mỗi loại vải 1 section riêng: KPI + chart đường 5 màu +
+      bảng 5 dòng theo kỳ. Filter: Capacity (qua LEFT JOIN
+      `availability_logs`, chỉ lấy `capacity_kg`), Brand Program, From/To
+      Date, Group By. Chi tiết đầy đủ (gồm 3 quyết định hỏi-đáp trước khi
+      code) ở `activeContext.md` mục -19. Verify: `tests/test_dca_cost.py`
+      (MỚI, 4 kịch bản — công thức Sum/Sum, phân loại màu, filter Capacity,
+      bucket Unknown Date) + smoke test end-to-end + full regression
+      (`test_permission_model.py`/`test_rft_classification.py`/
+      `test_postgres_shim_translation.py`) PASS 100%.
 
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn

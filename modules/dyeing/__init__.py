@@ -90,4 +90,5 @@ def _engine_display_name(engine_name: str) -> str:
         "batch_matrix": "Batch/Day",
         "rft": "Right First Time",
         "tank_loading": "%Tank Loading",
+        "dca_cost": "DCA Cost",
     }.get(engine_name, engine_name.replace("_", " ").title())

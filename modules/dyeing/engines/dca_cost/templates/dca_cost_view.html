@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}DCA Cost - Dyeing{% endblock %}
+{% block extra_head %}<style>
+    .dca-kpis { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 12px; }
+    .dca-kpis .widget-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+    .dca-kpis strong { font-size: 28px; line-height: 1.1; }
+    .capacity-dropdown { position: relative; min-width: 210px; }
+    .capacity-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--color-canvas-overlay, #161b22); border: 1px solid var(--color-border-default, #30363d); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
+    .capacity-menu[hidden] { display: none; }
+    .capacity-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+    .capacity-option:hover { background: var(--color-neutral-muted, rgba(110, 118, 129, .15)); }
+    .dca-section { margin-bottom: 28px; }
+    .dca-section-title { display: flex; align-items: baseline; gap: 8px; }
+    .dca-chart-panel { min-height: 320px; height: 320px; }
+    @media (max-width: 800px) { .dca-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
+</style>{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
+    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Batch Cost</p><h2 class="mt-0">DCA Cost report</h2></div>
+    <a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a>
+</div>
+
+<section class="dca-filter Box p-3 mb-3" aria-label="Report filters">
+    <div class="d-flex flex-wrap flex-items-end gap-2">
+        <div class="form-group mb-0 mr-3 capacity-dropdown">
+            <label for="capacity-toggle">Capacity (Kg)</label>
+            <button id="capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All capacities</button>
+            <div id="capacity-menu" class="capacity-menu" hidden>
+                <label class="capacity-option"><input id="capacity-all" type="checkbox" value="ALL"> Select All</label>
+                <div class="border-top my-1"></div>
+                {% for capacity in [25, 50, 300, 500, 600, 1200, 2400] %}
+                <label class="capacity-option"><input class="capacity-checkbox" type="checkbox" value="{{ capacity }}" {% if capacity in [500, 600, 1200, 2400] %}checked{% endif %}> {{ capacity }} Kg</label>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="form-group mb-0 mr-3 capacity-dropdown">
+            <label for="brand-program-toggle">Brand Program</label>
+            <button id="brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
+            <div id="brand-program-menu" class="capacity-menu" hidden></div>
+        </div>
+        <div class="form-group mb-0 mr-3"><label for="from-date">From Date</label><input id="from-date" class="form-control" type="date"></div>
+        <div class="form-group mb-0 mr-3"><label for="to-date">To Date</label><input id="to-date" class="form-control" type="date"></div>
+        <div class="form-group mb-0"><label for="group-by">Group By</label><select id="group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
+    </div>
+    <p class="f6 color-fg-muted mt-2 mb-0">DCA Cost = Sum(Dye Cost) / count of dyelots, for every batch (Cleaning MC and Rework batches included).</p>
+</section>
+
+{% for fabric in ["Cotton", "CVC", "Polyester"] %}
+<section class="dca-section" data-fabric="{{ fabric }}">
+    <div class="dca-section-title mb-2"><h3 class="mt-0 mb-0">{{ fabric }}</h3></div>
+    <div class="dca-kpis mb-3">
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL DYE COST</span><strong class="dca-kpi-total-cost">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL BATCHES</span><strong class="dca-kpi-total-batches">--</strong><span class="f6 color-fg-muted">dyelot count</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">DCA COST</span><strong class="dca-kpi-dca-cost">--</strong><span class="f6 color-fg-muted">Sum(Dye Cost) / dyelot count</span></div>
+    </div>
+    <div class="Box p-3 mb-3 dca-chart-panel">
+        <canvas class="dca-chart" data-fabric="{{ fabric }}" aria-label="{{ fabric }} DCA Cost chart"></canvas>
+    </div>
+    <div class="Box p-3" style="overflow-x:auto;">
+        <table class="preview-table dca-table" data-fabric="{{ fabric }}">
+            <thead><tr class="dca-head"><th>Color</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</section>
+{% endfor %}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+    window.DCA_COST_API_URL = "{{ url_for('dyeing.dca_cost.api_summary') }}";
+</script>
+<script src="{{ url_for('dyeing.dca_cost.static', filename='dca_cost.js') }}"></script>
+{% endblock %}
