@@ -524,7 +524,7 @@
         }));
         if (chart) chart.destroy();
         const isLight = document.documentElement.getAttribute("data-color-mode") === "light";
-        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#abaebb";
+        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#c7c9d1";
         const gridColor = isLight ? "rgba(11, 12, 14, 0.08)" : "rgba(255, 255, 255, 0.08)";
         chart = new Chart(document.getElementById("downtimeChart"), {
             type: "bar",
@@ -544,7 +544,7 @@
 
     function chartTextColors() {
         const isLight = document.documentElement.getAttribute("data-color-mode") === "light";
-        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#abaebb";
+        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#c7c9d1";
         const gridColor = isLight ? "rgba(11, 12, 14, 0.08)" : "rgba(255, 255, 255, 0.08)";
         return { textColor, gridColor };
     }

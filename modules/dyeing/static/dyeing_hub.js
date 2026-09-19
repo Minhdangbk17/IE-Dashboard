@@ -74,6 +74,7 @@
     const WINDOW_DAYS = Math.max(1, Math.round((new Date(`${WINDOW.to}T00:00:00`) - new Date(`${WINDOW.from}T00:00:00`)) / 86400000) + 1);
 
     const FABRIC_COLORS = { Cotton: "#3fb950", CVC: "#2862d7", Polyester: "#f778ba" };
+    const MAIN_FABRIC_TYPES = Object.keys(FABRIC_COLORS);
     const charts = {}; // key -> Chart instance, để destroy() trước khi vẽ lại
 
     function destroyChart(key) {
@@ -126,6 +127,50 @@
                 interaction: { intersect: false },
                 scales: { x: { display: false }, y: { display: false, beginAtZero: true } },
                 plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            },
+        });
+    }
+
+    // Biểu đồ cột chồng (stacked bar) — dùng cho Downtime % theo 3 loại vải/kỳ. Cùng tinh
+    // thần tối giản với renderSparkline() (ẩn trục/lưới/chú giải, giữ tooltip để admin xem
+    // giá trị chính xác khi cần) nhưng giữ type "bar" + stacked thay vì "line".
+    function renderStackedBarChart(canvasKey, canvas, labels, series) {
+        if (!canvas) return;
+        const wrap = canvas.parentElement;
+        let emptyNote = wrap ? wrap.querySelector(".dash-spark-empty") : null;
+        if (!labels.length) {
+            destroyChart(canvasKey);
+            canvas.style.visibility = "hidden";
+            if (wrap && !emptyNote) {
+                emptyNote = document.createElement("div");
+                emptyNote.className = "dash-spark-empty";
+                emptyNote.textContent = "No data for this period";
+                wrap.appendChild(emptyNote);
+            }
+            return;
+        }
+        canvas.style.visibility = "";
+        if (emptyNote) emptyNote.remove();
+        if (typeof Chart === "undefined") return;
+        destroyChart(canvasKey);
+        charts[canvasKey] = new Chart(canvas, {
+            type: "bar",
+            data: {
+                labels,
+                datasets: series.map((s) => ({
+                    label: s.label, data: s.values, backgroundColor: s.color, borderWidth: 0, borderRadius: 2, maxBarThickness: 18,
+                })),
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: { mode: "index", intersect: false },
+                scales: {
+                    x: { stacked: true, display: false },
+                    y: { stacked: true, display: false, beginAtZero: true },
+                },
+                plugins: { legend: { display: false }, tooltip: { enabled: true } },
             },
         });
     }
@@ -184,16 +229,46 @@
         return "var(--danger)";
     }
 
+    // Widget hiện: (1) số tổng gộp cả 3 loại vải (đúng nghĩa "Downtime % chung ca sản
+    // xuất", tô màu theo ngưỡng) + (2) 3 số phụ + (3) biểu đồ cột chồng Downtime %/kỳ theo
+    // TỪNG loại vải — API `downtime.api_summary` chỉ nhận filter `fabric_types` cho 1 lần
+    // gọi (không trả breakdown-theo-vải trong 1 response), nên gọi RIÊNG mỗi loại vải
+    // (giống pattern loadHeroWidget/loadTankLoadingWidget), rồi canh lại theo `period_keys`
+    // của response KHÔNG filter (nguồn "trục thời gian chuẩn") — tránh lệch cột nếu 1 loại
+    // vải thiếu dữ liệu đúng 1 ngày nào đó trong khoảng (response filter riêng loại đó sẽ
+    // không có period_key ngày đó, PHẢI fill 0 chứ không được lệch chỉ số mảng).
     async function loadDowntimeWidget() {
         const el = document.getElementById("dash-downtime-value");
+        const canvas = document.getElementById("dash-downtime-chart");
         try {
-            const params = new URLSearchParams({ from_date: WINDOW.from, to_date: WINDOW.to, capacities: CAPACITY_FILTER, group_by: "date" });
-            const res = await fetch(`${downtimeUrl}?${params}`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            const pct = Number(data.kpis.downtime_rate_pct) || 0;
+            const baseParams = { from_date: WINDOW.from, to_date: WINDOW.to, capacities: CAPACITY_FILTER, group_by: "date" };
+            const overallRes = await fetch(`${downtimeUrl}?${new URLSearchParams(baseParams)}`);
+            if (!overallRes.ok) throw new Error(`HTTP ${overallRes.status}`);
+            const overall = await overallRes.json();
+            const pct = Number(overall.kpis.downtime_rate_pct) || 0;
             el.textContent = `${fmt1(pct)}%`;
             el.style.color = downtimeColorFor(pct);
+
+            const periodKeys = overall.period_keys || [];
+            const periods = overall.periods || [];
+            const fabricResponses = await Promise.all(
+                MAIN_FABRIC_TYPES.map((fabric) => fetch(`${downtimeUrl}?${new URLSearchParams({ ...baseParams, fabric_types: fabric })}`))
+            );
+            const fabricData = await Promise.all(fabricResponses.map((res) => (res.ok ? res.json() : null)));
+
+            const byFabricValue = {};
+            const series = MAIN_FABRIC_TYPES.map((fabric, index) => {
+                const data = fabricData[index];
+                const total = data ? Number(data.kpis.downtime_rate_pct) || 0 : null;
+                byFabricValue[fabric] = total;
+                const byKey = {};
+                if (data) (data.period_keys || []).forEach((key, i) => { byKey[key] = data.total_row[i]; });
+                return { label: fabric, values: periodKeys.map((key) => byKey[key] || 0), color: FABRIC_COLORS[fabric] || "#abaebb" };
+            });
+            document.getElementById("dash-downtime-cotton").textContent = byFabricValue.Cotton !== null ? `${fmt1(byFabricValue.Cotton)}%` : "--";
+            document.getElementById("dash-downtime-cvc").textContent = byFabricValue.CVC !== null ? `${fmt1(byFabricValue.CVC)}%` : "--";
+            document.getElementById("dash-downtime-polyester").textContent = byFabricValue.Polyester !== null ? `${fmt1(byFabricValue.Polyester)}%` : "--";
+            renderStackedBarChart("downtime", canvas, periods, series);
         } catch (err) {
             console.error("Lỗi tải widget Downtime:", err);
             el.textContent = "Error";
@@ -219,7 +294,7 @@
             if (!note) {
                 note = document.createElement("div");
                 note.className = "dash-rft-pending-note";
-                note.textContent = "Đang chờ cấu hình quy tắc phân loại";
+                note.textContent = "Awaiting classification rules";
                 card.appendChild(note);
             }
         } else if (note) {
@@ -395,7 +470,7 @@
             const fromDate = document.getElementById("export-from-date").value;
             const toDate = document.getElementById("export-to-date").value;
             if (!fromDate || !toDate) {
-                exportError.textContent = "Vui lòng chọn đủ Từ ngày và Đến ngày.";
+                exportError.textContent = "Please select both From Date and To Date.";
                 exportError.classList.remove("d-none");
                 return;
             }
