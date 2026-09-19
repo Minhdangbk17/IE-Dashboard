@@ -183,7 +183,12 @@
                     x: { stacked: true, grid: { display: false }, ticks: { color: axisColor, font: { size: 12 } } },
                     y: { stacked: true, display: false, beginAtZero: true },
                 },
-                plugins: { legend: { display: false }, tooltip: { enabled: true } },
+                plugins: {
+                    legend: { display: false },
+                    // Đơn vị LUÔN là % (khác trang report Downtime gốc mặc định "Hours" —
+                    // xem downtime.js::unitMode) — ghi rõ "%" trong tooltip để không nhầm.
+                    tooltip: { enabled: true, callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmt1(ctx.parsed.y)}%` } },
+                },
             },
         });
     }
