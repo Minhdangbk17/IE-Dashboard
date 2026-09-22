@@ -300,7 +300,7 @@ def legacy_get_cleaning_matrix(date_from: str | None, date_to: str | None, capac
              a.machine, a.capacity_kg, a.program, a.start_time, a.end_time, a.rework_hour AS log_rework_minutes,
              a.batch_ref_no, a.batch, {sequence_expression} AS sequence_order, COALESCE(b.shade, '') AS shade,
              COALESCE(b.colour_no, '') AS colour_no, COALESCE(b.customer_color, '') AS customer_color, COALESCE(b.batch_type, '') AS batch_type,
-             COALESCE(b.recipe_no, '') AS recipe_no,
+             COALESCE(b.recipe_no, '') AS recipe_no, COALESCE(b.sap_lot, '') AS sap_lot,
              {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
              COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref
         FROM availability_logs a
@@ -368,6 +368,7 @@ def legacy_get_cleaning_matrix(date_from: str | None, date_to: str | None, capac
             "recipe_no": row["recipe_no"],
             "customer_color": row["customer_color"],
             "log_rework_minutes": row["log_rework_minutes"],
+            "sap_lot": row["sap_lot"],
         }
         code = classify_batch_badge(batch_record)
         is_rework_badge = code.endswith("R")

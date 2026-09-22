@@ -926,21 +926,34 @@
       sửa 7 điểm JOIN theo dyelot ở `downtime`/`cleaning_matrix`/`batch_matrix`
       (2 file)/`rft`/`tank_loading`/`dca_cost` để không đếm trùng khi 1 dyelot
       có nhiều dòng. Migrate lazy tại app startup (SQLite) +
-      `supabase/migrate_batch_details_primary_key.sql` (Postgres, CHƯA chạy
-      trên production — xem "Việc tiếp theo" ở `activeContext.md`). File test
-      mới `tests/test_batch_importer.py` verify bằng ĐÚNG file mẫu thật
-      C260659920, full regression 11 file test PASS 100%. Chi tiết đầy đủ ở
+      `supabase/migrate_batch_details_primary_key.sql` (Postgres — người dùng
+      xác nhận ĐÃ CHẠY trên Supabase production trước khi deploy; đã commit +
+      push lên `main`, Vercel tự deploy). File test mới
+      `tests/test_batch_importer.py` verify bằng ĐÚNG file mẫu thật
+      C260659920, full regression PASS 100%. Chi tiết đầy đủ ở
       `activeContext.md`/`techContext.md`.
+- [x] **Đổi công thức phân loại Rework — HOÀN THÀNH 2026-09-22 (khuya)**:
+      `classify_batch_badge()` (`reports/cleaning_matrix.py`) đổi hẳn sang 2
+      điều kiện theo MÃ (Dyelot số cuối ≠ 0 -> Rework, kết thúc chữ cái ->
+      Normal/không tính; SapLot số đầu > 1 -> Rework), thay thế hoàn toàn
+      `batch_type='Rework' OR log_rework_minutes>0` cũ. Sửa kèm 1 bug phụ:
+      `_ensure_batch_details_columns()` còn sót schema cũ `dyelot TEXT PRIMARY
+      KEY` từ trước khi đổi khoá (mục ngay trên) — đồng bộ lại. File test mới
+      `tests/test_rework_classification.py` PASS 100%. Sau khi deploy PHẢI
+      chạy `flask rebuild-summaries` để backfill lại `cleaning_mc_daily_summary`
+      lịch sử theo luật mới (xem `activeContext.md`).
 
 ## Backlog (Phase 2+)
-- [ ] **Chạy `supabase/migrate_batch_details_primary_key.sql` trên Supabase
-      production** (qua SQL Editor, TRƯỚC khi deploy code có đổi khoá
-      `batch_details` — nếu không `ON CONFLICT(dyelot, machine, start_time)`
-      sẽ lỗi vì chưa có unique index đó). Sau đó cân nhắc viết script backfill
-      đọc lại `import_log_rows` (Raw Data Viewer) để khôi phục dữ liệu mẻ gốc
-      từng bị ghi đè ở các dyelot trùng lịch sử trên production — KHÔNG bắt
-      buộc, dữ liệu vẫn còn nguyên trong `import_log_rows` nên không mất vĩnh
-      viễn, chỉ chưa phản ánh vào `batch_details`/báo cáo cho tới khi backfill.
+- [ ] **Chạy `flask rebuild-summaries` trên production SAU KHI deploy bản có
+      đổi công thức Rework** (2026-09-22 khuya) — bắt buộc để `cleaning_mc_daily_summary`
+      lịch sử phản ánh đúng luật Rework MỚI (dữ liệu cũ vẫn giữ badge tính theo
+      luật CŨ cho tới khi backfill).
+- [ ] Cân nhắc viết script backfill đọc lại `import_log_rows` (Raw Data Viewer)
+      để khôi phục dữ liệu mẻ gốc từng bị ghi đè ở các dyelot trùng lịch sử
+      trên production (trước khi sửa bug PK `batch_details`) — KHÔNG bắt buộc,
+      dữ liệu vẫn còn nguyên trong `import_log_rows`, chỉ chưa phản ánh vào
+      `batch_details`/báo cáo cho tới khi backfill. `supabase/migrate_batch_details_
+      primary_key.sql` ĐÃ CHẠY trên Supabase production (2026-09-22).
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn
       trong yêu cầu gốc của Permission Model, chưa triển khai để tập trung
       đúng phạm vi bắt buộc.

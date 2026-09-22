@@ -1,6 +1,50 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-22 (tối) — **BUG THẬT phát hiện + sửa TẬN GỐC schema**: người
+**Cập nhật lần cuối:** 2026-09-22 (khuya) — **Đổi công thức phân loại Rework (Bước 2 của
+`classify_batch_badge()`, `reports/cleaning_matrix.py`)** theo yêu cầu người dùng — THAY THẾ
+hoàn toàn cách cũ (`batch_type == 'REWORK' OR log_rework_minutes > 0`) bằng 2 điều kiện dựa
+trên MÃ, nối HOẶC (bản CUỐI, đã qua 2 vòng chỉnh lại theo phản hồi người dùng — xem "Đã hỏi-đáp"
+bên dưới để hiểu vì sao):
+  (a) CHỈ xét khi chữ số CUỐI CÙNG của Dyelot là CHỮ SỐ: khác '0' -> Rework, bằng '0' -> Normal.
+      Dyelot kết thúc bằng CHỮ CÁI (hậu tố như "-WA"/"-KN"/"-DU") KHÔNG tính là tín hiệu Rework
+      — mặc định Normal, kể cả hậu tố lạ chưa từng gặp trong tương lai. "-WA" vẫn trả "CM" riêng
+      ngay ở Bước 1 (không bao giờ chạm quy tắc Rework).
+  (b) Chữ số ĐẦU TIÊN của SapLot > 1 -> Rework, = 1 -> Normal. SapLot rỗng/không bắt đầu bằng
+      chữ số -> KHÔNG tính là tín hiệu Rework từ điều kiện này (an toàn, không bịa).
+**Đã hỏi-đáp qua 2 vòng trước khi chốt** (không tự đoán): vòng 1 hỏi phạm vi áp dụng (chỉ
+`classify_batch_badge()`, KHÔNG đụng `batch_details.is_rework`) + cách xử lý Dyelot không kết
+thúc bằng chữ số — người dùng trả lời ban đầu "kết thúc chữ cái = Rework, trừ -WA(CM)/-KN/-DU
+là ví dụ đã biết"; sau đó người dùng SỬA LẠI ngay: "-KN và -DU là mẻ experiment, các tính toán
+KHÁC thường loại ra, nhưng ở đây xem là Normal" — hỏi lại vòng 2 xác nhận: vì CẢ 3 hậu tố chữ
+cái đã biết (WA/KN/DU) đều KHÔNG phải Rework, quy tắc chung cho "kết thúc chữ cái" chốt lại
+thành mặc định Normal (không còn nhánh "kết thúc chữ cái -> Rework" nữa) — bài học: hỏi lại khi
+phát hiện MỌI ví dụ cụ thể người dùng đưa ra đều mâu thuẫn với quy tắc tổng quát vừa chốt, thay
+vì chỉ sửa từng ví dụ lẻ tẻ. Phạm vi áp dụng (chỉ `classify_batch_badge()`, không đụng cột
+`is_rework` lưu sẵn trong `batch_details` lúc import — cột đó độc lập, chưa dùng hiển thị báo
+cáo nào). Cột `sap_lot` (đã có sẵn trong `batch_details` qua Import Batch Detail, chỉ chưa được
+SELECT ở đây) nay được thêm vào `FIELD_ALIASES` + cả 2 câu SQL nguồn của `recompute_daily()`
+(dòng chính JOIN `availability_logs`, và `_orphan_batch_rows()`) + cả 2 `batch_record` dict.
+**Bug phụ phát hiện + sửa cùng lúc**: `_ensure_batch_details_columns()` (hàm ensure-schema
+RIÊNG của file này, độc lập với `core/batch_importer.py::sync_batch_details()`) vẫn còn
+`CREATE TABLE IF NOT EXISTS batch_details (dyelot TEXT PRIMARY KEY, ...)` — sót lại từ TRƯỚC
+khi đổi khoá `batch_details` sang `id` surrogate (xem mục ngay dưới) — nếu hàm này chạy trước
+(bảng chưa từng tồn tại), sẽ tái tạo lại đúng bug ghi đè vừa sửa. Đã đồng bộ sang
+`id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL` (KHÔNG thêm `CREATE UNIQUE INDEX`
+ở đây vì bảng tối giản này thiếu cột `machine`/`start_time` — index đó chỉ cần cho luồng ghi,
+không cần cho đọc). Verify: file test MỚI `tests/test_rework_classification.py` (unit
+`classify_batch_badge()` thuần 13 case + tích hợp `recompute_daily()` end-to-end xác nhận
+`sap_lot` đi đúng đường JOIN thật) PASS 100%, cập nhật `tests/verify_rollup_parity.py` (thêm
+`sap_lot` vào SQL/batch_record của `legacy_get_cleaning_matrix()` — hàm này gọi TRỰC TIẾP
+`classify_batch_badge()` thật nên tự động ăn theo luật mới, chỉ cần đồng bộ nguồn `sap_lot` để
+không thiếu dữ liệu so với `recompute_daily()` thật). Đối chiếu tay với mẻ C260659920 (file mẫu
+điều tra ở mục dưới): cả 2 lần chạy (gốc + redye) đều có SapLot="1000092724" (đầu '1') VÀ Dyelot
+kết thúc '0' -> CẢ 2 vẫn phân loại Normal theo luật mới (khớp đúng hiểu biết đã có "redye khác
+Rework"). Full regression 13 file test PASS 100%. **Việc tiếp theo**: sau khi deploy, PHẢI chạy
+`flask rebuild-summaries` (hoặc CLI tương đương trên production) để tính lại toàn bộ
+`cleaning_mc_daily_summary` lịch sử theo luật Rework MỚI — dữ liệu cũ đã lưu sẵn badge theo luật
+CŨ sẽ không tự cập nhật cho tới khi backfill.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-22 (tối) — **BUG THẬT phát hiện + sửa TẬN GỐC schema**: người
 dùng report mẻ `C260659920` (file mẫu `tests/fixtures/sample_imports/Batch_202681092911.xlsx`)
 hiển thị sai ngày sản xuất (hệ thống ra 07/08/2026, người dùng kiểm tra tay ra 01/08/2026).
 Điều tra phát hiện file gốc có **2 dòng THẬT cho CÙNG 1 Dyelot** — mẻ gốc bị NG kết thúc

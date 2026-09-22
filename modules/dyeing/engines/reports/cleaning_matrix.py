@@ -29,6 +29,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     # khảo sát dữ liệu thật cho thấy đây là tín hiệu Rework đáng tin cậy nhất vì
     # batch_type/is_rework từ file Batch Detail hầu như luôn rỗng ("Unknown").
     "log_rework_minutes": ("log_rework_minutes",),
+    "sap_lot": ("SapLot", "sap_lot"),
 }
 
 # Toàn bộ 11 mã badge hợp lệ (dùng để log kiểm tra đầu ra).
@@ -94,20 +95,25 @@ def classify_batch_badge(batch: Mapping[str, Any]) -> str:
         # Fallback mặc định khi hoàn toàn không có thông tin -> 'M', TUYỆT ĐỐI không phải 'D'.
         base = "M"
 
-    # Bước 2: Xác định trạng thái Rework — CHỈ dựa vào nhãn khai báo (batch_type='Rework')
-    # hoặc tín hiệu đo thực tế (log_rework_minutes, tức availability_logs.rework_hour —
-    # số phút Rework THẬT SỰ ghi nhận trong ca chạy máy). KHÔNG dùng cờ `redye`: ReDye nghĩa
-    # là mẻ quay LẠI máy nhuộm để chạy một QUY TRÌNH KHÁC (nhuộm lại màu/xử lý bổ sung theo
-    # kế hoạch), KHÔNG đồng nghĩa với Rework (sửa lỗi/chạy lại do hỏng) — batch_type='Normal'
-    # kèm redye=1 là tình huống hợp lệ, không phải mẻ lỗi (bug đã phát hiện qua báo cáo thực
-    # tế: mẻ C260661030, xem memory-bank/activeContext.md).
-    batch_type = _get_field(batch, "batch_type").upper()
-    log_rework_raw = _get_field(batch, "log_rework_minutes")
-    try:
-        log_rework_minutes = float(log_rework_raw) if log_rework_raw else 0.0
-    except ValueError:
-        log_rework_minutes = 0.0
-    is_rework = batch_type == "REWORK" or log_rework_minutes > 0
+    # Bước 2: Xác định trạng thái Rework — 2 điều kiện dựa trên MÃ (Dyelot/SapLot), THAY THẾ
+    # hoàn toàn cách cũ (batch_type='Rework' HOẶC log_rework_minutes>0) theo yêu cầu người dùng
+    # (2026-09-22 bản 3):
+    #   (a) CHỈ xét khi chữ số CUỐI CÙNG của Dyelot là CHỮ SỐ: khác '0' -> Rework, bằng '0' ->
+    #       Normal. Dyelot kết thúc bằng CHỮ CÁI (hậu tố như "-WA"/"-KN"/"-DU" — mẻ rửa máy/mẻ
+    #       thử nghiệm "experiment" hay bị loại khỏi tính toán khác) KHÔNG tính là tín hiệu
+    #       Rework từ điều kiện này (mặc định Normal, kể cả hậu tố lạ chưa từng gặp — người
+    #       dùng xác nhận rõ, "-WA" vẫn trả "CM" riêng ở Bước 1, không bao giờ chạm tới đây).
+    #   (b) Chữ số ĐẦU TIÊN của SapLot > 1 -> Rework, = 1 -> Normal. SapLot rỗng/không bắt đầu
+    #       bằng chữ số -> KHÔNG tính là tín hiệu Rework từ điều kiện này (an toàn, không bịa).
+    # 2 điều kiện nối bằng HOẶC — chỉ cần 1 trong 2 báo Rework là đủ.
+    dyelot_rework = bool(dyelot) and dyelot[-1].isdigit() and dyelot[-1] != "0"
+
+    sap_lot = _get_field(batch, "sap_lot")
+    sap_lot_rework = False
+    if sap_lot and sap_lot[0].isdigit():
+        sap_lot_rework = int(sap_lot[0]) > 1
+
+    is_rework = dyelot_rework or sap_lot_rework
 
     # Bước 4: Ghép mã badge cuối cùng.
     return f"{base}R" if is_rework else base
@@ -130,14 +136,21 @@ def _ensure_batch_details_columns(conn: Any) -> None:
     """CHỈ chạy CREATE TABLE ở SQLite — ở Postgres `batch_details`/`machines` đã có sẵn qua
     `supabase/schema.sql` (đầy đủ cột hơn bản tối giản này, vốn chỉ để tự vá DB SQLite cũ)."""
     if get_dialect() == "sqlite":
+        # id surrogate PK (KHÔNG còn `dyelot TEXT PRIMARY KEY`) — đồng bộ với schema mới của
+        # `core/batch_importer.py::sync_batch_details()` (1 dyelot có thể có NHIỀU dòng, VD mẻ
+        # gốc + mẻ redye). Bảng thường đã được tạo/migrate trước qua `core.batch_importer.
+        # init_app()` lúc app khởi động, nhưng vẫn cần CREATE TABLE ĐÚNG schema ở đây phòng khi
+        # hàm này chạy trước (batch_details chưa từng tồn tại) — nếu tạo sai schema cũ ở đây,
+        # `batch_details_join_sql()` (tham chiếu cột `id`) sẽ lỗi "no such column".
         conn.execute("""
             CREATE TABLE IF NOT EXISTS batch_details (
-                dyelot TEXT PRIMARY KEY, shade TEXT, colour_no TEXT, batch_type TEXT, is_rework INTEGER DEFAULT 0,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dyelot TEXT NOT NULL, shade TEXT, colour_no TEXT, batch_type TEXT, is_rework INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
     batch_columns = {row["name"] for row in conn.execute("PRAGMA table_info(batch_details)")}
-    for column, definition in (("colour_no", "TEXT"), ("is_rework", "INTEGER NOT NULL DEFAULT 0"), ("recipe_no", "TEXT"), ("customer_color", "TEXT")):
+    for column, definition in (("colour_no", "TEXT"), ("is_rework", "INTEGER NOT NULL DEFAULT 0"), ("recipe_no", "TEXT"), ("customer_color", "TEXT"), ("sap_lot", "TEXT")):
         if column not in batch_columns:
             conn.execute(f"ALTER TABLE batch_details ADD COLUMN {column} {definition}")
     machine_columns = {row["name"] for row in conn.execute("PRAGMA table_info(machines)")}
@@ -220,6 +233,7 @@ def _orphan_batch_rows(conn: Any, day_str: str, batch_columns: set[str]) -> list
              {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
              COALESCE(b.shade, '') AS shade, COALESCE(b.colour_no, '') AS colour_no,
              COALESCE(b.recipe_no, '') AS recipe_no, COALESCE(b.customer_color, '') AS customer_color,
+             COALESCE(b.sap_lot, '') AS sap_lot,
              COALESCE(b.is_rework, 0) AS is_rework,
              COALESCE(m.machine_code, b.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
              m.capacity_kg AS configured_capacity_kg,
@@ -265,6 +279,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
              a.batch_ref_no, a.batch, {sequence_expression} AS sequence_order, COALESCE(b.shade, '') AS shade,
              COALESCE(b.colour_no, '') AS colour_no, COALESCE(b.customer_color, '') AS customer_color, COALESCE(b.batch_type, '') AS batch_type,
              COALESCE(b.recipe_no, '') AS recipe_no,
+             COALESCE(b.sap_lot, '') AS sap_lot,
              {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
              COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref,
              COALESCE(m.machine_code, a.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
@@ -295,6 +310,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             "recipe_no": row["recipe_no"],
             "customer_color": row["customer_color"],
             "log_rework_minutes": row["log_rework_minutes"],
+            "sap_lot": row["sap_lot"],
         }
         badge = classify_batch_badge(batch_record)
         is_rework = badge.endswith("R")
@@ -318,6 +334,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             "recipe_no": row["recipe_no"],
             "customer_color": row["customer_color"],
             "log_rework_minutes": 0,
+            "sap_lot": row["sap_lot"],
         }
         badge = classify_batch_badge(batch_record)
         is_rework = badge.endswith("R")
