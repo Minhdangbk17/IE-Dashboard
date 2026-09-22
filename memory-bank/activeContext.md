@@ -1,6 +1,52 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-22 (khuya) — **Đổi công thức phân loại Rework (Bước 2 của
+**Cập nhật lần cuối:** 2026-09-23 — **Đổi công thức tab "Summary" của "Batch Per Day by
+Machine"** (`get_batch_summary()`, `reports/cleaning_matrix.py`) theo yêu cầu người dùng: từ 8
+xuống rồi lên lại **9 dòng Category cố định**, đổi để dùng ĐÚNG NGUYÊN định nghĩa đã có sẵn ở
+tab "Detail" (`get_cleaning_matrix()`, cột "No. of normal dyeing batch"/"Cleaning MC Ratio"/
+"No. of R&D batch"/"Rework batch" trên bảng lịch máy — người dùng chỉ thẳng "vì summary là
+tổng hợp lại" tab Detail, không tự đặt tiêu chí riêng nữa):
+  - **"No. Dyeing machine batch"** đổi tên thành **"No. of normal dyeing batch"** — ĐỔI Ý
+    NGHĨA từ đếm Normal+Rework (loại CM) sang CHỈ đếm Normal THẬT (loại CẢ CM, Rework, VÀ
+    R&D) — khớp chính xác điều kiện `elif not is_rework_badge and normalized_batch_type in
+    {"normal","unknown",""}` đã dùng ở Detail.
+  - **"Cleaning MC Ratio"** đổi công thức từ `(Normal+Rework)/Cleaning MC` sang
+    **`Normal/Cleaning MC`** — khớp `item["cleaning_ratio"]` ở Detail.
+  - **Thêm dòng MỚI "No. of R&D batch"** — đếm mẻ `batch_type` thuộc {r&d, rd, research,
+    development}, khớp `item["rd_batches"]` ở Detail. Đây là CỜ RIÊNG, KHÔNG loại trừ lẫn
+    Rework (1 mẻ dữ liệu thật có thể vừa Rework vừa R&D).
+  - **"Rework ratio"** đổi công thức từ `Rework/(Normal+Rework)` sang **`Normal/Rework`**
+    (ĐẢO NGƯỢC tử số/mẫu số so với bản cũ — người dùng xác nhận rõ ràng, xem lịch sử hỏi-đáp
+    2 vòng trước khi chốt bên dưới). Rework ratio KHÔNG có ở tab Detail (không có gì để đối
+    chiếu), là chỉ số CHỈ RIÊNG Summary.
+  - **"Daily batch/day"** đổi mẫu số/tử số Normal-only theo đúng "No. of normal dyeing batch"
+    mới (trước đó dùng Normal+Rework).
+  - **"No. Dyeing machine"** (đếm máy) và **"No. total day"** GIỮ NGUYÊN không đổi (không
+    thuộc phạm vi yêu cầu — máy có >=1 mẻ THẬT bất kỳ loại nào (Normal/Rework/R&D, loại CM)
+    vẫn được tính vào "đang hoạt động dyeing tháng đó").
+**Quy trình hỏi-đáp 2 vòng trước khi code** (không tự đoán, đúng chủ trương dự án):
+vòng 1 hỏi phạm vi ảnh hưởng tới "Cleaning MC Ratio"/"Rework ratio" (2 công thức đang dùng
+chung số liệu với dòng bị đổi) — người dùng trả lời bằng cách CHỈ THẲNG sang cột thật đã có ở
+tab Detail thay vì chọn 1 trong 2 phương án đã đề xuất (phát hiện ra "No. of R&D batch" là
+khái niệm ĐÃ CÓ SẴN ở Detail — `item["rd_batches"]`/cột header `<th>No. of R&D batch</th>`
+trong `cleaning_matrix_view.html` — nhưng CHƯA từng lộ ra Summary); vòng 2 hỏi riêng mẫu số
+"Rework ratio" (duy nhất Detail không có để đối chiếu) — người dùng từ chối câu hỏi trắc
+nghiệm, trả lời thẳng công thức chính xác `Normal/Rework` (đảo ngược so với giả định ban đầu
+của Claude là `Rework/Normal`). **Bài học quy trình**: khi người dùng nói "tham khảo cột X ở
+tab Y" thay vì chọn option đã đưa ra, PHẢI đọc code/template của tab Y để lấy ĐÚNG định nghĩa
+thật (không suy đoán từ tên cột) trước khi tiếp tục — đã đọc trực tiếp
+`get_cleaning_matrix()` (dòng ~477-506) và `cleaning_matrix_view.html` (dòng 325, header bảng
+per-machine) để xác nhận đúng 5 cột + thứ tự thật, không đoán từ tên gợi ý.
+File test MỚI `tests/test_batch_summary_formula.py` (2 kịch bản: 1 group với đủ Normal/
+Rework/R&D/CM trong tháng, và "All Groups" cộng dồn đúng) PASS 100%. Smoke test qua Flask
+test client thật (route `/dyeing/reports/api/batch-summary` VÀ `/dyeing/reports/api/
+batch-summary/export`) đều 200, đúng 9 category tên mới theo thứ tự. Full regression 14 file
+test PASS 100%. **Việc tiếp theo**: sau khi deploy, chạy lại Rebuild Summaries (`/admin/
+data-tools`) KHÔNG bắt buộc cho thay đổi này riêng (không đổi cấu trúc/nội dung
+`cleaning_mc_daily_summary`, chỉ đổi cách ĐỌC/tổng hợp ở tầng `get_batch_summary()` — dữ liệu
+Detail tab không đổi gì).
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-22 (khuya) — **Đổi công thức phân loại Rework (Bước 2 của
 `classify_batch_badge()`, `reports/cleaning_matrix.py`)** theo yêu cầu người dùng — THAY THẾ
 hoàn toàn cách cũ (`batch_type == 'REWORK' OR log_rework_minutes > 0`) bằng 2 điều kiện dựa
 trên MÃ, nối HOẶC (bản CUỐI, đã qua 2 vòng chỉnh lại theo phản hồi người dùng — xem "Đã hỏi-đáp"

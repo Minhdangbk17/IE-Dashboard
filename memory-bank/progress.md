@@ -942,6 +942,17 @@
       `tests/test_rework_classification.py` PASS 100%. Sau khi deploy PHẢI
       chạy `flask rebuild-summaries` để backfill lại `cleaning_mc_daily_summary`
       lịch sử theo luật mới (xem `activeContext.md`).
+- [x] **Sửa công thức tab "Summary" khớp đúng định nghĩa tab "Detail" —
+      HOÀN THÀNH 2026-09-23**: "No. Dyeing machine batch" đổi tên thành
+      "No. of normal dyeing batch" (chỉ đếm Normal thật, loại cả CM/Rework/
+      R&D — trước đó gộp cả Rework); "Cleaning MC Ratio" đổi thành
+      Normal/Cleaning MC (trước đó (Normal+Rework)/Cleaning MC); thêm dòng
+      MỚI "No. of R&D batch"; "Rework ratio" đổi thành Normal/Rework (đảo
+      ngược tử số/mẫu số so với bản cũ Rework/(Normal+Rework));
+      "Daily batch/day" đổi sang tính theo Normal-only. `SUMMARY_CATEGORIES`
+      từ 8 lên 9 dòng. File test mới `tests/test_batch_summary_formula.py`
+      PASS 100%, full regression 14 file test PASS 100%. Chi tiết đầy đủ +
+      lịch sử hỏi-đáp 2 vòng ở `activeContext.md`.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy `flask rebuild-summaries` trên production SAU KHI deploy bản có

@@ -654,58 +654,77 @@ ALL_GROUPS_LABEL = "All Groups"
 SUMMARY_CATEGORIES = (
     "No. total day",
     "No. Dyeing machine",
-    "No. time Cleaning MC",
+    "No. of time Cleaning MC",
+    "No. of normal dyeing batch",
     "Cleaning MC Ratio",
+    "No. of R&D batch",
     "Rework batch",
     "Rework ratio",
-    "No. Dyeing machine batch",
     "Daily batch/day",
 )
 
 
 def _empty_summary_bucket() -> dict[str, Any]:
-    return {"cm": 0, "dyeing_batches": 0, "rework": 0, "machines": set()}
+    return {"cm": 0, "normal": 0, "rd": 0, "rework": 0, "machines": set()}
 
 
 def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
-    """Dựng 8 dòng Category cho 1 Group Machine (hoặc cho All Groups) — `month_data` đã là
+    """Dựng 9 dòng Category cho 1 Group Machine (hoặc cho All Groups) — `month_data` đã là
     accumulator THEO ĐÚNG group đó (hoặc đã cộng dồn sẵn cho All Groups, xem
     get_batch_summary()). Mọi tỷ lệ tính theo Sum/Sum của CHÍNH tháng đó (KHÔNG suy từ tỷ lệ
-    trung bình cộng — cùng nguyên tắc Sum/Sum thống nhất đã áp dụng cho batch_matrix/downtime)."""
+    trung bình cộng — cùng nguyên tắc Sum/Sum thống nhất đã áp dụng cho batch_matrix/downtime).
+
+    "No. of normal dyeing batch"/"Cleaning MC Ratio"/"No. of R&D batch"/"Rework batch" ĐÚNG
+    NGUYÊN định nghĩa đã dùng ở tab "Detail" (`get_cleaning_matrix()` — cột "No. of normal
+    dyeing batch"/"Cleaning MC Ratio"/"No. of R&D batch"/"Rework batch" trên bảng lịch máy) —
+    Summary chỉ CỘNG DỒN THEO THÁNG cùng 1 định nghĩa, không tự đặt tiêu chí riêng (người dùng
+    yêu cầu rõ 2026-09-23, xem activeContext.md)."""
     values: dict[str, list[Any]] = {category: [] for category in SUMMARY_CATEGORIES}
     for month in range(1, 13):
         bucket = month_data.get(month) or _empty_summary_bucket()
         days = calendar.monthrange(year, month)[1]
         n_machines = len(bucket["machines"])
         cm = bucket["cm"]
-        dyeing_batches = bucket["dyeing_batches"]
+        normal = bucket["normal"]
+        rd = bucket["rd"]
         rework = bucket["rework"]
         values["No. total day"].append(days)
         values["No. Dyeing machine"].append(n_machines)
-        values["No. time Cleaning MC"].append(cm)
-        values["Cleaning MC Ratio"].append(round(dyeing_batches / cm, 2) if cm else None)
+        values["No. of time Cleaning MC"].append(cm)
+        values["No. of normal dyeing batch"].append(normal)
+        values["Cleaning MC Ratio"].append(round(normal / cm, 2) if cm else None)
+        values["No. of R&D batch"].append(rd)
         values["Rework batch"].append(rework)
-        values["Rework ratio"].append(round(rework / dyeing_batches, 2) if dyeing_batches else None)
-        values["No. Dyeing machine batch"].append(dyeing_batches)
-        values["Daily batch/day"].append(round(dyeing_batches / (days * n_machines), 2) if (days and n_machines) else None)
+        values["Rework ratio"].append(round(normal / rework, 2) if rework else None)
+        values["Daily batch/day"].append(round(normal / (days * n_machines), 2) if (days and n_machines) else None)
     return [{"category": category, "values": values[category]} for category in SUMMARY_CATEGORIES]
 
 
 def get_batch_summary(year: int) -> dict[str, Any]:
-    """Bảng Summary: Group Machine x Category (8 dòng cố định) x 12 tháng của `year`.
+    """Bảng Summary: Group Machine x Category (9 dòng cố định) x 12 tháng của `year`.
 
     Nguồn dữ liệu: TÁI DÙNG `cleaning_mc_daily_summary` đã có (grain 1 mẻ/ngày, đã có
-    badge/is_rework/machine từ Daily Rollup) — LEFT JOIN `machines` lấy `group_mc` tại thời
-    điểm đọc (giống hệt cách get_cleaning_matrix() tra Machine Master), gộp theo THÁNG thay
-    vì theo ngày. KHÔNG cần bảng mới, KHÔNG cần luồng import mới.
+    badge/is_rework/batch_type/machine từ Daily Rollup) — LEFT JOIN `machines` lấy `group_mc`
+    tại thời điểm đọc (giống hệt cách get_cleaning_matrix() tra Machine Master), gộp theo
+    THÁNG thay vì theo ngày. KHÔNG cần bảng mới, KHÔNG cần luồng import mới.
 
-    "No. Dyeing machine" đếm SỐ MÁY DISTINCT có >=1 mẻ NHUỘM THẬT (Normal/Rework, loại CM)
-    trong tháng — máy chỉ chạy CM tháng đó KHÔNG được tính (đã xác nhận với người dùng).
-    Tính bằng set() theo từng (group, tháng) rồi lấy len(), KHÔNG cộng dồn số đếm sẵn — tránh
-    đúng bug COUNT DISTINCT kinh điển của dự án (cộng số đếm distinct từ nhiều nhóm con có
-    thể đếm trùng nếu giao nhau). Ở đây AN TOÀN cộng dồn set MACHINES giữa các Group MC lên
-    cấp "All Groups" vì Group Machine là PHÂN HOẠCH không giao nhau (1 máy chỉ thuộc đúng 1
-    Group tại 1 thời điểm) — hợp (union) các set rời nhau = tổng độ lớn, không đếm trùng.
+    "No. of normal dyeing batch"/"No. of time Cleaning MC"/"Cleaning MC Ratio"/"No. of R&D
+    batch"/"Rework batch" dùng ĐÚNG NGUYÊN 4 điều kiện phân loại của tab "Detail"
+    (`get_cleaning_matrix()`, xem đoạn phân loại `normal`/`rd_batches`/`is_rework_badge` ở đó)
+    — Summary CHỈ cộng dồn theo tháng, KHÔNG tự định nghĩa lại tiêu chí "Normal"/"R&D" riêng
+    (người dùng yêu cầu rõ 2026-09-23, tránh 2 số "Normal"/"Cleaning MC Ratio" lệch nhau giữa
+    2 tab). "Normal" = badge != CM, KHÔNG phải Rework, VÀ batch_type thuộc {normal, unknown,
+    rỗng} (loại cả R&D). "R&D" = batch_type thuộc {r&d, rd, research, development} — CỜ RIÊNG,
+    không loại trừ lẫn "Rework" (1 mẻ có thể vừa Rework vừa R&D nếu dữ liệu thật vậy).
+
+    "No. Dyeing machine" đếm SỐ MÁY DISTINCT có >=1 mẻ NHUỘM THẬT (Normal/Rework/R&D, loại
+    CM) trong tháng — máy chỉ chạy CM tháng đó KHÔNG được tính (đã xác nhận với người dùng,
+    ĐỊNH NGHĨA NÀY KHÔNG ĐỔI so với bản trước — chỉ 4 dòng Category ở trên đổi). Tính bằng
+    set() theo từng (group, tháng) rồi lấy len(), KHÔNG cộng dồn số đếm sẵn — tránh đúng bug
+    COUNT DISTINCT kinh điển của dự án (cộng số đếm distinct từ nhiều nhóm con có thể đếm
+    trùng nếu giao nhau). Ở đây AN TOÀN cộng dồn set MACHINES giữa các Group MC lên cấp "All
+    Groups" vì Group Machine là PHÂN HOẠCH không giao nhau (1 máy chỉ thuộc đúng 1 Group tại 1
+    thời điểm) — hợp (union) các set rời nhau = tổng độ lớn, không đếm trùng.
     """
     conn = get_db()
     _ensure_batch_details_columns(conn)
@@ -714,7 +733,7 @@ def get_batch_summary(year: int) -> dict[str, Any]:
     from_date = f"{year:04d}-01-01"
     to_date = f"{year:04d}-12-31"
     rows = execute_query(
-        "SELECT production_date, machine, badge, is_rework FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
+        "SELECT production_date, machine, badge, is_rework, batch_type FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
         [from_date, to_date],
     )
     master_rows = execute_query("SELECT machine_id, machine_code, group_mc FROM machines WHERE domain = 'dyeing'", [])
@@ -725,7 +744,7 @@ def get_batch_summary(year: int) -> dict[str, Any]:
             continue
         group_by_norm[_normalize_code(code)] = (master["group_mc"] or "").strip() or None
 
-    # accumulators[group_label][month] = {"cm", "dyeing_batches", "rework", "machines": set()}
+    # accumulators[group_label][month] = {"cm", "normal", "rd", "rework", "machines": set()}
     accumulators: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
     distinct_groups: set[str] = set()
     for row in rows:
@@ -742,12 +761,17 @@ def get_batch_summary(year: int) -> dict[str, Any]:
         group_label = group_by_norm.get(norm) or UNCLASSIFIED_GROUP_LABEL
         distinct_groups.add(group_label)
         bucket = accumulators[group_label].setdefault(month, _empty_summary_bucket())
+        normalized_batch_type = str(row["batch_type"] or "").strip().lower() or "normal"
+        is_rework_badge = bool(row["is_rework"])
         if row["badge"] == "CM":
             bucket["cm"] += 1
         else:
-            bucket["dyeing_batches"] += 1
             bucket["machines"].add(norm)
-            if row["is_rework"]:
+            if not is_rework_badge and normalized_batch_type in {"normal", "unknown", ""}:
+                bucket["normal"] += 1
+            if normalized_batch_type in {"r&d", "rd", "research", "development"}:
+                bucket["rd"] += 1
+            if is_rework_badge:
                 bucket["rework"] += 1
 
     ordered_groups = [g for g in CANONICAL_GROUP_MC_ORDER if g in distinct_groups]
@@ -764,7 +788,8 @@ def get_batch_summary(year: int) -> dict[str, Any]:
         for month, bucket in accumulators[group_label].items():
             target = all_groups_data.setdefault(month, _empty_summary_bucket())
             target["cm"] += bucket["cm"]
-            target["dyeing_batches"] += bucket["dyeing_batches"]
+            target["normal"] += bucket["normal"]
+            target["rd"] += bucket["rd"]
             target["rework"] += bucket["rework"]
             target["machines"] |= bucket["machines"]
     groups_output.append({"group": ALL_GROUPS_LABEL, "rows": _build_summary_category_rows(year, all_groups_data)})
