@@ -1,6 +1,88 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-23 (tiếp) — Thêm nút **"Export Excel"** cho tab Summary (mục
+**Cập nhật lần cuối:** 2026-09-22 (tối) — **BUG THẬT phát hiện + sửa TẬN GỐC schema**: người
+dùng report mẻ `C260659920` (file mẫu `tests/fixtures/sample_imports/Batch_202681092911.xlsx`)
+hiển thị sai ngày sản xuất (hệ thống ra 07/08/2026, người dùng kiểm tra tay ra 01/08/2026).
+Điều tra phát hiện file gốc có **2 dòng THẬT cho CÙNG 1 Dyelot** — mẻ gốc bị NG kết thúc
+2026-08-01 08:43 (cần redye) và mẻ redye (`ReDye=1`) kết thúc 2026-08-08 06:27:50 (bị cắt ca
+7h sáng nên `production_date` tính đúng thành 2026-08-07, khớp CHÍNH XÁC số hệ thống đã hiện —
+KHÔNG phải bug tính production_date). Bug THẬT nằm ở chỗ khác: bảng `batch_details` khai báo
+`dyelot TEXT PRIMARY KEY` — chỉ giữ được 1 dòng/Dyelot, nên khi Dyelot chạy lại thật (redye),
+lần import SAU ghi đè MẤT dữ liệu lần chạy TRƯỚC (2 lớp ghi đè: dedupe trong bộ nhớ theo dyelot
+trước khi ghi DB VÀ `INSERT...ON CONFLICT(dyelot) DO UPDATE`, cả 2 đều tại
+`core/batch_importer.py::sync_batch_details()` + `core/import_rows_service.py::
+update_import_row()`). Người dùng xác nhận muốn coi 2 lần chạy là **2 bản ghi TÁCH BIỆT**
+(không phải "dyelot = trạng thái mới nhất") — đã lập kế hoạch qua Plan Mode (khảo sát bằng 2
+Explore agent song song trước khi thiết kế) rồi triển khai đầy đủ:
+
+- **Khoá mới `batch_details`**: `id INTEGER PRIMARY KEY AUTOINCREMENT` (Postgres: `id bigint
+  generated always as identity`) + `UNIQUE(dyelot, machine, start_time)` — tái dùng NGUYÊN VẸN
+  quy ước đã có sẵn cho đúng lớp bài toán này (`availability_logs` đã dùng `id` + `UNIQUE(batch_
+  ref_no, machine, start_time)`; `performance_logs` upsert qua `key_fields=("dyelot","machine",
+  "start_time")` trong `core/excel_importer.py::save_to_db()`), không phát minh quy ước mới.
+  SQLite không ALTER được PRIMARY KEY tại chỗ -> `core/batch_importer.py::
+  _migrate_batch_details_primary_key()` dựng lại bảng (RENAME -> CREATE mới (tự ALTER-thêm đủ
+  cột từ `BATCH_DETAIL_FIELDS`, không hardcode DDL trùng lặp) -> INSERT copy -> DROP -> commit
+  tường minh), cùng pattern `downtime/service.py::_migrate_case_notes_context_column()`.
+  **Migrate chạy NGAY LÚC APP KHỞI ĐỘNG** (`core/batch_importer.py::init_app()`, đăng ký trong
+  `app.py` cạnh `auth.init_app()`) — KHÔNG chỉ lazy trong `sync_batch_details()`, vì nhiều
+  Engine ĐỌC `batch_details` mà không bao giờ gọi hàm import (nếu chỉ migrate lazy khi import,
+  DB cũ chưa import lại Batch sau bản này sẽ lỗi "no such column: b.id" ngay khi mở báo cáo).
+  Postgres: file mới `supabase/migrate_batch_details_primary_key.sql` (chạy TAY qua SQL Editor,
+  đúng khuôn mẫu `migrate_case_notes_context.sql`) — **CHƯA CHẠY trên Supabase production**,
+  PHẢI chạy TRƯỚC khi deploy code mới (nếu không `ON CONFLICT(dyelot, machine, start_time)` sẽ
+  lỗi vì Postgres chưa có unique index đó).
+- **File mới `core/batch_details_match.py::batch_details_join_sql()`** — helper SQL hạ tầng
+  dùng chung (như `core/production_time.py`, KHÔNG vi phạm Vertical Slice vì không mang logic
+  nghiệp vụ riêng Engine nào): mọi nơi JOIN `batch_details` theo dyelot làm bảng phụ (không phải
+  bảng `FROM`) giờ PHẢI chọn ĐÚNG 1 dòng (ưu tiên `end_time` khớp chính xác — cùng 1 sự kiện
+  thật — fallback dòng `end_time` mới nhất), nếu không 1 dyelot có nhiều dòng sẽ nhân đôi kết
+  quả JOIN, gây đếm trùng SUM/COUNT ở nhiều báo cáo. Áp dụng ở 7 file:
+  `downtime/service.py::_brand_program_join()` (1 hàm dùng chung, tự sửa cả 7 call site nhờ
+  thêm tham số `end_time_expr`), `reports/cleaning_matrix.py` (JOIN chính, dùng bản
+  nhiều-dyelot-expr cho 2 nhánh OR batch_ref_no/batch — **KHÔNG sửa** `_orphan_batch_rows()`,
+  `batch_details` là bảng dẫn dắt ở đó nên mỗi dòng kể cả mồ côi vẫn ĐÚNG Ý ĐỒ MỚI),
+  `batch_matrix/service.py` (3 chỗ giống hệt), `batch_matrix/batch_day_trend.py`,
+  `rft/service.py::_rft_rows()`, `tank_loading/service.py::_BRAND_PROGRAM_JOIN_SQL`.
+  `dca_cost/service.py::_dca_rows()` hướng NGƯỢC LẠI (batch_details là bảng `FROM`, mỗi dòng =
+  1 lần chạy thật, ĐÚNG Ý ĐỒ MỚI — không sửa phần đó), chỉ sửa `LEFT JOIN availability_logs`
+  (viết inline riêng, không dùng chung helper vì chỉ 1 nơi cần chiều ngược).
+  **Bug kỹ thuật phát hiện khi viết code** (không phải giả thuyết, verify bằng thực nghiệm):
+  SQLite KHÔNG cho phép `ORDER BY` của subquery trong `ON` clause của JOIN tham chiếu cột bảng
+  NGOÀI (dù WHERE tương quan y hệt lại chạy bình thường) — `SELECT ... WHERE x=outer.y ORDER BY
+  CASE WHEN z=outer.w THEN 0 ELSE 1 END` ném `no such column: outer.w`. Sửa bằng cấu trúc
+  `COALESCE(subquery1 WHERE tương quan, subquery2 ORDER BY KHÔNG tương quan)` thay vì 1
+  subquery + ORDER BY tương quan — áp dụng cho cả `batch_details_join_sql()` LẪN bản inline
+  ngược chiều của `dca_cost/service.py` (cùng lỗi y hệt, phát hiện qua chạy test thật).
+  `core/brand_program_importer.py` (JOIN chỉ dùng để tính SET `affected_dates` cho
+  `trigger_recompute`, không tính KPI) và `core/batch_importer.py`'s `synced_with_availability_
+  cnt` counter (metric ước lượng đã biết từ trước) — CỐ TÌNH không sửa, out of scope.
+  **Không sửa** (đã an toàn sẵn — có `DISTINCT`/`COUNT DISTINCT`): `core/rollup.py::
+  _all_known_production_dates()`, `downtime/service.py::_daily_batches()`/
+  `_available_fabric_types_and_brand_programs()`/`get_daily_batch_count()`.
+- **Test**: cập nhật DDL fixture `dyelot TEXT PRIMARY KEY` -> `id` + unique index ở 6 file test
+  cũ + `tests/verify_rollup_parity.py` (2 JOIN legacy phải đổi y hệt production để parity check
+  không "khớp giả" do cả 2 bên cùng đếm trùng). Thêm kịch bản "1 dyelot có 2 dòng batch_details
+  (mẻ gốc + redye)" vào `test_batch_matrix_formula.py`/`test_dca_cost.py`/
+  `test_rft_classification.py`/`test_downtime_brand_fabric_filters.py` (file cuối thêm dù
+  ngoài dự kiến ban đầu — đây là JOIN rủi ro CAO NHẤT, chạy KHÔNG điều kiện ở
+  `recompute_daily()`, ảnh hưởng MỌI category/ngày). File test MỚI `tests/test_batch_importer.py`
+  — test trực tiếp `sync_batch_details()` bằng ĐÚNG file mẫu thật (C260659920): xác nhận sau
+  khi sửa, `batch_details` giữ ĐỦ CẢ 2 dòng (weight 265/253, dye_cost 94.6582/5.1163 đúng dữ
+  liệu gốc) — bug ban đầu người dùng report đã hết tái diễn end-to-end, không chỉ ở tầng đơn vị.
+  Verify thêm: migrate trên bản sao DB SQLite giả lập schema CŨ (có dữ liệu) giữ nguyên dữ liệu
+  + thêm đúng cột/index; chạy thật `create_app()` trên DB dev cục bộ (đã backup trước, xoá sau
+  khi xác nhận an toàn) xác nhận migrate lazy tại startup hoạt động đúng. **Full regression**:
+  cả 11 file trong `tests/` (bao gồm `verify_rollup_parity.py` chạy qua Flask app thật +
+  `test_permission_model.py` subprocess đầy đủ, hit cả `/dyeing/reports/cleaning-matrix`/
+  `/dyeing/batch_matrix/`/`/dyeing/downtime/`/`/dyeing/oee/`/`/dyeing/`/`/graphify/`) PASS 100%.
+  **Việc tiếp theo**: chạy `supabase/migrate_batch_details_primary_key.sql` trên Supabase
+  production TRƯỚC khi deploy code này; sau đó cân nhắc backfill dữ liệu mẻ gốc từng bị ghi đè
+  ở các dyelot trùng lịch sử — KHÔNG bắt buộc phải tìm lại file Excel gốc vì dữ liệu raw của
+  MỌI lần import đã có sẵn trong `import_log_rows` (Raw Data Viewer, lưu theo `row_number` chứ
+  không dedupe theo dyelot) — có thể viết script backfill đọc lại từ đó khi cần.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-23 (tiếp) — Thêm nút **"Export Excel"** cho tab Summary (mục
 ngay dưới đây) — route mới `GET /dyeing/reports/api/batch-summary/export?year=`, hàm
 `export_batch_summary_excel()` (`cleaning_matrix.py`, dùng `openpyxl`, đã có sẵn trong
 `requirements.txt`) sinh file `.xlsx` 1 sheet CÙNG cấu trúc bảng trên UI (cột Group Machine

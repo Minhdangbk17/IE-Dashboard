@@ -50,9 +50,10 @@ def _init_schema(db_path: str) -> None:
     """)
     conn.execute("""
         CREATE TABLE batch_details (
-            dyelot TEXT PRIMARY KEY, dye_cost REAL NOT NULL DEFAULT 0, fabric_type TEXT,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dyelot TEXT NOT NULL, dye_cost REAL NOT NULL DEFAULT 0, fabric_type TEXT,
             shade TEXT, colour_no TEXT, recipe_no TEXT, customer_color TEXT, greige_code TEXT,
-            start_time TEXT, end_time TEXT
+            machine TEXT, start_time TEXT, end_time TEXT
         )
     """)
     conn.commit()
@@ -228,12 +229,56 @@ def _scenario_unknown_date_bucket(failures: list[str]) -> None:
         os.unlink(db_path)
 
 
+def _scenario_duplicate_dyelot_redye(failures: list[str]) -> None:
+    """1 Dyelot chạy 2 lần thật (mẻ gốc NG + mẻ redye, xem điều tra C260659920 trong
+    memory-bank/activeContext.md) PHẢI được đếm là 2 mẻ RIÊNG BIỆT (đúng ý đồ mới của
+    batch_details — không còn ghi đè mất mẻ gốc), KHÔNG bị nhân bản thành 4 (2 batch_details x
+    2 availability_logs) do JOIN capacity_kg. Mỗi availability_logs khớp end_time CHÍNH XÁC với
+    ĐÚNG 1 trong 2 dòng batch_details."""
+    print("\n=== Kịch bản 5: Dyelot chạy 2 lần (mẻ gốc + redye) — đếm ĐỦ 2, KHÔNG nhân bản ===")
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _init_schema(db_path)
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "INSERT INTO availability_logs (batch, capacity_kg, start_time, end_time) VALUES (?, ?, ?, ?)",
+            ("C-REDYE-COST", 600, "2026-09-01 06:00:00", "2026-09-01 08:43:00"),
+        )
+        _insert_batch(
+            conn, dyelot="C-REDYE-COST", dye_cost=94.65, fabric_type="Polyester", shade="Dark",
+            start_time="2026-09-01 06:00:00", end_time="2026-09-01 08:43:00",
+        )
+        conn.execute(
+            "INSERT INTO availability_logs (batch, capacity_kg, start_time, end_time) VALUES (?, ?, ?, ?)",
+            ("C-REDYE-COST", 600, "2026-09-08 06:00:00", "2026-09-08 06:27:00"),
+        )
+        _insert_batch(
+            conn, dyelot="C-REDYE-COST", dye_cost=5.12, fabric_type="Polyester", shade="Dark",
+            start_time="2026-09-08 06:00:00", end_time="2026-09-08 06:27:00",
+        )
+        conn.commit()
+        conn.close()
+
+        app = _make_temp_app(db_path)
+        with app.app_context():
+            data = get_dca_cost_data(capacities="600", group_by="week")
+            close_db()
+
+        kpis = data["fabrics"]["Polyester"]["kpis"]
+        _check("total_batches = 2 (mẻ gốc + redye, KHÔNG bị nhân bản qua JOIN capacity)", kpis["total_batches"], 2, failures)
+        _check("total_dye_cost = 99.77 (94.65 + 5.12, KHÔNG cộng dư)", round(kpis["total_dye_cost"], 2), 99.77, failures)
+    finally:
+        os.unlink(db_path)
+
+
 def main() -> int:
     failures: list[str] = []
     _scenario_classify_color(failures)
     _scenario_formula_and_fabric_scope(failures)
     _scenario_capacity_filter(failures)
     _scenario_unknown_date_bucket(failures)
+    _scenario_duplicate_dyelot_redye(failures)
     print(f"\n{'='*60}\nKẾT QUẢ: {'TẤT CẢ KHỚP' if not failures else f'{len(failures)} CASE LỆCH'}\n{'='*60}")
     return 1 if failures else 0
 

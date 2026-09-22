@@ -54,7 +54,8 @@ def _init_schema(db_path: str) -> None:
     # `availability_logs` không khớp (xem docstring `_rft_rows()`).
     conn.execute("""
         CREATE TABLE batch_details (
-            dyelot TEXT PRIMARY KEY, fabric_type TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dyelot TEXT NOT NULL, fabric_type TEXT, end_time TEXT
         )
     """)
     _ensure_rft_dye_results_table(conn)
@@ -289,6 +290,38 @@ def _scenario_fabric_type_fallback_batch_details(failures: list[str]) -> None:
         os.unlink(db_path)
 
 
+def _scenario_duplicate_dyelot_no_double_count(failures: list[str]) -> None:
+    """1 Dyelot có 2 dòng `batch_details` (mẻ gốc + mẻ redye, xem điều tra C260659920 trong
+    memory-bank/activeContext.md), KHÔNG khớp `availability_logs` nào — đúng population dễ bị
+    lỗi nhân đôi nhất (fallback fabric_type). PHẢI vẫn đếm ĐÚNG 1 mẻ RFT (không nhân đôi thành
+    2 dù JOIN theo dyelot khớp cả 2 dòng batch_details), và chọn fabric_type của dòng end_time
+    MỚI NHẤT (fallback khi không có availability_logs để so khớp end_time chính xác)."""
+    print("\n=== Kịch bản 7: Dyelot có 2 dòng batch_details (mẻ gốc + redye) — RFT KHÔNG đếm trùng ===")
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _init_schema(db_path)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("INSERT INTO batch_details (dyelot, fabric_type, end_time) VALUES ('FB-DUP', 'Cotton', '2026-09-01 08:00:00')")
+        conn.execute("INSERT INTO batch_details (dyelot, fabric_type, end_time) VALUES ('FB-DUP', 'CVC', '2026-09-08 06:00:00')")
+        _insert_rft_row(conn, dyelot="FB-DUP", stage="lab to lab", result_dye="OK", machine_type=">=500kg")
+        conn.commit()
+        conn.close()
+
+        app = _make_temp_app(db_path)
+        with app.app_context():
+            data = get_rft_pivot_data(category="Lab to Lab")
+            close_db()
+
+        rows_by_fabric = {row["fabric_type"]: row for row in data["rows"]}
+        _check("KPI tổng vẫn đếm ĐÚNG 1 mẻ (KHÔNG nhân đôi thành 2)", data["kpis"]["total_batches"], 1, failures)
+        _check("CVC total = 1 (chọn dòng end_time MỚI NHẤT khi không có availability_logs để so khớp)", rows_by_fabric.get("CVC", {}).get("total"), 100.0, failures)
+        _check("Cotton total = 0 (dòng cũ hơn KHÔNG được chọn)", rows_by_fabric.get("Cotton", {}).get("total", 0.0), 0.0, failures)
+    finally:
+        os.unlink(db_path)
+
+
 def main() -> int:
     failures: list[str] = []
     _scenario_stage_mapping(failures)
@@ -297,6 +330,7 @@ def main() -> int:
     _scenario_unknown_date_bucket(failures)
     _scenario_sync_rft_results_end_to_end(failures)
     _scenario_fabric_type_fallback_batch_details(failures)
+    _scenario_duplicate_dyelot_no_double_count(failures)
     print(f"\n{'='*60}\nKẾT QUẢ: {'TẤT CẢ KHỚP' if not failures else f'{len(failures)} CASE LỆCH'}\n{'='*60}")
     return 1 if failures else 0
 

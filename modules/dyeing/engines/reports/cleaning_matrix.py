@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
+from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import execute_query, get_db, get_dialect
 from core.production_time import production_date_sql_expr
@@ -271,7 +272,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
              COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand,
              COALESCE(a.fabric_type, '') AS fabric_type
         FROM availability_logs a
-        LEFT JOIN batch_details b ON lower(trim(b.dyelot)) = lower(trim(a.batch_ref_no)) OR lower(trim(b.dyelot)) = lower(trim(a.batch))
+        {batch_details_join_sql(["a.batch_ref_no", "a.batch"], "a.end_time")}
         LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(a.machine))
         LEFT JOIN brand_program_mapping bp ON lower(trim(bp.greige_code)) = lower(trim(b.greige_code))
         WHERE {shifted_date} = ?

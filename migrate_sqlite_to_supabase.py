@@ -211,15 +211,19 @@ def main() -> int:
                 if key in key_map:
                     availability_id_map[row["id"]] = key_map[key]
 
-        # --- batch_details (khoá tự nhiên: dyelot chính là PK) ---
+        # --- batch_details (khoá tự nhiên: dyelot, machine, start_time — dyelot ĐƠN LẺ không còn
+        # là PK vì 1 dyelot có thể có nhiều lần chạy thật, VD mẻ gốc + mẻ redye) ---
         batch_details_rows = fetch_sqlite_rows(sqlite_conn, "batch_details")
         if batch_details_rows:
-            cols = list(batch_details_rows[0].keys())
+            cols = [c for c in batch_details_rows[0].keys() if c != "id"]
             for row in batch_details_rows:
                 if row.get("import_log_id") is not None:
                     row["import_log_id"] = import_log_id_map.get(row["import_log_id"])
-            update_cols = [c for c in cols if c != "dyelot"]
-            bulk_upsert(pg_cur, "batch_details", cols, batch_details_rows, conflict_cols=("dyelot",), update_cols=update_cols)
+            update_cols = [c for c in cols if c not in ("dyelot", "machine", "start_time")]
+            bulk_upsert(
+                pg_cur, "batch_details", cols, batch_details_rows,
+                conflict_cols=("dyelot", "machine", "start_time"), update_cols=update_cols,
+            )
             log(f"[batch_details] Đã upsert {len(batch_details_rows)} dòng.")
 
         # --- downtime_daily_summary (khoá tự nhiên: production_date, capacity_kg, category) ---

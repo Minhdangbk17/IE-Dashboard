@@ -22,6 +22,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import app as appmod  # noqa: E402
+from core.batch_details_match import batch_details_join_sql  # noqa: E402
 from core.database import execute_query  # noqa: E402
 
 _INVALID_FABRIC_TYPES_BM = {"", "unknow", "unknown"}
@@ -105,11 +106,11 @@ def direct_build_matrix(date_from: str | None, date_to: str | None, capacities: 
     đếm ở ô đó (bao gồm cả giờ mẻ khác màu/vải của chính các máy này) — Total(Fabric)/Grand
     Total PHẢI khử trùng máy (union qua các ColorGroup con) trước khi cộng giờ, KHÔNG cộng
     thẳng operating_hours của từng dòng con (đúng bug COUNT DISTINCT dạng "giờ")."""
-    sql = """
+    sql = f"""
         SELECT date(datetime(a.end_time), '-7 hours') AS production_date,
                a.fabric_type, a.machine, a.capacity_kg, b.shade, b.colour_no
         FROM availability_logs a
-        LEFT JOIN batch_details b ON lower(trim(a.batch)) = lower(trim(b.dyelot))
+        {batch_details_join_sql("a.batch", "a.end_time")}
         WHERE a.end_time IS NOT NULL AND a.end_time != ''
           AND a.fabric_type IS NOT NULL AND lower(trim(a.fabric_type)) NOT IN (?, ?, ?)
           AND (b.batch_type IS NULL OR lower(trim(b.batch_type)) = 'normal')
@@ -303,7 +304,7 @@ def legacy_get_cleaning_matrix(date_from: str | None, date_to: str | None, capac
              {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
              COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref
         FROM availability_logs a
-        LEFT JOIN batch_details b ON lower(trim(b.dyelot)) = lower(trim(a.batch_ref_no)) OR lower(trim(b.dyelot)) = lower(trim(a.batch))
+        {batch_details_join_sql(["a.batch_ref_no", "a.batch"], "a.end_time")}
         WHERE 1=1
     """
     params: list[Any] = []

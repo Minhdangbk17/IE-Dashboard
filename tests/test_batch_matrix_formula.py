@@ -50,9 +50,12 @@ def _init_schema(db_path: str) -> None:
     """)
     conn.execute("""
         CREATE TABLE batch_details (
-            dyelot TEXT PRIMARY KEY, shade TEXT, colour_no TEXT, batch_type TEXT, greige_code TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dyelot TEXT NOT NULL, shade TEXT, colour_no TEXT, batch_type TEXT, greige_code TEXT,
+            machine TEXT, start_time TEXT, end_time TEXT
         )
     """)
+    conn.execute("CREATE UNIQUE INDEX uq_batch_details_dyelot_machine_start ON batch_details(dyelot, machine, start_time)")
     conn.commit()
     conn.close()
 
@@ -241,11 +244,57 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
         os.unlink(db_path)
 
 
+def _scenario_duplicate_dyelot_redye(failures: list[str]) -> None:
+    """BẪY LỖI ĐẾM TRÙNG: 1 Dyelot có 2 dòng batch_details (mẻ gốc bị NG + mẻ redye chạy lại,
+    xem điều tra mẻ C260659920 trong memory-bank/activeContext.md) — availability_logs CHỈ có
+    1 dòng lịch máy, khớp lần chạy REDYE (end_time khớp chính xác dòng redye). JOIN theo dyelot
+    ĐƠN THUẦN sẽ khớp CẢ 2 dòng batch_details, nhân đôi dòng availability_logs này -> batch_count
+    của ô đó bị đếm 2 thay vì 1. `batch_details_join_sql()` phải chọn ĐÚNG dòng redye (end_time
+    khớp chính xác) — không chỉ tránh đếm trùng mà còn gán ĐÚNG màu (Dark, của mẻ redye) chứ
+    không phải màu của mẻ gốc (Medium)."""
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _init_schema(db_path)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        day = date(2026, 9, 12)
+        conn.execute(
+            "INSERT INTO availability_logs (batch, fabric_type, machine, capacity_kg, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)",
+            ("C-REDYE", "CVC", "D600", 600, "2026-09-12 06:00:00", "2026-09-12 10:00:00"),
+        )
+        conn.executemany(
+            "INSERT INTO batch_details (dyelot, shade, colour_no, batch_type, machine, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                # Mẻ gốc NG — kết thúc SỚM HƠN, KHÔNG khớp end_time của dòng availability_logs.
+                ("C-REDYE", "Medium", "500-GREY", "Normal", "D600", "2026-09-01 06:00:00", "2026-09-01 08:00:00"),
+                # Mẻ redye — end_time KHỚP CHÍNH XÁC dòng availability_logs.
+                ("C-REDYE", "Dark", "091-NAVY", "Normal", "D600", "2026-09-12 06:00:00", "2026-09-12 10:00:00"),
+            ],
+        )
+        conn.commit()
+        recompute_daily(day, conn)
+        dark_row = conn.execute(
+            "SELECT batch_count FROM batch_matrix_daily_summary WHERE production_date=? AND fabric_type='CVC' AND color_group='Dark'", (day.isoformat(),)
+        ).fetchone()
+        medium_row = conn.execute(
+            "SELECT batch_count FROM batch_matrix_daily_summary WHERE production_date=? AND fabric_type='CVC' AND color_group='Medium'", (day.isoformat(),)
+        ).fetchone()
+        conn.close()
+
+        print("\n=== Kịch bản 4: 1 Dyelot có 2 dòng batch_details (mẻ gốc + redye) — KHÔNG đếm trùng ===")
+        _check("Dark (mẻ redye, end_time khớp): batch_count = 1 (không bị nhân đôi)", dark_row["batch_count"] if dark_row else 0, 1, failures)
+        _check("Medium (mẻ gốc NG, end_time KHÔNG khớp): không xuất hiện (0 dòng)", medium_row["batch_count"] if medium_row else 0, 0, failures)
+    finally:
+        os.unlink(db_path)
+
+
 def main() -> int:
     failures: list[str] = []
     _scenario_basic_cell(failures)
     _scenario_overnight_split(failures)
     _scenario_multicolor_dedup(failures)
+    _scenario_duplicate_dyelot_redye(failures)
     print(f"\n{'='*60}\nKẾT QUẢ: {'TẤT CẢ KHỚP' if not failures else f'{len(failures)} CASE LỆCH'}\n{'='*60}")
     return 1 if failures else 0
 

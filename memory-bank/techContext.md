@@ -57,7 +57,18 @@
 - `downtime_logs` — lịch sử dừng máy.
 - `import_logs` — lịch sử các lần import Excel/CSV.
 - `rft_dye_results` — kết quả phân loại RFT (import từ file "RFT report.xlsx",
-  khoá `dyelot`; xem `core/rft_importer.py`).
+  khoá `dyelot`; xem `core/rft_importer.py`). Lưu ý: cùng lỗi thiết kế
+  "1 dyelot = 1 dòng" như `batch_details` bên dưới TỪNG có (dedupe-theo-dyelot ở
+  `core/rft_importer.py::sync_rft_results()`) — CHƯA sửa lần này (ngoài phạm vi
+  task C260659920, khác bảng), nhưng cùng rủi ro nếu 1 dyelot RFT có nhiều dòng thật.
+- `batch_details` — chi tiết mẻ nhuộm (import Batch Detail). **Khoá đã đổi
+  (2026-09-22)**: KHÔNG còn `dyelot TEXT PRIMARY KEY` — giờ là `id INTEGER
+  PRIMARY KEY AUTOINCREMENT` + `UNIQUE(dyelot, machine, start_time)`, cho phép
+  1 Dyelot có NHIỀU dòng (mẻ gốc bị NG + mẻ redye chạy lại là 2 dòng THẬT khác
+  nhau, không còn ghi đè mất nhau) — xem điều tra mẻ C260659920 + chi tiết đầy
+  đủ ở `activeContext.md`. Mọi nơi JOIN bảng này theo dyelot PHẢI dùng
+  `core/batch_details_match.py::batch_details_join_sql()` để chọn đúng 1 dòng,
+  KHÔNG JOIN thẳng theo dyelot nữa (sẽ nhân đôi kết quả nếu dyelot có >1 dòng).
 
 (Danh sách trên chỉ liệt kê nhóm bảng CỐT LÕI/hạ tầng — mỗi Engine còn tự sở
 hữu thêm bảng riêng, vd `*_daily_summary` của Daily Rollup Pattern — xem

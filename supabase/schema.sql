@@ -197,8 +197,12 @@ create unique index if not exists uq_availability_batch_ref_machine_start
 create index if not exists idx_availability_batch_norm on availability_logs (lower(trim(batch)));
 create index if not exists idx_availability_batch_ref_norm on availability_logs (lower(trim(batch_ref_no)));
 
+-- DB ĐÃ CÓ DỮ LIỆU THẬT (production): áp thay đổi khoá chính (dyelot -> id surrogate +
+-- UNIQUE(dyelot, machine, start_time)) qua supabase/migrate_batch_details_primary_key.sql,
+-- KHÔNG chạy lại CREATE TABLE này (cùng quy ước đã áp dụng cho downtime_case_notes).
 create table if not exists batch_details (
-    dyelot text primary key,
+    id bigint generated always as identity primary key,
+    dyelot text not null,
     customer text, color text, order_no text, greige_code text, recipe_no text, colour_no text,
     shade text, customer_color text, is_rework integer not null default 0, machine text, machine_group text,
     fabric_code text, fabric_type text, fabric_content text,
@@ -234,6 +238,8 @@ create table if not exists batch_details (
     import_log_id bigint, created_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
 create index if not exists idx_batch_details_dyelot_norm on batch_details (lower(trim(dyelot)));
+create unique index if not exists uq_batch_details_dyelot_machine_start
+    on batch_details (dyelot, machine, start_time);
 
 -- RFT (Right First Time) report — import từ file "RFT report.xlsx" (QC xuất), khoá dyelot.
 -- Xem core/rft_importer.py / modules/dyeing/engines/rft/service.py.

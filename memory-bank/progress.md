@@ -916,8 +916,31 @@
       file `.xlsx` 1 sheet cùng cấu trúc bảng UI (Group Machine merge theo
       khối, "All Groups" in đậm), dùng `openpyxl` (đã có sẵn dependency).
       Route mới `GET /dyeing/reports/api/batch-summary/export?year=`.
+- [x] **Sửa bug ghi đè dữ liệu khi 1 Dyelot chạy lại thật (mẻ gốc + redye) —
+      HOÀN THÀNH 2026-09-22**: người dùng report mẻ C260659920 sai ngày sản
+      xuất, điều tra ra bảng `batch_details` (`dyelot TEXT PRIMARY KEY`) chỉ
+      giữ được 1 dòng/Dyelot nên lần chạy redye ghi đè mất dữ liệu mẻ gốc.
+      Đổi khoá sang `id` surrogate + `UNIQUE(dyelot, machine, start_time)`
+      (cùng quy ước `availability_logs`/`performance_logs` đã dùng), thêm
+      helper dùng chung `core/batch_details_match.py::batch_details_join_sql()`
+      sửa 7 điểm JOIN theo dyelot ở `downtime`/`cleaning_matrix`/`batch_matrix`
+      (2 file)/`rft`/`tank_loading`/`dca_cost` để không đếm trùng khi 1 dyelot
+      có nhiều dòng. Migrate lazy tại app startup (SQLite) +
+      `supabase/migrate_batch_details_primary_key.sql` (Postgres, CHƯA chạy
+      trên production — xem "Việc tiếp theo" ở `activeContext.md`). File test
+      mới `tests/test_batch_importer.py` verify bằng ĐÚNG file mẫu thật
+      C260659920, full regression 11 file test PASS 100%. Chi tiết đầy đủ ở
+      `activeContext.md`/`techContext.md`.
 
 ## Backlog (Phase 2+)
+- [ ] **Chạy `supabase/migrate_batch_details_primary_key.sql` trên Supabase
+      production** (qua SQL Editor, TRƯỚC khi deploy code có đổi khoá
+      `batch_details` — nếu không `ON CONFLICT(dyelot, machine, start_time)`
+      sẽ lỗi vì chưa có unique index đó). Sau đó cân nhắc viết script backfill
+      đọc lại `import_log_rows` (Raw Data Viewer) để khôi phục dữ liệu mẻ gốc
+      từng bị ghi đè ở các dyelot trùng lịch sử trên production — KHÔNG bắt
+      buộc, dữ liệu vẫn còn nguyên trong `import_log_rows` nên không mất vĩnh
+      viễn, chỉ chưa phản ánh vào `batch_details`/báo cáo cho tới khi backfill.
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn
       trong yêu cầu gốc của Permission Model, chưa triển khai để tập trung
       đúng phạm vi bắt buộc.

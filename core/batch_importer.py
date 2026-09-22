@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from flask import Flask
 from openpyxl import load_workbook
 
 try:
@@ -346,6 +347,36 @@ def _ensure_import_logs_table(conn: Any) -> None:
             conn.execute(f"ALTER TABLE import_logs ADD COLUMN {column} {definition}")
 
 
+def _migrate_batch_details_primary_key(conn: Any) -> None:
+    """Đổi PRIMARY KEY của `batch_details` từ `dyelot` đơn sang `id` surrogate +
+    UNIQUE(dyelot, machine, start_time) — cho phép 1 Dyelot có NHIỀU dòng (mẻ gốc + mẻ redye
+    chạy lại), thay vì dòng sau ghi đè mất dòng trước như thiết kế cũ (xem
+    memory-bank/activeContext.md, điều tra mẻ C260659920). SQLite không ALTER được PRIMARY KEY
+    tại chỗ nên phải dựng lại bảng — cùng pattern `downtime/service.py::
+    _migrate_case_notes_context_column()` (RENAME -> CREATE mới -> INSERT copy -> DROP ->
+    commit tường minh; bài học đã ghi trong systemPatterns.md: thiếu commit ở bước này từng
+    làm dữ liệu "biến mất" tạm thời với các connection khác)."""
+    old_columns = {row["name"] for row in conn.execute("PRAGMA table_info(batch_details)")}
+    if not old_columns or "id" in old_columns:
+        return
+    conn.execute("ALTER TABLE batch_details RENAME TO batch_details_pre_surrogate_id")
+    conn.execute(
+        "CREATE TABLE batch_details (id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, "
+        "created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+    for field in BATCH_DETAIL_FIELDS:
+        if field == "dyelot":
+            continue
+        definition = "REAL NOT NULL DEFAULT 0" if field in NUMERIC_FIELDS else "TEXT"
+        conn.execute(f"ALTER TABLE batch_details ADD COLUMN {field} {definition}")
+    conn.execute("ALTER TABLE batch_details ADD COLUMN import_log_id INTEGER")
+    copy_columns = [c for c in ("dyelot", *BATCH_DETAIL_FIELDS[1:], "import_log_id", "created_at") if c in old_columns]
+    columns_sql = ",".join(copy_columns)
+    conn.execute(f"INSERT INTO batch_details ({columns_sql}) SELECT {columns_sql} FROM batch_details_pre_surrogate_id")
+    conn.execute("DROP TABLE batch_details_pre_surrogate_id")
+    conn.commit()
+
+
 def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filename: str = "batch_detail.xlsx") -> dict[str, Any]:
     """Parse file Batch Detail và UPSERT vào batch_details.
 
@@ -361,7 +392,8 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
     if get_dialect() == "sqlite":
         conn.execute("""
             CREATE TABLE IF NOT EXISTS batch_details (
-                dyelot TEXT PRIMARY KEY, customer TEXT, order_no TEXT, recipe_no TEXT, colour_no TEXT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dyelot TEXT NOT NULL, customer TEXT, order_no TEXT, recipe_no TEXT, colour_no TEXT,
                 shade TEXT, customer_color TEXT, fabric_code TEXT, fabric_content TEXT,
                 is_rework INTEGER NOT NULL DEFAULT 0,
                 wo_qty TEXT, batch_type TEXT, batch_state TEXT, formula_code TEXT,
@@ -385,6 +417,12 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
             conn.execute(f"ALTER TABLE batch_details ADD COLUMN {field} {definition}")
     if "import_log_id" not in existing_columns:
         conn.execute("ALTER TABLE batch_details ADD COLUMN import_log_id INTEGER")
+    if get_dialect() == "sqlite":
+        _migrate_batch_details_primary_key(conn)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_batch_details_dyelot_machine_start "
+            "ON batch_details(dyelot, machine, start_time)"
+        )
     _ensure_import_logs_table(conn)
     conn.commit()
 
@@ -400,17 +438,24 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
         if result["rows"]:
             columns_with_log = BATCH_DETAIL_FIELDS + ("import_log_id",)
             placeholders = ",".join("?" for _ in columns_with_log)
-            updates = ",".join(f"{field}=excluded.{field}" for field in columns_with_log if field != "dyelot")
-            sql = f"INSERT INTO batch_details ({','.join(columns_with_log)}) VALUES ({placeholders}) ON CONFLICT(dyelot) DO UPDATE SET {updates}"
+            key_fields = ("dyelot", "machine", "start_time")
+            updates = ",".join(f"{field}=excluded.{field}" for field in columns_with_log if field not in key_fields)
+            sql = (
+                f"INSERT INTO batch_details ({','.join(columns_with_log)}) VALUES ({placeholders}) "
+                f"ON CONFLICT({','.join(key_fields)}) DO UPDATE SET {updates}"
+            )
             # Postgres bó TOÀN BỘ dòng của executemany() vào 1 câu INSERT...VALUES duy nhất
-            # (xem `_PostgresConnCompat.executemany()`) — nếu file Excel có 2 dòng cùng dyelot,
-            # câu lệnh ON CONFLICT DO UPDATE đó sẽ update trùng 1 dyelot 2 lần trong CÙNG 1
+            # (xem `_PostgresConnCompat.executemany()`) — nếu file Excel có 2 dòng trùng
+            # key_fields, câu lệnh ON CONFLICT DO UPDATE đó sẽ update trùng key 2 lần trong CÙNG 1
             # statement và Postgres từ chối thẳng (`CardinalityViolation`). SQLite không dính lỗi
-            # này vì executemany() ở đó chạy tuần tự từng dòng một. Khử trùng theo dyelot (giữ
-            # dòng CUỐI cùng xuất hiện trong file) để giữ đúng hành vi "ghi đè" trước đây.
-            deduped_by_dyelot = {row["dyelot"]: row for row in result["rows"]}
+            # này vì executemany() ở đó chạy tuần tự từng dòng một. Khử trùng theo
+            # (dyelot, machine, start_time) — KHÔNG còn khử theo dyelot đơn, vì 1 dyelot giờ có
+            # thể có nhiều lần chạy thật (mẻ gốc + mẻ redye) cần giữ RIÊNG, chỉ dòng trùng thật
+            # 100% (cùng cả 3 khoá) mới coi là duplicate cần khử (giữ dòng CUỐI xuất hiện trong
+            # file, giống hành vi "ghi đè" cũ khi đúng là cùng 1 lần chạy).
+            deduped_rows = {tuple(row[field] for field in key_fields): row for row in result["rows"]}
             conn.execute("BEGIN")
-            conn.executemany(sql, [tuple(row[field] for field in BATCH_DETAIL_FIELDS) + (log_id,) for row in deduped_by_dyelot.values()])
+            conn.executemany(sql, [tuple(row[field] for field in BATCH_DETAIL_FIELDS) + (log_id,) for row in deduped_rows.values()])
             conn.commit()
             imported_rows = len(result["rows"])
         record_import_rows(conn, log_id, result["row_details"])
@@ -462,3 +507,32 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
         "imported_rows": imported_rows,
         "import_log_id": log_id,
     }
+
+
+def init_app(app: Flask) -> None:
+    """Đảm bảo `batch_details` đã ở schema MỚI (id surrogate PK + UNIQUE(dyelot, machine,
+    start_time)) NGAY LÚC APP KHỞI ĐỘNG — không chờ tới lần import Batch kế tiếp mới migrate
+    lazy trong `sync_batch_details()`. Cần thiết vì NHIỀU Engine đọc `batch_details` qua
+    `core/batch_details_match.py::batch_details_join_sql()` (tham chiếu cột `id`/`end_time`)
+    mà KHÔNG bao giờ gọi `sync_batch_details()` trước — nếu chỉ migrate lazy trong đó, 1 DB cũ
+    chưa từng import lại Batch sau bản cập nhật này sẽ lỗi "no such column: b.id" ngay khi mở
+    báo cáo, thay vì chỉ khi import. CHỈ áp dụng SQLite — Postgres dùng migration thủ công
+    riêng qua `supabase/migrate_batch_details_primary_key.sql` (app KHÔNG tự ALTER TABLE trên
+    Postgres, xem CLAUDE.md/`systemPatterns.md` mục 5.1), cùng pattern `core/auth.py::
+    init_app()` (bảng `user_permissions`)."""
+    if app.config.get("DATABASE_URL"):
+        return
+    from core.database import get_raw_connection_for_app
+
+    conn = get_raw_connection_for_app(app)
+    try:
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(batch_details)")}
+        if existing:
+            _migrate_batch_details_primary_key(conn)
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_batch_details_dyelot_machine_start "
+                "ON batch_details(dyelot, machine, start_time)"
+            )
+            conn.commit()
+    finally:
+        conn.close()

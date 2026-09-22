@@ -1,13 +1,16 @@
 """DCA Cost report — Sum(DyeCost) / Sum(số dyelot) từ `batch_details`, theo Day/Week/Month.
 
 Nguồn dữ liệu: `batch_details` (đã có sẵn qua Import Batch Detail, KHÔNG cần luồng import mới)
-— `dyelot` là khoá chính (mỗi dòng = 1 mẻ, không có rủi ro đếm trùng kiểu COUNT DISTINCT),
-`dye_cost` là cột chi phí thuốc nhuộm/mẻ. `fabric_type`/`shade`/`colour_no`/`recipe_no`/
-`customer_color`/`greige_code`/`start_time`/`end_time` đều lấy TRỰC TIẾP từ `batch_details`
-(không cần JOIN gì thêm) — CHỈ `capacity_kg` (phục vụ filter Capacity) phải LEFT JOIN
-`availability_logs` (khoá `lower(trim(a.batch)) = lower(trim(bd.dyelot))`, CÙNG khoá JOIN đã
-verify 99.7% khớp ở `batch_matrix`/`downtime`/`rft`) — dòng KHÔNG khớp vẫn GIỮ LẠI khi không
-lọc Capacity, chỉ bị loại khi người dùng chủ động chọn Capacity cụ thể.
+— mỗi dòng = 1 lần chạy thật (1 dyelot có thể có NHIỀU dòng: mẻ gốc + mẻ redye chạy lại, xem
+`core/batch_details_match.py`), không có rủi ro đếm trùng kiểu COUNT DISTINCT vì đây là báo cáo
+COUNT trực tiếp số dòng. `dye_cost` là cột chi phí thuốc nhuộm/mẻ. `fabric_type`/`shade`/
+`colour_no`/`recipe_no`/`customer_color`/`greige_code`/`start_time`/`end_time` đều lấy TRỰC TIẾP
+từ `batch_details` (không cần JOIN gì thêm) — CHỈ `capacity_kg` (phục vụ filter Capacity) phải
+LEFT JOIN `availability_logs`, chọn ĐÚNG 1 dòng khớp `end_time` với `batch_details` (tránh JOIN
+1 dyelot khớp nhiều `availability_logs` gây nhân bản dòng — cùng nguyên tắc
+`batch_details_join_sql()` nhưng đảo chiều, viết trực tiếp vì chỉ 1 nơi cần chiều này). Dòng
+KHÔNG khớp `availability_logs` nào vẫn GIỮ LẠI khi không lọc Capacity, chỉ bị loại khi người
+dùng chủ động chọn Capacity cụ thể.
 
 Công thức mỗi ô `(fabric_type, color, kỳ)`: `DCA Cost = Sum(dye_cost) / COUNT(dyelot)` — tính
 TẤT CẢ mẻ (KHÔNG loại CM/Rework, theo yêu cầu người dùng — khác "Normal Dyeing Batches by
@@ -149,7 +152,14 @@ def _dca_rows(selected_capacities: list[float], from_date: str | None, to_date: 
                a."capacity_kg" AS capacity_kg,
                {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM batch_details bd
-        LEFT JOIN availability_logs a ON lower(trim(a."batch")) = lower(trim(bd."dyelot"))
+        LEFT JOIN availability_logs a ON a."id" = COALESCE(
+            (SELECT aa."id" FROM availability_logs aa
+             WHERE lower(trim(aa."batch")) = lower(trim(bd."dyelot")) AND aa."end_time" = bd."end_time"
+             LIMIT 1),
+            (SELECT aa."id" FROM availability_logs aa
+             WHERE lower(trim(aa."batch")) = lower(trim(bd."dyelot"))
+             ORDER BY aa."end_time" DESC LIMIT 1)
+        )
         LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm."greige_code")) = lower(trim(bd."greige_code"))
         WHERE bd."dyelot" IS NOT NULL AND TRIM(CAST(bd."dyelot" AS TEXT)) <> ''
     """

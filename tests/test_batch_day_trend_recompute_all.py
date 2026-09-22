@@ -51,7 +51,8 @@ def _init_schema(db_path: str) -> None:
             start_time TEXT, end_time TEXT, planned_prd_time_hour REAL, rework_hour REAL DEFAULT 0
         )
     """)
-    conn.execute("CREATE TABLE batch_details (dyelot TEXT PRIMARY KEY, greige_code TEXT, fabric_type TEXT, shade TEXT, colour_no TEXT, batch_type TEXT, machine TEXT, start_time TEXT, end_time TEXT, run_time REAL, is_rework INTEGER)")
+    conn.execute("CREATE TABLE batch_details (id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, greige_code TEXT, fabric_type TEXT, shade TEXT, colour_no TEXT, batch_type TEXT, machine TEXT, start_time TEXT, end_time TEXT, run_time REAL, is_rework INTEGER)")
+    conn.execute("CREATE UNIQUE INDEX uq_batch_details_dyelot_machine_start ON batch_details(dyelot, machine, start_time)")
     conn.execute("CREATE TABLE machines (machine_code TEXT, machine_id TEXT, mc_brand TEXT, tank_type TEXT, mc_quantity INTEGER, tube_no INTEGER, capacity_kg REAL)")
     conn.commit()
     conn.close()

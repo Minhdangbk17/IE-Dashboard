@@ -85,8 +85,12 @@ def update_import_row(log_id: int, row_id: int, edited_data: dict[str, Any]) -> 
     if file_type == "BATCH":
         columns_with_log = BATCH_DETAIL_FIELDS + ("import_log_id",)
         placeholders = ",".join("?" for _ in columns_with_log)
-        updates = ",".join(f"{field}=excluded.{field}" for field in columns_with_log if field != "dyelot")
-        sql = f"INSERT INTO batch_details ({','.join(columns_with_log)}) VALUES ({placeholders}) ON CONFLICT(dyelot) DO UPDATE SET {updates}"
+        key_fields = ("dyelot", "machine", "start_time")
+        updates = ",".join(f"{field}=excluded.{field}" for field in columns_with_log if field not in key_fields)
+        sql = (
+            f"INSERT INTO batch_details ({','.join(columns_with_log)}) VALUES ({placeholders}) "
+            f"ON CONFLICT({','.join(key_fields)}) DO UPDATE SET {updates}"
+        )
         conn.execute(sql, tuple(record[field] for field in BATCH_DETAIL_FIELDS) + (log_id,))
         conn.commit()
     else:

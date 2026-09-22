@@ -7,7 +7,7 @@ from typing import Any
 from flask import Flask, redirect, render_template, request, session, url_for
 
 from config import Config, get_config
-from core import auth, database, navigation, rollup
+from core import auth, batch_importer, database, navigation, rollup
 from core.auth import get_current_user, hash_password, login_required, verify_password
 from core.database import execute_one
 
@@ -23,6 +23,7 @@ def create_app(config_object: Any = None) -> Flask:
     navigation.init_app(app)
     rollup.init_app(app)
     auth.init_app(app)  # đảm bảo bảng user_permissions tồn tại + đăng ký CLI sync-permissions
+    batch_importer.init_app(app)  # đảm bảo batch_details đã có surrogate PK (id) trước khi báo cáo nào đọc
 
     # --- Blueprint nền tảng (auth, dashboard tổng) ---
     _register_auth_blueprint(app)

@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect, sql_datetime
 from core.excel_importer import get_achievement_standards
@@ -52,12 +53,14 @@ INVALID_FABRIC_TYPES = ("Unknow", "Unknown", "All", "")
 _BRAND_PROGRAM_LABEL_SQL = "CASE WHEN COALESCE(bpm.brand, '') <> '' AND COALESCE(bpm.brand_program, '') <> '' THEN bpm.brand || ' - ' || bpm.brand_program ELSE '' END"
 
 
-def _brand_program_join(batch_expr: str) -> str:
+def _brand_program_join(batch_expr: str, end_time_expr: str) -> str:
     """LEFT JOIN batch_details + brand_program_mapping để suy Brand Program từ mã batch
     (khoá batch -> dyelot -> greige_code -> brand_program). `batch_expr` là biểu thức SQL
-    đã alias trỏ đúng cột batch của `availability_logs` (vd `a."Batch"`)."""
+    đã alias trỏ đúng cột batch của `availability_logs` (vd `a."Batch"`). `end_time_expr` là
+    biểu thức SQL trỏ cột end_time CÙNG dòng đó — dùng để chọn đúng 1 dòng batch_details khi 1
+    dyelot có nhiều lần chạy (mẻ gốc + mẻ redye, xem `core/batch_details_match.py`)."""
     return (
-        f'LEFT JOIN batch_details bpm_bd ON lower(trim(bpm_bd.dyelot)) = lower(trim({batch_expr})) '
+        f"{batch_details_join_sql(batch_expr, end_time_expr, alias='bpm_bd')} "
         "LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(bpm_bd.greige_code))"
     )
 
@@ -308,7 +311,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
     for category_columns in CATEGORY_COLUMNS.values():
         for column in category_columns:
             select_parts.append("a." + _quote(columns[column]) + " AS " + _quote(column))
-    join_sql = _brand_program_join("a." + _quote(columns["batch"]))
+    join_sql = _brand_program_join("a." + _quote(columns["batch"]), 'a."end_time"')
     sql = f"SELECT {', '.join(select_parts)} FROM availability_logs a {join_sql} WHERE {shifted_date} = ?"
     rows = conn.execute(sql, (day_str,)).fetchall()
     if not rows:
@@ -387,7 +390,7 @@ def _daily_planned_and_achievement(
         f"SUM(COALESCE({alias}{_quote(field)}, 0)) AS passed_{index}"
         for index, field in enumerate(ACHIEVEMENT_COLUMNS.values())
     )
-    join_sql = _brand_program_join(alias + _quote(columns["batch"])) if need_join else ""
+    join_sql = _brand_program_join(alias + _quote(columns["batch"]), alias + '"end_time"') if need_join else ""
     from_clause = f'availability_logs {"a" if need_join else ""} {join_sql}'.strip()
     sql = f"""
         SELECT {shifted_date} AS production_date, SUM({alias}{_quote(columns['planned'])}) AS planned, {achievement_select}
@@ -437,7 +440,7 @@ def _daily_batches(
     alias = "a." if need_join else ""
     record_time = f'COALESCE({alias}"end_time", {alias}"start_time")'
     shifted_date = production_date_sql_expr(record_time)
-    join_sql = _brand_program_join(alias + _quote(columns["batch"])) if need_join else ""
+    join_sql = _brand_program_join(alias + _quote(columns["batch"]), alias + '"end_time"') if need_join else ""
     from_clause = f'availability_logs {"a" if need_join else ""} {join_sql}'.strip()
     sql = f"""
         SELECT DISTINCT {shifted_date} AS production_date, {alias}{_quote(columns['batch'])} AS batch
@@ -483,7 +486,7 @@ def _available_fabric_types_and_brand_programs(
     dropdown filter mới, cùng cách `reports/cleaning_matrix.py` tính `available_capacities`/
     `available_brand_programs` từ chính tập rows đã truy vấn."""
     record_time = 'COALESCE(a."end_time", a."start_time")'
-    join_sql = _brand_program_join("a." + _quote(columns["batch"]))
+    join_sql = _brand_program_join("a." + _quote(columns["batch"]), 'a."end_time"')
     sql = f"""
         SELECT DISTINCT a.{_quote(columns['fabric_type'])} AS fabric_type, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM availability_logs a {join_sql}
@@ -642,7 +645,7 @@ def get_daily_batch_count(
         return 0
     need_join = bool(brand_programs)
     alias = "a." if need_join else ""
-    join_sql = _brand_program_join(alias + _quote(columns["batch"])) if need_join else ""
+    join_sql = _brand_program_join(alias + _quote(columns["batch"]), alias + '"end_time"') if need_join else ""
     from_clause = f'availability_logs {"a" if need_join else ""} {join_sql}'.strip()
     sql = (
         "SELECT COUNT(DISTINCT " + alias + _quote(columns["batch"]) + ") AS total FROM " + from_clause
@@ -736,7 +739,7 @@ def get_top_batches_for_category(
     alias = "a." if need_join else ""
     record_time = f'COALESCE({alias}"end_time", {alias}"start_time")'
     category_sum = " + ".join(f"COALESCE({alias}{_quote(columns[col])}, 0)" for col in CATEGORY_COLUMNS[category])
-    join_sql = _brand_program_join(alias + _quote(columns["batch"])) if need_join else ""
+    join_sql = _brand_program_join(alias + _quote(columns["batch"]), alias + '"end_time"') if need_join else ""
     from_clause = f'availability_logs {"a" if need_join else ""} {join_sql}'.strip()
     sql = f"""
         SELECT {alias}"id" AS availability_log_id, {alias}{_quote(columns['batch'])} AS batch, {alias}"machine" AS machine,
@@ -1022,7 +1025,7 @@ def get_abnormal_point_pivot(
     shifted_date = production_date_sql_expr(record_time)
     load_col = _quote(columns["load_hour"])
     unload_col = _quote(columns["unload_hour"])
-    join_sql = _brand_program_join("a." + _quote(columns["batch"]))
+    join_sql = _brand_program_join("a." + _quote(columns["batch"]), 'a."end_time"')
 
     sql = f"""
         SELECT {shifted_date} AS production_date,
@@ -1116,7 +1119,7 @@ def get_abnormal_point_batches(
                a.{load_col} AS load_hour, a.{unload_col} AS unload_hour,
                b.customer AS customer, b.colour_no AS colour_no
         FROM availability_logs a
-        LEFT JOIN batch_details b ON lower(trim(a.{batch_col})) = lower(trim(b.dyelot))
+        {batch_details_join_sql(f"a.{batch_col}", 'a."end_time"')}
         LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(b.greige_code))
         WHERE a.{zero_col} = 0{fabric_clause}{filter_clause}
         ORDER BY {shifted_date} DESC, a."machine"

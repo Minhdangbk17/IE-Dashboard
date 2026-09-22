@@ -57,7 +57,7 @@ def _init_schema(db_path: str) -> None:
             ach_load INTEGER, ach_unload INTEGER, ach_sample_check INTEGER, ach_ph INTEGER, ach_chemical INTEGER, ach_color INTEGER
         )
     """)
-    conn.execute("CREATE TABLE batch_details (dyelot TEXT PRIMARY KEY, greige_code TEXT)")
+    conn.execute("CREATE TABLE batch_details (id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, greige_code TEXT, machine TEXT, start_time TEXT, end_time TEXT)")
     conn.execute("CREATE TABLE brand_program_mapping (greige_code TEXT PRIMARY KEY, brand TEXT, brand_program TEXT, fabric_type TEXT, item_code TEXT, import_log_id INTEGER, updated_at TEXT)")
     conn.commit()
     conn.close()
@@ -69,6 +69,41 @@ def _check(label: str, actual, expected, failures: list[str]) -> None:
     print(f"[{status}] {label}: actual={actual!r} expected={expected!r}")
     if not ok:
         failures.append(label)
+
+
+def _check_duplicate_dyelot_no_double_count(failures: list[str]) -> None:
+    """`recompute_daily()` JOIN batch_details KHÔNG ĐIỀU KIỆN (luôn chạy, không chỉ khi có
+    filter Brand Program) — đây là điểm rủi ro đếm trùng LỚN NHẤT trong toàn bộ báo cáo Downtime
+    (mọi category/ngày đều đi qua đường này). 1 Dyelot có 2 dòng batch_details (mẻ gốc + mẻ
+    redye, xem điều tra C260659920 trong memory-bank/activeContext.md) PHẢI KHÔNG làm giờ
+    Rework của mẻ đó bị cộng 2 lần."""
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmp_dir, "test.db")
+        _init_schema(db_path)
+        app = _make_temp_app(db_path)
+        with app.app_context():
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                "INSERT INTO availability_logs (batch, fabric_type, machine, capacity_kg, start_time, end_time, planned_prd_time_hour, rework_hour) "
+                "VALUES ('C-DUP', 'CVC', 'D003', 500, '2026-09-01 08:00:00', '2026-09-01 12:00:00', 4, 3)"
+            )
+            # Mẻ gốc + mẻ redye CÙNG dyelot, khác greige_code/end_time.
+            conn.execute("INSERT INTO batch_details (dyelot, greige_code, end_time) VALUES ('C-DUP', 'G-OLD', '2026-08-20 09:00:00')")
+            conn.execute("INSERT INTO batch_details (dyelot, greige_code, end_time) VALUES ('C-DUP', 'G-NEW', '2026-09-01 12:00:00')")
+            conn.commit()
+            recompute_daily(date(2026, 9, 1), conn)
+            conn.commit()
+            conn.close()
+            close_db()
+
+            data = get_downtime_pivot_data(from_date="2026-09-01", to_date="2026-09-01", group_by="date")
+            rework_row = next(r for r in data["rows"] if r["category"] == "Rework")
+            _check("Dyelot 2 dòng batch_details: Rework hours KHÔNG bị cộng đôi (3h, không phải 6h)", rework_row["total_hours"], 3.0, failures)
+            _check("Dyelot 2 dòng batch_details: valid_batches vẫn đếm ĐÚNG 1 mẻ", data["kpis"]["valid_batches"], 1, failures)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def main() -> int:
@@ -128,6 +163,8 @@ def main() -> int:
             _check("mismatched combo -> empty rows total", data_none["kpis"]["downtime_hours"], 0.0, failures)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    _check_duplicate_dyelot_no_double_count(failures)
 
     if failures:
         print(f"\n{len(failures)} FAILURE(S): {failures}")

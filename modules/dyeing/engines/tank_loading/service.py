@@ -23,6 +23,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect
 from core.production_time import get_production_date
@@ -46,7 +47,7 @@ def _normalize_main_fabric_type(value: str | None) -> str | None:
 # THẲNG `batch_details.dyelot` (không qua alias batch/batch_ref_no như availability_logs).
 _BRAND_PROGRAM_LABEL_SQL = "CASE WHEN COALESCE(bpm.brand, '') <> '' AND COALESCE(bpm.brand_program, '') <> '' THEN bpm.brand || ' - ' || bpm.brand_program ELSE '' END"
 _BRAND_PROGRAM_JOIN_SQL = (
-    "LEFT JOIN batch_details bd ON lower(trim(bd.dyelot)) = lower(trim(p.dyelot)) "
+    f"{batch_details_join_sql('p.dyelot', 'p.end_time', alias='bd')} "
     "LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(bd.greige_code))"
 )
 

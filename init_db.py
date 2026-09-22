@@ -201,7 +201,8 @@ CREATE INDEX IF NOT EXISTS idx_availability_batch_norm ON availability_logs (LOW
 CREATE INDEX IF NOT EXISTS idx_availability_batch_ref_norm ON availability_logs (LOWER(TRIM(batch_ref_no)));
 
 CREATE TABLE IF NOT EXISTS batch_details (
-    dyelot TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dyelot TEXT NOT NULL,
     customer TEXT, color TEXT, order_no TEXT, greige_code TEXT, recipe_no TEXT, colour_no TEXT,
     shade TEXT, customer_color TEXT, is_rework INTEGER NOT NULL DEFAULT 0, machine TEXT, machine_group TEXT,
     fabric_code TEXT, fabric_type TEXT, fabric_content TEXT,
@@ -233,6 +234,8 @@ CREATE TABLE IF NOT EXISTS batch_details (
     import_log_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_batch_details_dyelot_norm ON batch_details (LOWER(TRIM(dyelot)));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_batch_details_dyelot_machine_start
+    ON batch_details (dyelot, machine, start_time);
 
 CREATE TABLE IF NOT EXISTS performance_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -30,6 +30,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect
 from core.production_time import get_production_date
@@ -177,7 +178,7 @@ def _rft_rows(selected_capacities: list[float], from_date: str | None, to_date: 
                {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM rft_dye_results r
         LEFT JOIN availability_logs a ON lower(trim(a."batch")) = lower(trim(r."dyelot"))
-        LEFT JOIN batch_details bd ON lower(trim(bd."dyelot")) = lower(trim(r."dyelot"))
+        {batch_details_join_sql('r."dyelot"', 'a."end_time"', alias="bd")}
         LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm."greige_code")) = lower(trim(r."greige_code"))
         WHERE r."dyelot" IS NOT NULL AND TRIM(CAST(r."dyelot" AS TEXT)) <> ''
     """

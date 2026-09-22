@@ -43,6 +43,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Iterable
 
+from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect
 from core.production_time import get_production_date, production_date_sql_expr
@@ -188,7 +189,7 @@ def _machine_records(conn: Any, machine: str) -> list[dict[str, Any]]:
         SELECT a.fabric_type, a.start_time, a.end_time, a.planned_prd_time_hour, a.rework_hour, a.capacity_kg,
                {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM availability_logs a
-        LEFT JOIN batch_details bd ON lower(trim(bd.dyelot)) = lower(trim(a.batch))
+        {batch_details_join_sql("a.batch", "a.end_time", alias="bd")}
         LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(bd.greige_code))
         WHERE a.machine = ? AND a.start_time IS NOT NULL AND TRIM(a.start_time) != ''
         """,

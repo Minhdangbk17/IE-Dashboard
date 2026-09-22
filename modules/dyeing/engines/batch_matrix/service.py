@@ -55,6 +55,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import execute_query, get_db, get_dialect, sql_datetime
 from core.production_time import get_production_date, normalize_production_date, production_bounds, production_date_sql_expr
@@ -257,7 +258,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
     sql = f"""
         SELECT a.fabric_type, a.machine, a.capacity_kg, b.shade, b.colour_no
         FROM availability_logs a
-        LEFT JOIN batch_details b ON lower(trim(a.batch)) = lower(trim(b.dyelot))
+        {batch_details_join_sql("a.batch", "a.end_time")}
         WHERE a.end_time IS NOT NULL AND a.end_time != ''
           AND a.fabric_type IS NOT NULL AND lower(trim(a.fabric_type)) NOT IN (?, ?, ?)
           AND (b.batch_type IS NULL OR lower(trim(b.batch_type)) = 'normal')
@@ -324,7 +325,7 @@ def _raw_matrix_rows(date_from: str | None, date_to: str | None) -> list[dict[st
         SELECT {shifted_date} AS production_date, a.fabric_type, a.machine, a.capacity_kg,
                b.shade, b.colour_no, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM availability_logs a
-        LEFT JOIN batch_details b ON lower(trim(a.batch)) = lower(trim(b.dyelot))
+        {batch_details_join_sql("a.batch", "a.end_time")}
         {_BRAND_PROGRAM_JOIN_SQL}
         WHERE a.end_time IS NOT NULL AND a.end_time != ''
           AND a.fabric_type IS NOT NULL AND lower(trim(a.fabric_type)) NOT IN (?, ?, ?)
@@ -701,7 +702,7 @@ def get_day_batches(
         SELECT a.machine, a.batch, a.batch_ref_no, a.capacity_kg, a.start_time, a.end_time,
                b.shade, b.colour_no, b.dyelot, b.batch_type, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM availability_logs a
-        LEFT JOIN batch_details b ON lower(trim(a.batch)) = lower(trim(b.dyelot))
+        {batch_details_join_sql("a.batch", "a.end_time")}
         {_BRAND_PROGRAM_JOIN_SQL}
         WHERE a.end_time IS NOT NULL AND a.end_time != ''
           AND a.fabric_type IS NOT NULL AND TRIM(a.fabric_type) = TRIM(?)
