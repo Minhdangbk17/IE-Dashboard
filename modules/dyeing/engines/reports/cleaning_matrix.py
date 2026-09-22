@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import calendar
+import io
 import logging
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from typing import Any, Mapping
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import execute_query, get_db, get_dialect
@@ -611,3 +616,200 @@ def upsert_machine_config(machine_code: str, fields: Mapping[str, Any]) -> dict[
         (machine_code,),
     ).fetchone()
     return dict(row) if row else {"machine_code": machine_code, **updates}
+
+
+# ---------------------------------------------------------------------------
+# Tab "Summary" (2026-09-23) — bảng tổng hợp theo Group Machine x Category x Tháng,
+# hiển thị cạnh tab "Detail" (bảng lịch máy hiện có) trên cùng trang "Batch Per Day by
+# Machine". Xem đầy đủ các quyết định nghiệp vụ đã hỏi-đáp với người dùng trước khi code
+# ở memory-bank/activeContext.md.
+# ---------------------------------------------------------------------------
+
+# 3 mức Group Machine chuẩn đã thống nhất qua migrate_group_mc_capacity_buckets — ưu tiên
+# hiển thị theo ĐÚNG thứ tự sức chứa này (KHÔNG sort alphabet, vì "<300Kg" < "300 to 500 Kg"
+# theo alphabet sẽ SAI thứ tự sức chứa thật). Giá trị group_mc nào KHÔNG khớp 3 mức này (VD
+# còn sót "<500"/">=500" cũ chưa migrate, hoặc tên tuỳ ý người dùng tự đặt sau này) vẫn được
+# hiển thị đầy đủ (không bỏ sót), xếp SAU 3 mức chuẩn, sắp theo alphabet.
+CANONICAL_GROUP_MC_ORDER = ("<300Kg", "300 to 500 Kg", "600kg or above")
+UNCLASSIFIED_GROUP_LABEL = "Unclassified"
+ALL_GROUPS_LABEL = "All Groups"
+SUMMARY_CATEGORIES = (
+    "No. total day",
+    "No. Dyeing machine",
+    "No. time Cleaning MC",
+    "Cleaning MC Ratio",
+    "Rework batch",
+    "Rework ratio",
+    "No. Dyeing machine batch",
+    "Daily batch/day",
+)
+
+
+def _empty_summary_bucket() -> dict[str, Any]:
+    return {"cm": 0, "dyeing_batches": 0, "rework": 0, "machines": set()}
+
+
+def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Dựng 8 dòng Category cho 1 Group Machine (hoặc cho All Groups) — `month_data` đã là
+    accumulator THEO ĐÚNG group đó (hoặc đã cộng dồn sẵn cho All Groups, xem
+    get_batch_summary()). Mọi tỷ lệ tính theo Sum/Sum của CHÍNH tháng đó (KHÔNG suy từ tỷ lệ
+    trung bình cộng — cùng nguyên tắc Sum/Sum thống nhất đã áp dụng cho batch_matrix/downtime)."""
+    values: dict[str, list[Any]] = {category: [] for category in SUMMARY_CATEGORIES}
+    for month in range(1, 13):
+        bucket = month_data.get(month) or _empty_summary_bucket()
+        days = calendar.monthrange(year, month)[1]
+        n_machines = len(bucket["machines"])
+        cm = bucket["cm"]
+        dyeing_batches = bucket["dyeing_batches"]
+        rework = bucket["rework"]
+        values["No. total day"].append(days)
+        values["No. Dyeing machine"].append(n_machines)
+        values["No. time Cleaning MC"].append(cm)
+        values["Cleaning MC Ratio"].append(round(dyeing_batches / cm, 2) if cm else None)
+        values["Rework batch"].append(rework)
+        values["Rework ratio"].append(round(rework / dyeing_batches, 2) if dyeing_batches else None)
+        values["No. Dyeing machine batch"].append(dyeing_batches)
+        values["Daily batch/day"].append(round(dyeing_batches / (days * n_machines), 2) if (days and n_machines) else None)
+    return [{"category": category, "values": values[category]} for category in SUMMARY_CATEGORIES]
+
+
+def get_batch_summary(year: int) -> dict[str, Any]:
+    """Bảng Summary: Group Machine x Category (8 dòng cố định) x 12 tháng của `year`.
+
+    Nguồn dữ liệu: TÁI DÙNG `cleaning_mc_daily_summary` đã có (grain 1 mẻ/ngày, đã có
+    badge/is_rework/machine từ Daily Rollup) — LEFT JOIN `machines` lấy `group_mc` tại thời
+    điểm đọc (giống hệt cách get_cleaning_matrix() tra Machine Master), gộp theo THÁNG thay
+    vì theo ngày. KHÔNG cần bảng mới, KHÔNG cần luồng import mới.
+
+    "No. Dyeing machine" đếm SỐ MÁY DISTINCT có >=1 mẻ NHUỘM THẬT (Normal/Rework, loại CM)
+    trong tháng — máy chỉ chạy CM tháng đó KHÔNG được tính (đã xác nhận với người dùng).
+    Tính bằng set() theo từng (group, tháng) rồi lấy len(), KHÔNG cộng dồn số đếm sẵn — tránh
+    đúng bug COUNT DISTINCT kinh điển của dự án (cộng số đếm distinct từ nhiều nhóm con có
+    thể đếm trùng nếu giao nhau). Ở đây AN TOÀN cộng dồn set MACHINES giữa các Group MC lên
+    cấp "All Groups" vì Group Machine là PHÂN HOẠCH không giao nhau (1 máy chỉ thuộc đúng 1
+    Group tại 1 thời điểm) — hợp (union) các set rời nhau = tổng độ lớn, không đếm trùng.
+    """
+    conn = get_db()
+    _ensure_batch_details_columns(conn)
+    _ensure_summary_table(conn)
+
+    from_date = f"{year:04d}-01-01"
+    to_date = f"{year:04d}-12-31"
+    rows = execute_query(
+        "SELECT production_date, machine, badge, is_rework FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
+        [from_date, to_date],
+    )
+    master_rows = execute_query("SELECT machine_id, machine_code, group_mc FROM machines WHERE domain = 'dyeing'", [])
+    group_by_norm: dict[str, str | None] = {}
+    for master in master_rows:
+        code = master["machine_code"] or master["machine_id"]
+        if not code:
+            continue
+        group_by_norm[_normalize_code(code)] = (master["group_mc"] or "").strip() or None
+
+    # accumulators[group_label][month] = {"cm", "dyeing_batches", "rework", "machines": set()}
+    accumulators: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    distinct_groups: set[str] = set()
+    for row in rows:
+        production_date = row["production_date"] or ""
+        if len(production_date) < 7:
+            continue
+        try:
+            month = int(production_date[5:7])
+        except ValueError:
+            continue
+        if not (1 <= month <= 12):
+            continue
+        norm = _normalize_code(row["machine"])
+        group_label = group_by_norm.get(norm) or UNCLASSIFIED_GROUP_LABEL
+        distinct_groups.add(group_label)
+        bucket = accumulators[group_label].setdefault(month, _empty_summary_bucket())
+        if row["badge"] == "CM":
+            bucket["cm"] += 1
+        else:
+            bucket["dyeing_batches"] += 1
+            bucket["machines"].add(norm)
+            if row["is_rework"]:
+                bucket["rework"] += 1
+
+    ordered_groups = [g for g in CANONICAL_GROUP_MC_ORDER if g in distinct_groups]
+    ordered_groups += sorted(g for g in distinct_groups if g not in CANONICAL_GROUP_MC_ORDER and g != UNCLASSIFIED_GROUP_LABEL)
+    if UNCLASSIFIED_GROUP_LABEL in distinct_groups:
+        ordered_groups.append(UNCLASSIFIED_GROUP_LABEL)
+
+    groups_output = [{"group": group_label, "rows": _build_summary_category_rows(year, accumulators[group_label])} for group_label in ordered_groups]
+
+    # All Groups: cộng dồn TRỰC TIẾP từ accumulator thô của từng group (KHÔNG suy từ giá trị
+    # đã làm tròn ở groups_output) rồi mới tính lại 3 dòng tỷ lệ theo Sum/Sum của TOÀN nhà máy.
+    all_groups_data: dict[int, dict[str, Any]] = {}
+    for group_label in ordered_groups:
+        for month, bucket in accumulators[group_label].items():
+            target = all_groups_data.setdefault(month, _empty_summary_bucket())
+            target["cm"] += bucket["cm"]
+            target["dyeing_batches"] += bucket["dyeing_batches"]
+            target["rework"] += bucket["rework"]
+            target["machines"] |= bucket["machines"]
+    groups_output.append({"group": ALL_GROUPS_LABEL, "rows": _build_summary_category_rows(year, all_groups_data)})
+
+    month_labels = [date(year, month, 1).strftime("%b-%y") for month in range(1, 13)]
+    year_rows = execute_query("SELECT DISTINCT substr(production_date, 1, 4) AS y FROM cleaning_mc_daily_summary WHERE production_date IS NOT NULL", [])
+    available_years = sorted({int(r["y"]) for r in year_rows if r["y"] and r["y"].isdigit()})
+    if year not in available_years:
+        available_years = sorted({*available_years, year})
+
+    return {
+        "year": year,
+        "available_years": available_years,
+        "months": month_labels,
+        "groups": groups_output,
+    }
+
+
+def export_batch_summary_excel(year: int) -> bytes:
+    """Xuất tab "Summary" ra file `.xlsx` — 1 sheet, cấu trúc y hệt bảng trên UI (cột Group
+    Machine merge theo khối 8 dòng Category, 12 cột tháng). Style header dùng CHUNG font/màu
+    với `core/excel_importer.py::export_template()` (nền tối `24292F`/chữ trắng đậm) để nhất
+    quán giao diện file export trong toàn ứng dụng. Trả về bytes — route chỉ cần gói vào
+    `send_file(io.BytesIO(...))`, cùng pattern `excel_import/routes.py::download_template()`."""
+    data = get_batch_summary(year)
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = f"Summary {year}"[:31]
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="24292F", end_color="24292F", fill_type="solid")
+    group_font = Font(bold=True)
+    total_font = Font(bold=True)
+
+    headers = ["Group Machine", "Category", *data["months"]]
+    for col_idx, header in enumerate(headers, start=1):
+        cell = sheet.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+    sheet.column_dimensions["A"].width = 20
+    sheet.column_dimensions["B"].width = 26
+    for col_idx in range(3, len(headers) + 1):
+        sheet.column_dimensions[sheet.cell(row=1, column=col_idx).column_letter].width = 12
+
+    current_row = 2
+    for group in data["groups"]:
+        is_total = group["group"] == ALL_GROUPS_LABEL
+        group_start_row = current_row
+        for row in group["rows"]:
+            sheet.cell(row=current_row, column=1, value=group["group"] if current_row == group_start_row else None)
+            category_cell = sheet.cell(row=current_row, column=2, value=row["category"])
+            if is_total:
+                category_cell.font = total_font
+            for col_offset, value in enumerate(row["values"]):
+                value_cell = sheet.cell(row=current_row, column=3 + col_offset, value=value)
+                if is_total:
+                    value_cell.font = total_font
+            current_row += 1
+        sheet.merge_cells(start_row=group_start_row, start_column=1, end_row=current_row - 1, end_column=1)
+        sheet.cell(row=group_start_row, column=1).font = total_font if is_total else group_font
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()

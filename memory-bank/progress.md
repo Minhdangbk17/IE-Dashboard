@@ -902,6 +902,20 @@
       máy nhiều cột ngày — dùng lại nguyên API `list_machine_configs()`/
       `upsert_machine_config()`, không thêm route ghi mới. Chi tiết đầy đủ ở
       `activeContext.md`.
+- [x] **Tab "Summary" cho "Batch Per Day by Machine" — HOÀN THÀNH 2026-09-23**:
+      trang giờ có 2 tab (Detail = UI cũ, Summary = mới). Bảng Group Machine
+      (`<300Kg`/`300 to 500 Kg`/`600kg or above`/`Unclassified`/`All Groups`)
+      × 8 Category cố định × 12 tháng, filter Năm riêng. Công thức từng
+      Category đã hỏi-đáp đầy đủ với người dùng trước khi code (No. Dyeing
+      machine chỉ đếm máy có mẻ NHUỘM THẬT, loại máy chỉ chạy CM; Cleaning MC
+      Ratio/Rework ratio/Daily batch/day theo Sum/Sum, không trung bình cộng
+      tỷ lệ). Tái dùng nguyên `cleaning_mc_daily_summary` + Machine Master,
+      không thêm bảng/luồng import mới. Route mới `GET /dyeing/reports/api/
+      batch-summary?year=`. Chi tiết đầy đủ ở `activeContext.md`.
+- [x] **Nút "Export Excel" cho tab Summary — HOÀN THÀNH 2026-09-23**: xuất
+      file `.xlsx` 1 sheet cùng cấu trúc bảng UI (Group Machine merge theo
+      khối, "All Groups" in đậm), dùng `openpyxl` (đã có sẵn dependency).
+      Route mới `GET /dyeing/reports/api/batch-summary/export?year=`.
 
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn

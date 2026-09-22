@@ -1,6 +1,69 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-22 — Báo cáo "Batch Per Day by Machine" (`reports`
+**Cập nhật lần cuối:** 2026-09-23 (tiếp) — Thêm nút **"Export Excel"** cho tab Summary (mục
+ngay dưới đây) — route mới `GET /dyeing/reports/api/batch-summary/export?year=`, hàm
+`export_batch_summary_excel()` (`cleaning_matrix.py`, dùng `openpyxl`, đã có sẵn trong
+`requirements.txt`) sinh file `.xlsx` 1 sheet CÙNG cấu trúc bảng trên UI (cột Group Machine
+MERGE theo khối 8 dòng Category, dòng "All Groups" in đậm) — style header tái dùng CHUNG
+font/màu với `core/excel_importer.py::export_template()` (nền `24292F`/chữ trắng đậm) để
+nhất quán mọi file export trong app. Nút bấm `<a href>` trỏ thẳng URL kèm `year` đang chọn
+(browser tự tải file, không cần JS fetch+blob). Verify: smoke test tải file qua Flask test
+client, mở lại bằng `openpyxl.load_workbook()` xác nhận đúng header/14 cột/có merged
+cells/có khối "All Groups"/chặn khi chưa đăng nhập + `test_permission_model.py` PASS 100%.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-23 — Thêm tab **"Summary"** cho báo cáo "Batch Per Day by
+Machine" (trang giờ có 2 tab `.page-tabs` — "Detail" = UI cũ nguyên vẹn, "Summary" = mới),
+theo yêu cầu người dùng, đã hỏi-đáp đầy đủ trước khi code (2 vòng AskUserQuestion + 1 câu
+xác nhận riêng, không tự đoán công thức). Bảng Summary: mỗi khối **Group Machine** (`<300Kg`
+/ `300 to 500 Kg` / `600kg or above` / `Unclassified` cho máy chưa gán Group/chưa khai báo
+trong Machine Master / `All Groups` tổng cuối bảng) có đúng **8 dòng Category cố định** ×
+**12 cột tháng** của Năm đang chọn (filter Năm RIÊNG, KHÔNG dùng chung Capacity/Fabric
+Type/Brand Program của tab Detail).
+
+**Công thức 8 Category đã chốt** (xem đầy đủ trong `get_batch_summary()`,
+`reports/cleaning_matrix.py`):
+- No. total day = số ngày lịch của tháng (`calendar.monthrange`).
+- No. Dyeing machine = số máy DISTINCT có **≥1 mẻ nhuộm thật** (Normal/Rework, LOẠI CM)
+  trong tháng — máy chỉ chạy CM tháng đó KHÔNG tính (đã hỏi-đáp riêng, người dùng xác nhận
+  rõ). Tính bằng `set()` theo từng (group, tháng), KHÔNG cộng dồn số đếm sẵn.
+- No. time Cleaning MC = đếm mẻ badge=CM.
+- No. Dyeing machine batch = đếm mẻ Normal+Rework (loại CM).
+- Cleaning MC Ratio = Sum(No. Dyeing machine batch)/Sum(No. time Cleaning MC).
+- Rework batch = đếm mẻ badge kết thúc "R".
+- Rework ratio = Rework batch / No. Dyeing machine batch.
+- Daily batch/day = No. Dyeing machine batch / (No. total day × No. Dyeing machine) — trung
+  bình mẻ/ngày/MÁY (không phải mẻ/ngày của cả group).
+
+Khối `All Groups`: 5 dòng đếm cộng dồn TRỰC TIẾP từ accumulator thô (KHÔNG suy từ giá trị đã
+làm tròn) của từng Group con — **an toàn cộng dồn `No. Dyeing machine`** (khác các bug COUNT
+DISTINCT đã gặp trước đây trong dự án) vì Group Machine là **phân hoạch không giao nhau** (1
+máy chỉ thuộc đúng 1 Group tại 1 thời điểm) nên hợp các `set()` rời nhau = tổng đúng, không
+đếm trùng; 3 dòng tỷ lệ tính lại theo Sum/Sum ở cấp All Groups, không lấy trung bình cộng các
+tỷ lệ Group con.
+
+**Nguồn dữ liệu**: tái dùng NGUYÊN VẸN `cleaning_mc_daily_summary` đã có (grain 1 mẻ/ngày,
+sẵn `badge`/`is_rework`/`machine`) — LEFT JOIN `machines` lấy `group_mc` tại thời điểm đọc
+(giống hệt cách `get_cleaning_matrix()` tra Machine Master), gộp theo THÁNG thay vì theo
+ngày. KHÔNG thêm bảng mới, KHÔNG thêm luồng import. Route mới
+`GET /dyeing/reports/api/batch-summary?year=` — mặc định năm hiện tại nếu không truyền,
+`available_years` suy từ `DISTINCT substr(production_date,1,4)` thật có trong rollup.
+
+**Thứ tự hiển thị Group Machine**: ưu tiên đúng 3 mức chuẩn `<300Kg`/`300 to 500 Kg`/`600kg
+or above` (KHÔNG sort alphabet — alphabet sẽ sai thứ tự sức chứa vì ký tự `<` đứng sau `3`/`6`
+trong bảng mã), giá trị `group_mc` KHÁC (VD còn sót `<500`/`>=500` cũ chưa migrate, hoặc tên
+tự đặt sau này) vẫn hiển thị đầy đủ, xếp sau 3 mức chuẩn theo alphabet — không bỏ sót dữ liệu
+dù chưa khớp đúng 3 tên chuẩn.
+
+**Verify đã làm**: smoke test Flask test client trên bản sao DB dev thật (`flask
+rebuild-summaries` trước khi gọi API để đảm bảo rollup mới nhất) — page 200, có tab nav, API
+trả đủ 12 tháng/8 dòng Category đúng thứ tự/12 giá trị mỗi dòng, đổi Năm → 200, chưa đăng
+nhập bị chặn. **Lưu ý dữ liệu dev cục bộ hiện tại**: `machines` local mới có 1 dòng (chưa
+chạy `backfill_machine_master.py`/SQL import 69 máy đã gửi người dùng ở phiên trước) nên
+TOÀN BỘ batch rơi vào khối `Unclassified` khi test — đúng theo thiết kế, sẽ tự tách đúng 3
+Group thật ngay sau khi Machine Master được nạp đủ dữ liệu. `tests/test_permission_model.py`
+full regression PASS 100%.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-22 — Báo cáo "Batch Per Day by Machine" (`reports`
 engine, `cleaning_matrix.py`) đổi thiết kế: danh sách máy hiển thị KHÔNG còn tự phát hiện
 từ dữ liệu batch (bug người dùng report: máy chưa có `capacity_kg` trong dữ liệu import bị
 ẩn khỏi báo cáo dù đã chạy mẻ thật, do filter Capacity mặc định chỉ chọn 300/500/600/1200/

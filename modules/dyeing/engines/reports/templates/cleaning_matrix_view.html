@@ -9,6 +9,14 @@
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Batch Per Day by Machine</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
+
+<nav class="page-tabs mb-3" id="report-tabs" aria-label="Batch Per Day by Machine report pages">
+    {% for slug, label in [("detail", "Detail"), ("summary", "Summary")] %}
+    <button class="page-tab{% if loop.first %} is-active{% endif %}" type="button" data-page="{{ slug }}">{{ label }}</button>
+    {% endfor %}
+</nav>
+
+<section class="report-page" id="page-detail" data-page="detail">
 <section class="Box p-3 mb-3"><h3 class="mt-0">Color Legend</h3><div class="legend-row">{% for code, label in [("CM", "Cleaning machine"), ("B", "Black colour"), ("D", "Dark colour"), ("M", "Middle colour"), ("L", "Light colour"), ("W", "White colour"), ("BR", "Black rework"), ("DR", "Dark rework"), ("MR", "Middle rework"), ("LR", "Light rework"), ("WR", "White rework")] %}<span class="legend-item"><span class="badge-code code-{{ code }}">{{ code }}</span>{{ label }}</span>{% endfor %}</div></section>
 <section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px">
     <div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div>
@@ -45,7 +53,23 @@
     <table class="preview-table matrix-table" id="matrix-table"><thead><tr id="matrix-head"><th>Machine</th><th>Group MC</th><th class="mc-config-col">MC brand</th><th class="mc-config-col">Tank</th><th class="mc-config-col">MC quantity</th><th class="mc-config-col">Tube no</th><th class="mc-config-col">Capacity (Kg)</th><th class="mc-config-col">Status</th><th class="mc-config-col">Production Status</th><th class="mc-config-col">Orgatex</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th></tr></thead><tbody></tbody></table>
 </div>
 <div class="Box p-3 mt-3" style="overflow-x:auto"><h3 class="mt-0">Normal Dyeing Batches by Colour (per day)</h3><table class="preview-table matrix-table" id="color-summary-table"><thead><tr id="color-summary-head"></tr></thead><tbody></tbody></table></div>
-<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}</style>
+</section>
+
+<section class="report-page" id="page-summary" data-page="summary" hidden>
+<section class="Box p-3 mb-3"><div class="d-flex flex-justify-between flex-items-end flex-wrap" style="gap:12px">
+    <div class="form-group mb-0"><label for="summary-year">Year</label><select id="summary-year" class="form-select"></select></div>
+    <a id="summary-export-btn" class="btn btn-sm" href="#">Export Excel</a>
+</div></section>
+<div class="Box p-3" style="overflow-x:auto">
+    <table class="preview-table matrix-table" id="summary-table">
+        <thead><tr id="summary-head"><th>Group Machine</th><th>Category</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p id="summary-empty" class="f6 color-fg-muted" style="display:none">No data for this year.</p>
+</div>
+</section>
+
+<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}.report-page[hidden]{display:none}.summary-group-cell{font-weight:600;vertical-align:middle;background:var(--bg-surface-raised, rgba(110,118,129,.06))}.summary-total-group td{font-weight:600}</style>
 <script>
     window.REPORTS_CAN_EDIT_MACHINES = {{ "true" if current_user_can('dyeing', 'reports', 'edit') else "false" }};
     window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE = "{{ url_for('dyeing.reports.api_update_machine', machine_code='__MACHINE__') }}";
@@ -377,6 +401,58 @@
         applyMcColumnsCollapsed(collapsed);
         writeMcColumnsCollapsed(collapsed);
     });
+
+    // Tab "Detail"/"Summary" — cùng pattern .page-tabs/.page-tab đã dùng ở RFT/DCA Cost.
+    // Summary không có canvas Chart.js nên không cần resize() khi hiện lại như 2 Engine kia.
+    const pageTabsNav = document.getElementById("report-tabs");
+    const pageTabs = pageTabsNav ? [...pageTabsNav.querySelectorAll(".page-tab")] : [];
+    const reportPages = [...document.querySelectorAll(".report-page")];
+    let summaryLoaded = false;
+    function activatePage(slug) {
+        pageTabs.forEach((tab) => tab.classList.toggle("is-active", tab.dataset.page === slug));
+        reportPages.forEach((page) => { page.hidden = page.dataset.page !== slug; });
+        if (slug === "summary" && !summaryLoaded) { summaryLoaded = true; loadSummary(); }
+    }
+    pageTabs.forEach((tab) => tab.addEventListener("click", () => activatePage(tab.dataset.page)));
+
+    // Tab "Summary": Group Machine x Category (8 dòng cố định) x 12 tháng — xem
+    // get_batch_summary() (cleaning_matrix.py) để biết công thức từng Category. Chỉ có filter
+    // Năm riêng (KHÔNG dùng Capacity/Fabric Type/Brand Program của tab Detail — Summary đã tự
+    // nhóm theo Group Machine suy từ Capacity, giữ ý nghĩa "toàn cảnh cả năm" đơn giản).
+    const summaryEndpoint = "{{ url_for('dyeing.reports.api_batch_summary') }}";
+    const summaryExportEndpoint = "{{ url_for('dyeing.reports.api_batch_summary_export') }}";
+    const summaryYearSelect = document.getElementById("summary-year");
+    const summaryExportBtn = document.getElementById("summary-export-btn");
+    const RATIO_CATEGORIES = new Set(["Cleaning MC Ratio", "Rework ratio", "Daily batch/day"]);
+    const formatSummaryValue = (category, value) => {
+        if (value === null || value === undefined) return "-";
+        return RATIO_CATEGORIES.has(category) ? Number(value).toFixed(2) : value;
+    };
+    function renderSummary(data) {
+        const head = document.getElementById("summary-head");
+        head.innerHTML = "<th>Group Machine</th><th>Category</th>" + data.months.map((month) => `<th>${month}</th>`).join("");
+        const groups = data.groups || [];
+        document.getElementById("summary-empty").style.display = groups.length ? "none" : "block";
+        document.querySelector("#summary-table tbody").innerHTML = groups.map((group) => {
+            const isTotal = group.group === "All Groups";
+            return group.rows.map((row, rowIndex) => {
+                const groupCell = rowIndex === 0 ? `<td class="summary-group-cell" rowspan="${group.rows.length}">${escHtml(group.group)}</td>` : "";
+                const valueCells = row.values.map((value) => `<td>${formatSummaryValue(row.category, value)}</td>`).join("");
+                return `<tr${isTotal ? ' class="summary-total-group"' : ""}>${groupCell}<td>${escHtml(row.category)}</td>${valueCells}</tr>`;
+            }).join("");
+        }).join("");
+    }
+    function loadSummary() {
+        const year = summaryYearSelect.value;
+        fetch(`${summaryEndpoint}${year ? `?year=${encodeURIComponent(year)}` : ""}`).then((response) => response.json()).then((data) => {
+            if (!summaryYearSelect.options.length) {
+                summaryYearSelect.innerHTML = (data.available_years || [data.year]).map((y) => `<option value="${y}" ${y === data.year ? "selected" : ""}>${y}</option>`).join("");
+            }
+            renderSummary(data);
+            summaryExportBtn.href = `${summaryExportEndpoint}?year=${encodeURIComponent(data.year)}`;
+        });
+    }
+    summaryYearSelect.addEventListener("change", loadSummary);
 }());
 </script>
 {% endblock %}
