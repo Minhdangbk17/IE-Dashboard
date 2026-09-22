@@ -20,6 +20,11 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
     def cleaning_matrix() -> Any:
         return render_template("cleaning_matrix_view.html")
 
+    @bp.route("/machines", endpoint="machines_view")
+    @permission_required("dyeing", "reports", "view")
+    def machines_view() -> Any:
+        return render_template("machine_master_view.html")
+
     @bp.route("/api/cleaning-matrix")
     @permission_required("dyeing", "reports", "view")
     def api_cleaning_matrix() -> Any:

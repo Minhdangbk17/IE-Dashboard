@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Machine Master{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Machine Master</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
+<section class="Box p-3 mb-3"><p class="f6 color-fg-muted mb-0">Danh mục máy dùng cho báo cáo "Batch Per Day by Machine" — tạo máy mới khi có nhu cầu, sửa Status/Production Status/Capacity... trực tiếp trên bảng (bấm vào ô để sửa).</p></section>
+<section id="add-machine-form" class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px">
+    <div class="form-group mb-0"><label for="new-machine-code">Machine</label><input id="new-machine-code" class="form-control" type="text" placeholder="e.g. D512" style="width:160px"></div>
+    <div class="form-group mb-0"><label for="new-machine-group">Group MC</label><input id="new-machine-group" class="form-control" type="text" placeholder="e.g. >=500" style="width:160px"></div>
+    <button id="add-machine-btn" class="btn btn-primary">+ Add Machine</button>
+</div></section>
+<div class="Box p-3" style="overflow-x:auto">
+    <table class="preview-table matrix-table" id="machines-table">
+        <thead><tr><th>Group MC</th><th>Machine</th><th>MC brand</th><th>Tank</th><th>MC quantity</th><th>Tube no</th><th>Capacity (Kg)</th><th>Status</th><th>Production Status</th><th>Orgatex</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p id="machines-empty" class="f6 color-fg-muted" style="display:none">No machines yet — use "+ Add Machine" above to create one.</p>
+</div>
+<style>.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}</style>
+<script>
+    window.REPORTS_CAN_EDIT_MACHINES = {{ "true" if current_user_can('dyeing', 'reports', 'edit') else "false" }};
+    window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE = "{{ url_for('dyeing.reports.api_update_machine', machine_code='__MACHINE__') }}";
+</script>
+<script>
+(function () { "use strict"; const listEndpoint = "{{ url_for('dyeing.reports.api_list_machines') }}";
+    function escAttr(value) {
+        return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    }
+    function escHtml(value) {
+        return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function showToast(message, kind) {
+        let container = document.querySelector(".toast-container");
+        if (!container) { container = document.createElement("div"); container.className = "toast-container"; document.body.appendChild(container); }
+        const el = document.createElement("div");
+        el.className = `flash flash-${kind || "success"} import-toast`;
+        el.textContent = message;
+        container.appendChild(el);
+        window.setTimeout(() => el.remove(), 4000);
+    }
+    // Cùng field/option/validate với "Batch Per Day by Machine" (cleaning_matrix_view.html) —
+    // Status là text tự do (dữ liệu thật có nhiều giá trị hơn 2 lựa chọn cố định, xem
+    // upsert_machine_config()), Production Status/Orgatex là dropdown cố định.
+    const MACHINE_FIELD_LABELS = { group_mc: "Group MC", mc_brand: "MC brand", tank_type: "Tank", mc_quantity: "MC quantity", tube_no: "Tube no", capacity_kg: "Capacity (Kg)", status: "Status", production_status: "Production Status", orgatex: "Orgatex" };
+    const PRODUCTION_STATUS_OPTIONS = ["Sample", "Bulk", "No production"];
+    const ORGATEX_OPTIONS = ["No", "Yes"];
+    const SELECT_FIELD_OPTIONS = { production_status: PRODUCTION_STATUS_OPTIONS, orgatex: ORGATEX_OPTIONS };
+    function machineUpdateUrl(code) { return window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE.replace("__MACHINE__", encodeURIComponent(code)); }
+    function displayFieldValue(field, rawValue) {
+        if (field === "orgatex") return rawValue ? "Yes" : "No";
+        return rawValue === null || rawValue === undefined || rawValue === "" ? "-" : rawValue;
+    }
+    function renderMachineCell(row, field, rawValue) {
+        const displayValue = displayFieldValue(field, rawValue);
+        if (!window.REPORTS_CAN_EDIT_MACHINES) return `<td>${displayValue}</td>`;
+        return `<td><span class="case-note-cell" data-machine="${row.machine_code}" data-field="${field}">${displayValue}</span></td>`;
+    }
+    function buildMachineCellSpan(machine, field, value) {
+        const span = document.createElement("span");
+        span.className = "case-note-cell";
+        span.dataset.machine = machine;
+        span.dataset.field = field;
+        span.textContent = displayFieldValue(field, value);
+        return span;
+    }
+    function saveMachineField(inputEl, machine, field, rawValue) {
+        let value = rawValue;
+        if (field === "mc_quantity" || field === "tube_no") {
+            value = rawValue === "" ? null : parseInt(rawValue, 10);
+        } else if (field === "capacity_kg") {
+            value = rawValue === "" ? null : Number(rawValue);
+        } else if (field === "orgatex") {
+            value = rawValue === "Yes";
+        } else {
+            value = rawValue === "" ? null : rawValue;
+        }
+        if (typeof value === "number" && Number.isNaN(value)) {
+            inputEl.replaceWith(buildMachineCellSpan(machine, field, ""));
+            showToast(`${MACHINE_FIELD_LABELS[field]} must be a number.`, "error");
+            return;
+        }
+        fetch(machineUpdateUrl(machine), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ [field]: value }),
+        }).then((response) => response.json().catch(() => ({})).then((data) => {
+            if (!response.ok) throw new Error(data.error || "save failed");
+            inputEl.replaceWith(buildMachineCellSpan(machine, field, value));
+            showToast(`${MACHINE_FIELD_LABELS[field]} saved.`, "success");
+        })).catch((err) => {
+            inputEl.replaceWith(buildMachineCellSpan(machine, field, rawValue));
+            showToast(err && err.message ? err.message : `Failed to save ${MACHINE_FIELD_LABELS[field]}.`, "error");
+        });
+    }
+    function startEditingMachineCell(cell, overrideValue) {
+        const machine = cell.dataset.machine;
+        const field = cell.dataset.field;
+        const currentText = cell.textContent.trim();
+        const currentValue = overrideValue !== undefined ? overrideValue : (currentText === "-" ? "" : currentText);
+        const selectOptions = SELECT_FIELD_OPTIONS[field];
+        const input = document.createElement(selectOptions ? "select" : "input");
+        if (selectOptions) {
+            input.innerHTML = selectOptions.map((opt) => `<option value="${escAttr(opt)}" ${opt === currentValue ? "selected" : ""}>${escHtml(opt)}</option>`).join("");
+        } else {
+            input.type = (field === "mc_quantity" || field === "tube_no" || field === "capacity_kg") ? "number" : "text";
+            if (field === "capacity_kg") input.step = "0.1";
+            input.value = currentValue;
+        }
+        input.className = "case-note-input";
+        input.dataset.machine = machine;
+        input.dataset.field = field;
+        cell.replaceWith(input);
+        input.focus();
+        if (!selectOptions) input.select();
+        let settled = false;
+        function commit() { if (settled) return; settled = true; saveMachineField(input, machine, field, input.value.trim()); }
+        function cancel() { if (settled) return; settled = true; input.replaceWith(buildMachineCellSpan(machine, field, currentValue)); }
+        input.addEventListener("blur", commit);
+        if (selectOptions) input.addEventListener("change", commit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+        });
+    }
+    document.querySelector("#machines-table tbody").addEventListener("click", (event) => {
+        const cell = event.target.closest(".case-note-cell");
+        if (!cell || !cell.dataset.machine) return;
+        startEditingMachineCell(cell);
+    });
+    function renderRow(row) {
+        return `<tr>${renderMachineCell(row, "group_mc", row.group_mc)}<td>${escHtml(row.machine_code || "-")}</td>${renderMachineCell(row, "mc_brand", row.mc_brand)}${renderMachineCell(row, "tank_type", row.tank_type)}${renderMachineCell(row, "mc_quantity", row.mc_quantity)}${renderMachineCell(row, "tube_no", row.tube_no)}${renderMachineCell(row, "capacity_kg", row.capacity_kg)}${renderMachineCell(row, "status", row.status)}${renderMachineCell(row, "production_status", row.production_status)}${renderMachineCell(row, "orgatex", row.orgatex)}</tr>`;
+    }
+    function load() {
+        fetch(listEndpoint).then((response) => response.json()).then((data) => {
+            const machines = data.machines || [];
+            document.querySelector("#machines-table tbody").innerHTML = machines.map(renderRow).join("");
+            document.getElementById("machines-empty").style.display = machines.length ? "none" : "block";
+        });
+    }
+    load();
+
+    const addMachineFormEl = document.getElementById("add-machine-form");
+    if (!window.REPORTS_CAN_EDIT_MACHINES) {
+        addMachineFormEl.style.display = "none";
+    } else {
+        document.getElementById("add-machine-btn").addEventListener("click", () => {
+            const codeInput = document.getElementById("new-machine-code");
+            const groupInput = document.getElementById("new-machine-group");
+            const code = codeInput.value.trim();
+            const groupMc = groupInput.value.trim();
+            if (!code) { showToast("Machine code is required.", "error"); codeInput.focus(); return; }
+            if (!groupMc) { showToast("Group MC is required.", "error"); groupInput.focus(); return; }
+            fetch(machineUpdateUrl(code), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ group_mc: groupMc }),
+            }).then((response) => response.json().catch(() => ({})).then((data) => {
+                if (!response.ok) throw new Error(data.error || "save failed");
+                codeInput.value = "";
+                groupInput.value = "";
+                showToast(`Machine ${code} added.`, "success");
+                load();
+            })).catch((err) => {
+                showToast(err && err.message ? err.message : "Failed to add machine.", "error");
+            });
+        });
+    }
+}());
+</script>
+{% endblock %}

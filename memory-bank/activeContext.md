@@ -1,6 +1,78 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-19 (khuya, bản 3) — Tab "Batch/Day Trend" (`batch_matrix`) giờ
+**Cập nhật lần cuối:** 2026-09-22 — Báo cáo "Batch Per Day by Machine" (`reports`
+engine, `cleaning_matrix.py`) đổi thiết kế: danh sách máy hiển thị KHÔNG còn tự phát hiện
+từ dữ liệu batch (bug người dùng report: máy chưa có `capacity_kg` trong dữ liệu import bị
+ẩn khỏi báo cáo dù đã chạy mẻ thật, do filter Capacity mặc định chỉ chọn 300/500/600/1200/
+2400). Bảng `machines` đổi vai trò thành **"Machine Master"** — NGUỒN DUY NHẤT quyết định
+máy nào hiển thị, quản lý thủ công qua UI (nút "+ Add Machine" + inline edit từng ô), không
+còn tự suy ra từ `availability_logs`/`batch_details`. Thêm 4 cột mới vào `machines`:
+`group_mc` (text tự do), `status` (`Running`/`Will be removed`), `production_status`
+(`Sample`/`Bulk`), `orgatex` (cờ 0/1 Yes/No) — validate ở `upsert_machine_config()`. Bảng
+báo cáo giờ có thêm cột Group MC (PINNED cùng cột Machine, không thể ẩn) + Status/
+Production Status/Orgatex (gia nhập nhóm cột có thể ẩn/hiện `mc-config-col` đã có sẵn 5 cột
+MC brand/Tank/MC quantity/Tube no/Capacity). Capacity filter mặc định đổi từ preset
+300/500/600/1200/2400 sang **"All"** (nguồn `available_capacities` giờ lấy từ
+`machines.capacity_kg` đã khai báo, không còn suy từ dữ liệu batch thô).
+
+**Không âm thầm bỏ dữ liệu**: batch nào có `machine` KHÔNG khớp mã máy nào trong Machine
+Master vẫn được GIỮ LẠI (tính đủ vào KPI/"Normal Dyeing Batches by Colour", đúng nguyên tắc
+"double-check" của dự án) dưới dạng dòng **"unmapped"** (`is_unmapped=True`, badge cảnh báo
+cam trên UI, luôn hiện bất kể filter Capacity vì chưa có Capacity khai báo để so khớp) — API
+trả thêm field `unmapped_machines` (danh sách mã máy + số mẻ) để UI hiện banner cảnh báo
+nhắc khai báo qua "+ Add Machine".
+
+**File mới `backfill_machine_master.py`** (script gốc, chạy 1 lần, idempotent — INSERT mã
+máy DISTINCT từ `availability_logs`/`batch_details` CHƯA có trong `machines`, để không phải
+bấm "+ Add Machine" ~60 lần thủ công ngay sau khi đổi thiết kế): khảo sát DB dev thật lúc
+làm tính năng này cho thấy `machines` gần như RỖNG (chỉ 1 dòng "1401" từ trước) — nếu KHÔNG
+chạy script này, gần như TOÀN BỘ ~60 máy thật sẽ hiện "(unmapped)" ngay khi người dùng mở
+trang. **CHƯA CHẠY trên DB dev/production thật** (đã verify script hoạt động đúng + idempotent
+trên bản sao DB tạm — xem "Việc tiếp theo"). Postgres production cần áp
+`supabase/migrate_machines_master_columns.sql` thủ công (idempotent, thêm 4 cột mới) trước
+khi chạy backfill trên Supabase.
+
+**Verify đã làm**: `tests/test_permission_model.py` (28 case, full regression, PASS 100%),
+`tests/verify_rollup_parity.py::legacy_get_cleaning_matrix()` viết lại để dùng CHUNG
+`_normalize_code()`/`_blank_machine_item()` thật từ `cleaning_matrix.py` (không viết lại
+lần 2) — script này giờ CHỈ còn kiểm tra rollup fidelity ở tầng phân loại badge, không còn
+so sánh cách chọn machine list (đã là logic chung). **Lưu ý phát hiện phụ, KHÔNG phải do
+thay đổi lần này**: `verify_rollup_parity.py` phần cleaning_matrix đã lệch (rollup đếm nhiều
+hơn raw JOIN trực tiếp) TỪ TRƯỚC — verify bằng `git stash` (chạy lại đúng script trên code
+CŨ vẫn lệch y hệt, KPI legacy=6166 vs new=7183) — nguyên nhân là `recompute_daily()` gộp
+thêm nguồn "batch_details mồ côi" (`_orphan_batch_rows()`, tính năng đã có từ trước) mà hàm
+`legacy_get_cleaning_matrix()` của script test chưa từng cập nhật theo — KHÔNG sửa trong lần
+này (ngoài phạm vi task, không liên quan tới Machine Master). Smoke test end-to-end riêng
+(Flask test client trên bản sao DB dev thật, không đụng DB thật): view page 200 + có "Group
+MC"/"Add Machine", API trả đủ field mới, Add Machine tạo máy mới hiện đúng với 0 mẻ, sửa
+Status/Production Status hợp lệ -> 200, giá trị sai -> 400, Capacity filter theo Machine
+Master hoạt động đúng, ghi bị chặn khi chưa đăng nhập.
+
+**Bổ sung cùng ngày**: thêm trang riêng **"Machine Master"** (`/dyeing/reports/machines`,
+`machines_view` endpoint) — người dùng hỏi "hệ thống đã có tab machine chưa", xác nhận CHƯA
+có nên tạo mới. Trang gọn (không có cột ngày như "Batch Per Day by Machine"), liệt kê TOÀN
+BỘ máy trong Machine Master (`GET /dyeing/reports/api/machines`, `list_machine_configs()` có
+sẵn) + form "+ Add Machine" + inline edit mọi cột — dùng lại NGUYÊN VẸN endpoint
+`upsert_machine_config()`/`POST /api/machines/<code>` đã có, không thêm route ghi mới.
+Thêm menu con "Machine Master" vào Sidebar Dyeing (`modules/dyeing/__init__.py`, chèn thủ
+công sau "Batch Per Day by Machine" — cùng `domain`/`engine_name` "dyeing"/"reports" nên
+dùng CHUNG quyền view/edit, không cần khai báo quyền riêng). **Cố tình KHÔNG xoá** Add
+Machine + inline edit đã có sẵn trên trang "Batch Per Day by Machine" (giữ nguyên, không có
+yêu cầu bỏ) — cả 2 trang cùng ghi qua 1 API duy nhất nên không lệch dữ liệu. Verify: smoke
+test Flask test client (trang 200, có heading/nút đúng, nav có cả 2 mục, thêm máy qua API
+thấy ngay ở cả `list_machine_configs()`, sửa Status text tự do OK, chưa đăng nhập bị chặn
+302) + `tests/test_permission_model.py` full regression PASS 100%.
+
+**Việc tiếp theo**: (1) chạy `python backfill_machine_master.py` trên DB dev/production thật
+để mồi sẵn danh sách máy (admin tự điền Group MC/Capacity/... sau qua UI); (2) áp
+`supabase/migrate_machines_master_columns.sql` trên Supabase production TRƯỚC khi backfill ở
+đó; (3) người dùng đã gửi SQL INSERT 69 máy thật (từ file "0 CETVN Dyeing MC 2026_08
+19.xlsm") để tự chạy trên Supabase — mã máy đã CHUẨN HOÁ khớp đúng dữ liệu import thật
+(D21->D021, F1401->1401, H1203->1203, HE101->0101, HE601->0601 — xem lịch sử hội thoại nếu
+cần đối chiếu lại), CHƯA xác nhận đã chạy; (4) không có yêu cầu đổi UI cho phần "Normal
+Dyeing Batches by Colour"/Color Legend trên "Batch Per Day by Machine" — giữ nguyên.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-19 (khuya, bản 3) — Tab "Batch/Day Trend" (`batch_matrix`) giờ
 **mặc định lọc Capacity >= 500Kg** khi vào trang lần đầu (trước đó mặc định "All capacities",
 theo yêu cầu người dùng). Dropdown Capacity của tab này là DATA-DRIVEN (option lấy từ
 `available_capacities` thật trả về từ API, KHÁC danh sách checkbox cố định `[25,50,300,500,

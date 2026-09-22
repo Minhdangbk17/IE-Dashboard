@@ -66,6 +66,25 @@ def register(app: Flask) -> None:
         for e in engines_loaded
         if e.name != "excel_import"  # excel_import chỉ dùng qua Modal, không có trang riêng
     ]
+    # "Machine Master" (2026-09-22) — trang riêng để tạo/sửa danh mục máy (Group MC/Status/
+    # Capacity/...), tách khỏi báo cáo "Batch Per Day by Machine" (vốn cũng có sẵn Add
+    # Machine + inline edit, nhưng lẫn giữa rất nhiều cột ngày của lịch máy — trang này gọn
+    # hơn cho việc rà soát/khai báo TOÀN BỘ danh mục). Cùng Engine `reports` (`domain`/
+    # `engine_name` gắn "dyeing"/"reports") nên dùng CHUNG quyền view/edit đã có, không cần
+    # khai báo quyền riêng. Chèn thủ công (không qua vòng lặp `engines_loaded` ở trên) vì
+    # đây là trang THỨ 2 của CÙNG 1 Engine, không phải Engine mới.
+    if any(e.name == "reports" for e in engines_loaded):
+        reports_index = next(i for i, item in enumerate(children) if item.endpoint == f"{DOMAIN_NAME}.reports.view")
+        children.insert(
+            reports_index + 1,
+            NavItem(
+                label="Machine Master",
+                endpoint=f"{DOMAIN_NAME}.reports.machines_view",
+                icon="tools",
+                domain="dyeing",
+                engine_name="reports",
+            ),
+        )
     register_menu(
         label="Dyeing",
         endpoint=f"{DOMAIN_NAME}.hub",

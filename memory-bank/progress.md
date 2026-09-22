@@ -881,6 +881,27 @@
       raw data trực tiếp) ở `activeContext.md` mục -21. Verify: Playwright
       thật (Chromium headless) xác nhận dropdown tự chọn đúng, KPI lọc đúng
       + full regression PASS 100%.
+- [x] **"Machine Master" cho báo cáo "Batch Per Day by Machine" — HOÀN THÀNH
+      2026-09-22**: đổi thiết kế theo yêu cầu người dùng (bug report: máy chưa
+      có capacity_kg trong dữ liệu import bị ẩn khỏi báo cáo dù đã chạy mẻ
+      thật, do filter Capacity mặc định chỉ chọn 5 mức cố định). Bảng
+      `machines` đổi vai trò thành Machine Master — NGUỒN DUY NHẤT quyết định
+      máy nào hiển thị (không còn tự phát hiện từ `availability_logs`/
+      `batch_details`), quản lý thủ công qua UI ("+ Add Machine" + inline
+      edit). Thêm 4 cột mới: `group_mc` (text), `status`
+      (Running/Will be removed), `production_status` (Sample/Bulk), `orgatex`
+      (cờ Yes/No) — validate ở `upsert_machine_config()`. Cột Group MC PINNED
+      cùng Machine (không ẩn được); Status/Production Status/Orgatex gia nhập
+      nhóm cột có thể ẩn/hiện đã có sẵn. Batch không khớp máy nào trong
+      Machine Master vẫn GIỮ LẠI (không âm thầm mất dữ liệu) dưới dạng dòng
+      "unmapped" kèm banner cảnh báo. Script mới `backfill_machine_master.py`
+      (idempotent, mồi sẵn ~60 mã máy thật từ dữ liệu import) — **CHƯA CHẠY
+      trên DB dev/production thật**, xem `activeContext.md` mục "Việc tiếp
+      theo". Thêm trang riêng **"Machine Master"** (`/dyeing/reports/machines`,
+      menu con Sidebar Dyeing) để tạo/sửa danh mục máy độc lập khỏi bảng lịch
+      máy nhiều cột ngày — dùng lại nguyên API `list_machine_configs()`/
+      `upsert_machine_config()`, không thêm route ghi mới. Chi tiết đầy đủ ở
+      `activeContext.md`.
 
 ## Backlog (Phase 2+)
 - [ ] "Khoá tài khoản" (deactivate, cột `is_active` ở `users`) — tuỳ chọn

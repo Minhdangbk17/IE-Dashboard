@@ -276,11 +276,18 @@ def new_category_hours_from_summary(date_from: str | None, date_to: str | None, 
 
 def legacy_get_cleaning_matrix(date_from: str | None, date_to: str | None, capacities: list[str] | None) -> dict[str, Any]:
     """Dựng lại NGUYÊN VẸN get_cleaning_matrix() bản JOIN trực tiếp (trước rollup) —
-    JOIN availability_logs x batch_details x machines + classify_batch_badge() NGAY
-    LÚC ĐỌC, không qua cleaning_mc_daily_summary. Chỉ khác cách lọc ngày operational_bounds()
-    gốc (mốc datetime [07:00, next-day 07:00)) bằng lọc trực tiếp trên production_date đã
-    shift — hai cách tương đương vì production_date được ĐỊNH NGHĨA từ đúng mốc cắt 07:00 đó."""
-    from modules.dyeing.engines.reports.cleaning_matrix import classify_batch_badge
+    JOIN availability_logs x batch_details + classify_batch_badge() NGAY LÚC ĐỌC, không qua
+    cleaning_mc_daily_summary. Chỉ khác cách lọc ngày operational_bounds() gốc (mốc datetime
+    [07:00, next-day 07:00)) bằng lọc trực tiếp trên production_date đã shift — hai cách
+    tương đương vì production_date được ĐỊNH NGHĨA từ đúng mốc cắt 07:00 đó.
+
+    Danh sách machine (2026-09-22, sau khi đổi thiết kế Machine Master) dùng LẠI ĐÚNG
+    `_normalize_code()`/`_blank_machine_item()` thật từ cleaning_matrix.py thay vì viết lại
+    lần 2 — script này CHỈ còn cần kiểm tra rollup fidelity ở TẦNG PHÂN LOẠI BADGE/ngày cắt
+    ca (classify_batch_badge() chạy trên raw JOIN vs chạy trong recompute_daily()), việc chọn
+    machine nào hiển thị đã là logic CHUNG (đọc Machine Master), không còn khác biệt cần dò
+    lại giữa 2 đường."""
+    from modules.dyeing.engines.reports.cleaning_matrix import _blank_machine_item, _normalize_code, classify_batch_badge
 
     availability_columns = {row["name"] for row in execute_query("PRAGMA table_info(availability_logs)")}
     batch_columns = {row["name"] for row in execute_query("PRAGMA table_info(batch_details)")}
@@ -294,12 +301,9 @@ def legacy_get_cleaning_matrix(date_from: str | None, date_to: str | None, capac
              COALESCE(b.colour_no, '') AS colour_no, COALESCE(b.customer_color, '') AS customer_color, COALESCE(b.batch_type, '') AS batch_type,
              COALESCE(b.recipe_no, '') AS recipe_no,
              {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
-             COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref,
-             COALESCE(m.machine_code, a.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
-             COALESCE(m.capacity_kg, a.capacity_kg) AS configured_capacity_kg
+             COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref
         FROM availability_logs a
         LEFT JOIN batch_details b ON lower(trim(b.dyelot)) = lower(trim(a.batch_ref_no)) OR lower(trim(b.dyelot)) = lower(trim(a.batch))
-        LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(a.machine))
         WHERE 1=1
     """
     params: list[Any] = []
@@ -312,22 +316,43 @@ def legacy_get_cleaning_matrix(date_from: str | None, date_to: str | None, capac
     sql += f" ORDER BY production_date, a.machine, {sequence_expression}, a.start_time, a.end_time"
     rows = execute_query(sql, params)
 
-    available_capacities = sorted({round(float(row["configured_capacity_kg"]), 2) for row in rows if row["configured_capacity_kg"] not in (None, "")})
+    master_rows = execute_query(
+        "SELECT machine_id, machine_code, group_mc, mc_brand, tank_type, mc_quantity, tube_no, capacity_kg, "
+        "status, production_status, orgatex FROM machines WHERE domain = 'dyeing'",
+        [],
+    )
+    available_capacities = sorted({round(float(m["capacity_kg"]), 2) for m in master_rows if m["capacity_kg"] not in (None, "")})
     capacity_filter = {round(float(value), 2) for value in capacities} if capacities else None
 
-    machines: dict[tuple[str, float], dict[str, Any]] = {}
+    machines: dict[str, dict[str, Any]] = {}
+    master_by_norm: dict[str, Any] = {}
+    for master in master_rows:
+        machine_code_value = master["machine_code"] or master["machine_id"]
+        if not machine_code_value:
+            continue
+        norm = _normalize_code(machine_code_value)
+        master_by_norm[norm] = master
+        if capacity_filter is not None:
+            row_capacity = round(float(master["capacity_kg"]), 2) if master["capacity_kg"] not in (None, "") else None
+            if row_capacity not in capacity_filter:
+                continue
+        machines[norm] = _blank_machine_item(machine_code_value, machine_code_value, master)
+
+    unmapped: dict[str, dict[str, Any]] = {}
     normal = cleaning_count = rework = 0
     color_source_missing = color_source_present = 0
     for row in rows:
-        if capacity_filter is not None:
-            row_capacity = round(float(row["configured_capacity_kg"]), 2) if row["configured_capacity_kg"] not in (None, "") else None
-            if row_capacity not in capacity_filter:
+        raw_machine = (row["machine"] or "").strip()
+        norm = _normalize_code(raw_machine)
+        item = machines.get(norm)
+        if item is None:
+            master = master_by_norm.get(norm)
+            if master is not None:
                 continue
-        machine_key = (row["machine"], float(row["capacity_kg"] or 0))
+            item = unmapped.setdefault(norm, _blank_machine_item(raw_machine or "(unknown)", None, None))
         normalized_batch_type = str(row["batch_type"] or "").strip().lower()
         if not normalized_batch_type:
             normalized_batch_type = "normal"
-        item = machines.setdefault(machine_key, {"machine": row["machine_code"], "machine_code": row["machine_code"], "mc_brand": row["mc_brand"] or "-", "tank_type": row["tank_type"] or "-", "mc_quantity": row["mc_quantity"] or 1, "tube_no": row["tube_no"] or "-", "capacity": row["configured_capacity_kg"], "cleaning_count": 0, "normal_batches": 0, "rd_batches": 0, "rework_batches": 0, "days": {}})
         if row["dyelot_ref"] or row["colour_no"] or row["shade"]:
             color_source_present += 1
         else:
@@ -359,7 +384,7 @@ def legacy_get_cleaning_matrix(date_from: str | None, date_to: str | None, capac
             item["rework_batches"] += 1
             rework += 1
     matrix = []
-    for item in machines.values():
+    for item in list(machines.values()) + list(unmapped.values()):
         item["cleaning_ratio"] = round(item["normal_batches"] / item["cleaning_count"], 2) if item["cleaning_count"] else None
         matrix.append(item)
     return {
@@ -455,8 +480,10 @@ def main() -> int:
             if legacy["color_data_coverage"] != new["color_data_coverage"]:
                 ok = False
                 print(f"  [FAIL] {label}: color_data_coverage legacy={legacy['color_data_coverage']} new={new['color_data_coverage']}")
-            legacy_by_machine = {item["machine_code"]: item for item in legacy["matrix"]}
-            new_by_machine = {item["machine_code"]: item for item in new["matrix"]}
+            # Khoá theo machine_code hoặc machine (raw name) cho dòng 'unmapped' —
+            # machine_code=None với MỌI dòng unmapped nên không dùng trực tiếp làm khoá được.
+            legacy_by_machine = {(item["machine_code"] or item["machine"]): item for item in legacy["matrix"]}
+            new_by_machine = {(item["machine_code"] or item["machine"]): item for item in new["matrix"]}
             if set(legacy_by_machine) != set(new_by_machine):
                 ok = False
                 print(f"  [FAIL] {label}: bộ máy khác nhau legacy_only={set(legacy_by_machine) - set(new_by_machine)} new_only={set(new_by_machine) - set(legacy_by_machine)}")

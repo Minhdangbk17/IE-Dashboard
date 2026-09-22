@@ -31,10 +31,18 @@
     <button id="matrix-load" class="btn btn-primary">Load Matrix</button>
 </div></section>
 <div id="matrix-coverage-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
+<div id="unmapped-machine-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
 <div id="matrix-kpis" class="d-flex flex-wrap mb-3" style="gap:12px"></div>
 <div class="Box p-3" style="overflow-x:auto">
-    <div class="d-flex flex-justify-end mb-2"><button id="toggle-mc-columns" class="btn btn-sm" type="button">Hide machine settings columns</button></div>
-    <table class="preview-table matrix-table" id="matrix-table"><thead><tr id="matrix-head"><th>Machine</th><th class="mc-config-col">MC brand</th><th class="mc-config-col">Tank</th><th class="mc-config-col">MC quantity</th><th class="mc-config-col">Tube no</th><th class="mc-config-col">Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th></tr></thead><tbody></tbody></table>
+    <div class="d-flex flex-justify-between flex-items-center mb-2">
+        <div id="add-machine-form" class="d-flex flex-items-end flex-wrap" style="gap:8px">
+            <div class="form-group mb-0"><label for="new-machine-code">Machine</label><input id="new-machine-code" class="form-control" type="text" placeholder="e.g. D512" style="width:140px"></div>
+            <div class="form-group mb-0"><label for="new-machine-group">Group MC</label><input id="new-machine-group" class="form-control" type="text" placeholder="e.g. Group A" style="width:140px"></div>
+            <button id="add-machine-btn" class="btn btn-sm btn-primary" type="button">+ Add Machine</button>
+        </div>
+        <button id="toggle-mc-columns" class="btn btn-sm" type="button">Hide machine settings columns</button>
+    </div>
+    <table class="preview-table matrix-table" id="matrix-table"><thead><tr id="matrix-head"><th>Machine</th><th>Group MC</th><th class="mc-config-col">MC brand</th><th class="mc-config-col">Tank</th><th class="mc-config-col">MC quantity</th><th class="mc-config-col">Tube no</th><th class="mc-config-col">Capacity (Kg)</th><th class="mc-config-col">Status</th><th class="mc-config-col">Production Status</th><th class="mc-config-col">Orgatex</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th></tr></thead><tbody></tbody></table>
 </div>
 <div class="Box p-3 mt-3" style="overflow-x:auto"><h3 class="mt-0">Normal Dyeing Batches by Colour (per day)</h3><table class="preview-table matrix-table" id="color-summary-table"><thead><tr id="color-summary-head"></tr></thead><tbody></tbody></table></div>
 <style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}</style>
@@ -59,19 +67,31 @@
         container.appendChild(el);
         window.setTimeout(() => el.remove(), 4000);
     }
-    const MACHINE_FIELD_LABELS = { mc_brand: "MC brand", tank_type: "Tank", mc_quantity: "MC quantity", tube_no: "Tube no", capacity_kg: "Capacity (Kg)" };
+    const MACHINE_FIELD_LABELS = { group_mc: "Group MC", mc_brand: "MC brand", tank_type: "Tank", mc_quantity: "MC quantity", tube_no: "Tube no", capacity_kg: "Capacity (Kg)", status: "Status", production_status: "Production Status", orgatex: "Orgatex" };
+    const PRODUCTION_STATUS_OPTIONS = ["Sample", "Bulk", "No production"];
+    const ORGATEX_OPTIONS = ["No", "Yes"];
+    // Field nào render bằng <select> thay vì <input> tự do khi inline-edit. Status KHÔNG có
+    // trong danh sách này (2026-09-22, đổi từ dropdown 2 giá trị ban đầu) — dữ liệu máy thật
+    // có tới 6 giá trị Status khác nhau (gồm mô tả gộp/tách máy như "Grouped to D514"),
+    // không fit vào tập cố định nhỏ — Status giờ là text tự do như MC brand/Tank.
+    const SELECT_FIELD_OPTIONS = { production_status: PRODUCTION_STATUS_OPTIONS, orgatex: ORGATEX_OPTIONS };
     function machineUpdateUrl(code) { return window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE.replace("__MACHINE__", encodeURIComponent(code)); }
-    function renderMachineCell(row, field, rawValue) {
-        const displayValue = rawValue === null || rawValue === undefined || rawValue === "" ? "-" : rawValue;
-        if (!window.REPORTS_CAN_EDIT_MACHINES || !row.machine_code) return `<td class="mc-config-col">${displayValue}</td>`;
-        return `<td class="mc-config-col"><span class="case-note-cell" data-machine="${row.machine_code}" data-field="${field}">${displayValue}</span></td>`;
+    function displayFieldValue(field, rawValue) {
+        if (field === "orgatex") return rawValue ? "Yes" : "No";
+        return rawValue === null || rawValue === undefined || rawValue === "" ? "-" : rawValue;
+    }
+    function renderMachineCell(row, field, rawValue, pinned) {
+        const displayValue = displayFieldValue(field, rawValue);
+        const cellClass = pinned ? "" : ' class="mc-config-col"';
+        if (!window.REPORTS_CAN_EDIT_MACHINES || !row.machine_code) return `<td${cellClass}>${displayValue}</td>`;
+        return `<td${cellClass}><span class="case-note-cell" data-machine="${row.machine_code}" data-field="${field}">${displayValue}</span></td>`;
     }
     function buildMachineCellSpan(machine, field, value) {
         const span = document.createElement("span");
         span.className = "case-note-cell";
         span.dataset.machine = machine;
         span.dataset.field = field;
-        span.textContent = value === "" || value === null || value === undefined ? "-" : value;
+        span.textContent = displayFieldValue(field, value);
         return span;
     }
     function saveMachineField(inputEl, machine, field, rawValue) {
@@ -80,10 +100,12 @@
             value = rawValue === "" ? null : parseInt(rawValue, 10);
         } else if (field === "capacity_kg") {
             value = rawValue === "" ? null : Number(rawValue);
+        } else if (field === "orgatex") {
+            value = rawValue === "Yes";
         } else {
             value = rawValue === "" ? null : rawValue;
         }
-        if (value !== null && Number.isNaN(value)) {
+        if (typeof value === "number" && Number.isNaN(value)) {
             inputEl.replaceWith(buildMachineCellSpan(machine, field, ""));
             showToast(`${MACHINE_FIELD_LABELS[field]} must be a number.`, "error");
             return;
@@ -113,20 +135,26 @@
         const field = cell.dataset.field;
         const currentText = cell.textContent.trim();
         const currentValue = overrideValue !== undefined ? overrideValue : (currentText === "-" ? "" : currentText);
-        const input = document.createElement("input");
-        input.type = (field === "mc_quantity" || field === "tube_no" || field === "capacity_kg") ? "number" : "text";
-        if (field === "capacity_kg") input.step = "0.1";
+        const selectOptions = SELECT_FIELD_OPTIONS[field];
+        const input = document.createElement(selectOptions ? "select" : "input");
+        if (selectOptions) {
+            input.innerHTML = selectOptions.map((opt) => `<option value="${escAttr(opt)}" ${opt === currentValue ? "selected" : ""}>${escHtml(opt)}</option>`).join("");
+        } else {
+            input.type = (field === "mc_quantity" || field === "tube_no" || field === "capacity_kg") ? "number" : "text";
+            if (field === "capacity_kg") input.step = "0.1";
+            input.value = currentValue;
+        }
         input.className = "case-note-input";
         input.dataset.machine = machine;
         input.dataset.field = field;
-        input.value = currentValue;
         cell.replaceWith(input);
         input.focus();
-        input.select();
+        if (!selectOptions) input.select();
         let settled = false;
         function commit() { if (settled) return; settled = true; saveMachineField(input, machine, field, input.value.trim()); }
         function cancel() { if (settled) return; settled = true; input.replaceWith(buildMachineCellSpan(machine, field, currentValue)); }
         input.addEventListener("blur", commit);
+        if (selectOptions) input.addEventListener("change", commit);
         input.addEventListener("keydown", (event) => {
             if (event.key === "Enter") { event.preventDefault(); input.blur(); }
             if (event.key === "Escape") { event.preventDefault(); cancel(); }
@@ -208,9 +236,12 @@
         };
     }
 
-    // Mặc định Capacity = 300/500/600/1200/2400 (giữ nguyên hành vi cũ) — "All" (bỏ chọn
-    // hết) vẫn cần thiết để thấy máy MỚI chưa cấu hình Capacity (configured_capacity_kg=null).
-    const capacityFilter = makeMultiSelectDropdown("capacity-toggle", "capacity-menu", "All capacities", ["300", "500", "600", "1200", "2400"], load);
+    // Mặc định Capacity = "All" (2026-09-22, đổi từ preset 300/500/600/1200/2400 cố định) —
+    // danh sách máy giờ luôn xuất phát từ Machine Master (xem get_cleaning_matrix()), preset
+    // cũ sẽ ẩn mất bất kỳ máy nào chưa kịp khai báo Capacity hoặc có Capacity ngoài 5 mức đó,
+    // đúng nguyên nhân gây "thiếu machine" đã báo. "All" luôn hiện đủ mọi máy trong Machine
+    // Master; người dùng tự thu hẹp bằng dropdown khi cần.
+    const capacityFilter = makeMultiSelectDropdown("capacity-toggle", "capacity-menu", "All capacities", [], load);
     const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", [], load);
     const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", [], load);
 
@@ -239,6 +270,16 @@
         el.style.display = "block";
         el.innerHTML = `<strong>Missing color data:</strong> ${coverage.missing}/${coverage.missing + coverage.present} batches (${coverage.missing_pct}%) in this range have no matching ColourNo/Shade in Batch Detail — shown with default badge 'M'. Import the missing Dyelots' Batch Detail (.xlsx) to fix classification.`;
     }
+    // Máy có mẻ THẬT trong dữ liệu nhưng chưa được khai báo trong Machine Master — vẫn
+    // được tính vào KPI/bảng "Normal Dyeing Batches by Colour" (không âm thầm bỏ dữ liệu),
+    // nhưng cần cảnh báo rõ để người dùng bấm "+ Add Machine" khai báo chính thức.
+    function renderUnmappedWarning(unmappedMachines) {
+        const el = document.getElementById("unmapped-machine-warning");
+        if (!unmappedMachines || !unmappedMachines.length) { el.style.display = "none"; return; }
+        el.style.display = "block";
+        const names = unmappedMachines.map((item) => `${escHtml(item.machine)} (${item.batch_count} batch${item.batch_count === 1 ? "" : "es"})`).join(", ");
+        el.innerHTML = `<strong>Machines not in Machine Master:</strong> ${names} — batches from these machines are still counted above, but shown as separate rows at the end of the table. Use "+ Add Machine" to register them properly.`;
+    }
     function renderColorSummary(data) {
         const summary = data.color_summary || { labels: [], by_day: {} };
         const head = document.getElementById("color-summary-head");
@@ -257,13 +298,60 @@
         const totalRow = `<tr class="total-row"><th>Total</th>${dayTotals.map((count) => `<td><strong>${count}</strong></td>`).join("")}<td><strong>${grandTotal}</strong></td></tr>`;
         body.innerHTML = rowsHtml + totalRow;
     }
-    function render(data) { renderCoverageWarning(data.color_data_coverage); renderColorSummary(data); document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join(""); const head = document.getElementById("matrix-head"); head.innerHTML = "<th>Machine</th><th class=\"mc-config-col\">MC brand</th><th class=\"mc-config-col\">Tank</th><th class=\"mc-config-col\">MC quantity</th><th class=\"mc-config-col\">Tube no</th><th class=\"mc-config-col\">Capacity (Kg)</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join(""); document.querySelector("#matrix-table tbody").innerHTML = data.matrix.map((row) => `<tr><td>${row.machine_code || "-"}</td>${renderMachineCell(row, "mc_brand", row.mc_brand)}${renderMachineCell(row, "tank_type", row.tank_type)}${renderMachineCell(row, "mc_quantity", row.mc_quantity)}${renderMachineCell(row, "tube_no", row.tube_no)}${renderMachineCell(row, "capacity_kg", row.capacity)}<td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${data.time_labels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${batch.color_code_display}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}${batch.brand_program ? ` | ${batch.brand} - ${batch.brand_program}` : ""}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`).join(""); }
+    const MATRIX_HEAD_HTML = "<th>Machine</th><th>Group MC</th><th class=\"mc-config-col\">MC brand</th><th class=\"mc-config-col\">Tank</th><th class=\"mc-config-col\">MC quantity</th><th class=\"mc-config-col\">Tube no</th><th class=\"mc-config-col\">Capacity (Kg)</th><th class=\"mc-config-col\">Status</th><th class=\"mc-config-col\">Production Status</th><th class=\"mc-config-col\">Orgatex</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th>";
+    function renderMatrixRow(row, dayLabels) {
+        const machineLabel = row.machine_code || row.machine || "-";
+        const machineCell = row.is_unmapped
+            ? `<td>${escHtml(machineLabel)} <span class="f6" style="color:var(--warning)" title="Not in Machine Master yet">(unmapped)</span></td>`
+            : `<td>${escHtml(machineLabel)}</td>`;
+        return `<tr>${machineCell}${renderMachineCell(row, "group_mc", row.group_mc, true)}${renderMachineCell(row, "mc_brand", row.mc_brand)}${renderMachineCell(row, "tank_type", row.tank_type)}${renderMachineCell(row, "mc_quantity", row.mc_quantity)}${renderMachineCell(row, "tube_no", row.tube_no)}${renderMachineCell(row, "capacity_kg", row.capacity)}${renderMachineCell(row, "status", row.status)}${renderMachineCell(row, "production_status", row.production_status)}${renderMachineCell(row, "orgatex", row.orgatex)}<td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${dayLabels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${batch.color_code_display}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}${batch.brand_program ? ` | ${batch.brand} - ${batch.brand_program}` : ""}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`;
+    }
+    function render(data) {
+        renderCoverageWarning(data.color_data_coverage);
+        renderUnmappedWarning(data.unmapped_machines);
+        renderColorSummary(data);
+        document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join("");
+        const head = document.getElementById("matrix-head");
+        head.innerHTML = MATRIX_HEAD_HTML + data.time_labels.map((day) => `<th>${day}</th>`).join("");
+        document.querySelector("#matrix-table tbody").innerHTML = data.matrix.map((row) => renderMatrixRow(row, data.time_labels)).join("");
+    }
     function pad2(value) { return String(value).padStart(2, "0"); }
     function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
     const today = new Date();
     document.getElementById("matrix-from").value = formatDate(new Date(today.getFullYear(), today.getMonth(), 1));
     document.getElementById("matrix-to").value = formatDate(today);
     document.getElementById("matrix-load").addEventListener("click", load); load();
+
+    // "+ Add Machine": khai báo máy MỚI vào Machine Master TRƯỚC KHI có dữ liệu batch nào —
+    // dùng lại ĐÚNG endpoint upsert đã có (api_update_machine), Machine code chưa từng tồn
+    // tại sẽ tự rơi vào nhánh INSERT (xem upsert_machine_config()). Group MC bắt buộc để
+    // updates không rỗng (upsert_machine_config() từ chối payload rỗng).
+    const addMachineFormEl = document.getElementById("add-machine-form");
+    if (!window.REPORTS_CAN_EDIT_MACHINES) {
+        addMachineFormEl.style.display = "none";
+    } else {
+        document.getElementById("add-machine-btn").addEventListener("click", () => {
+            const codeInput = document.getElementById("new-machine-code");
+            const groupInput = document.getElementById("new-machine-group");
+            const code = codeInput.value.trim();
+            const groupMc = groupInput.value.trim();
+            if (!code) { showToast("Machine code is required.", "error"); codeInput.focus(); return; }
+            if (!groupMc) { showToast("Group MC is required.", "error"); groupInput.focus(); return; }
+            fetch(machineUpdateUrl(code), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ group_mc: groupMc }),
+            }).then((response) => response.json().catch(() => ({})).then((data) => {
+                if (!response.ok) throw new Error(data.error || "save failed");
+                codeInput.value = "";
+                groupInput.value = "";
+                showToast(`Machine ${code} added.`, "success");
+                load();
+            })).catch((err) => {
+                showToast(err && err.message ? err.message : "Failed to add machine.", "error");
+            });
+        });
+    }
 
     // Thu gọn/mở rộng tuỳ ý 5 cột cấu hình máy (MC brand/Tank/MC quantity/Tube no/
     // Capacity) — bảng có thêm rất nhiều cột ngày bên phải, thu gọn nhóm cột này giúp

@@ -59,6 +59,10 @@ create table if not exists machines (
     mc_quantity    integer not null default 1,
     tube_no        integer,
     capacity_kg    double precision,
+    group_mc       text,
+    status         text,
+    production_status text,
+    orgatex        integer not null default 0,
     is_active      integer not null default 1
 );
 create index if not exists idx_machines_code_norm on machines (lower(trim(coalesce(machine_code, machine_id))));

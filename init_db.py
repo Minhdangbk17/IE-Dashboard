@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS machines (
     mc_quantity INTEGER NOT NULL DEFAULT 1,
     tube_no INTEGER,
     capacity_kg REAL,
+    group_mc TEXT,
+    status TEXT,
+    production_status TEXT,
+    orgatex INTEGER NOT NULL DEFAULT 0,
     is_active    INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_machines_code_norm ON machines (LOWER(TRIM(COALESCE(machine_code, machine_id))));

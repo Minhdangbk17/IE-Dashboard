@@ -135,7 +135,14 @@ def _ensure_batch_details_columns(conn: Any) -> None:
         if column not in batch_columns:
             conn.execute(f"ALTER TABLE batch_details ADD COLUMN {column} {definition}")
     machine_columns = {row["name"] for row in conn.execute("PRAGMA table_info(machines)")}
-    for column, definition in (("machine_code", "TEXT"), ("mc_brand", "TEXT"), ("tank_type", "TEXT"), ("mc_quantity", "INTEGER"), ("tube_no", "INTEGER"), ("capacity_kg", "REAL")):
+    # group_mc/status/production_status/orgatex (2026-09-22): bảng `machines` đổi vai trò
+    # thành "Machine Master" — NGUỒN DUY NHẤT quyết định danh sách máy hiển thị trên báo
+    # cáo "Batch Per Day by Machine" (xem get_cleaning_matrix()), không còn chỉ là bảng
+    # enrichment tuỳ chọn. status/production_status là TEXT tự do ở tầng DB (validate giá
+    # trị hợp lệ ở upsert_machine_config(), KHÔNG dùng CHECK constraint vì SQLite không thể
+    # ALTER TABLE ADD COLUMN kèm CHECK — phải dựng lại bảng, không đáng làm cho migration
+    # nhỏ này). orgatex là cờ boolean 0/1.
+    for column, definition in (("machine_code", "TEXT"), ("mc_brand", "TEXT"), ("tank_type", "TEXT"), ("mc_quantity", "INTEGER"), ("tube_no", "INTEGER"), ("capacity_kg", "REAL"), ("group_mc", "TEXT"), ("status", "TEXT"), ("production_status", "TEXT"), ("orgatex", "INTEGER NOT NULL DEFAULT 0")):
         if column not in machine_columns:
             conn.execute(f"ALTER TABLE machines ADD COLUMN {column} {definition}")
     # Expression index cho đúng điều kiện JOIN lower(trim(...)) dùng trong recompute_daily() —
@@ -329,11 +336,44 @@ def recompute_daily(production_date: date, conn: Any) -> None:
     )
 
 
+def _normalize_code(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _blank_machine_item(machine_label: str, machine_code: str | None, master: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Khung 1 dòng machine cho matrix — dùng CHUNG cho máy có trong Machine Master (đủ
+    thuộc tính) LẪN máy 'unmapped' (có mẻ thật nhưng chưa khai báo, `master=None`)."""
+    return {
+        "machine": machine_label,
+        "machine_code": machine_code,
+        "group_mc": ((master["group_mc"] if master else None) or "-"),
+        "mc_brand": ((master["mc_brand"] if master else None) or "-"),
+        "tank_type": ((master["tank_type"] if master else None) or "-"),
+        "mc_quantity": ((master["mc_quantity"] if master else None) or 1),
+        "tube_no": ((master["tube_no"] if master else None) or "-"),
+        "capacity": (master["capacity_kg"] if master else None),
+        "status": ((master["status"] if master else None) or "-"),
+        "production_status": ((master["production_status"] if master else None) or "-"),
+        "orgatex": bool(master["orgatex"]) if master and master["orgatex"] is not None else False,
+        "is_unmapped": master is None,
+        "cleaning_count": 0, "normal_batches": 0, "rd_batches": 0, "rework_batches": 0, "days": {}, "batches": [],
+    }
+
+
 def get_cleaning_matrix(
     from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None,
     brand_programs: list[str] | None = None, fabric_types: list[str] | None = None,
 ) -> dict[str, Any]:
+    """Danh sách machine hiển thị (2026-09-22, đổi thiết kế theo yêu cầu người dùng) giờ
+    LUÔN xuất phát từ Machine Master (`machines`, domain='dyeing') — KHÔNG còn tự phát hiện
+    từ chính dữ liệu batch như bản cũ (máy chưa có mẻ trong kỳ đang lọc vẫn hiện đủ, với các
+    cột ngày để trống). Batch nào có `machine` KHÔNG khớp mã máy nào trong Machine Master vẫn
+    được GIỮ LẠI (không âm thầm bỏ, đúng nguyên tắc 'double-check' của dự án — mọi số liệu
+    hiển thị phải khớp dữ liệu gốc) dưới dạng dòng 'unmapped' (`is_unmapped=True`, luôn hiện
+    bất kể filter Capacity vì chưa có capacity khai báo để so khớp) kèm cảnh báo
+    `unmapped_machines` trả về cho UI nhắc khai báo qua "Add Machine"."""
     conn = get_db()
+    _ensure_batch_details_columns(conn)
     _ensure_summary_table(conn)
 
     sql = "SELECT * FROM cleaning_mc_daily_summary WHERE 1=1"
@@ -345,13 +385,22 @@ def get_cleaning_matrix(
         sql += " AND production_date <= ?"
         params.append(to_date)
     sql += " ORDER BY production_date, machine, sequence_order, start_time, end_time"
+    empty_result = {"time_labels": [], "daily_sequence": {}, "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "available_fabric_types": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}}, "unmapped_machines": []}
     try:
         rows = execute_query(sql, params)
+        master_rows = execute_query(
+            "SELECT machine_id, machine_code, group_mc, mc_brand, tank_type, mc_quantity, tube_no, capacity_kg, "
+            "status, production_status, orgatex FROM machines WHERE domain = 'dyeing' "
+            "ORDER BY COALESCE(group_mc, ''), COALESCE(machine_code, machine_id)",
+            [],
+        )
     except Exception as exc:
-        return {"time_labels": [], "daily_sequence": {}, "error": str(exc), "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "available_fabric_types": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}}}
+        return {**empty_result, "error": str(exc)}
 
-    # Quét toàn bộ mức Capacity thực tế có trong dữ liệu (trước khi áp filter) để làm nguồn cho bộ lọc.
-    available_capacities = sorted({round(float(row["configured_capacity_kg"]), 2) for row in rows if row["configured_capacity_kg"] not in (None, "")})
+    # available_capacities giờ lấy từ capacity_kg đã KHAI BÁO trong Machine Master, không
+    # còn suy từ configured_capacity_kg thô của batch — máy chưa chạy mẻ nào vẫn góp mặt
+    # vào bộ lọc nếu đã khai báo Capacity.
+    available_capacities = sorted({round(float(m["capacity_kg"]), 2) for m in master_rows if m["capacity_kg"] not in (None, "")})
     capacity_filter = {round(float(value), 2) for value in capacities} if capacities else None
     # Brand Program gộp "Brand - Program" (VD "UQ - Ht Fleece") thành 1 giá trị filter duy nhất —
     # mẻ chưa map được Greige Code nào (đa số, vì mapping chỉ phủ dần theo từng file Brand import)
@@ -361,7 +410,21 @@ def get_cleaning_matrix(
     available_fabric_types = sorted({row["fabric_type"] for row in rows if row["fabric_type"]})
     fabric_type_filter = set(fabric_types) if fabric_types else None
 
-    machines: dict[tuple[str, float], dict[str, Any]] = {}
+    machines: dict[str, dict[str, Any]] = {}
+    master_by_norm: dict[str, Mapping[str, Any]] = {}
+    for master in master_rows:
+        machine_code_value = master["machine_code"] or master["machine_id"]
+        if not machine_code_value:
+            continue
+        norm = _normalize_code(machine_code_value)
+        master_by_norm[norm] = master
+        if capacity_filter is not None:
+            row_capacity = round(float(master["capacity_kg"]), 2) if master["capacity_kg"] not in (None, "") else None
+            if row_capacity not in capacity_filter:
+                continue
+        machines[norm] = _blank_machine_item(machine_code_value, machine_code_value, master)
+
+    unmapped: dict[str, dict[str, Any]] = {}
     normal = cleaning_count = rework = 0
     badge_counter: Counter[str] = Counter()
     # Đếm mẻ Normal (không CM, không Rework) theo (ngày, màu) cho summary "Normal Dyeing
@@ -372,21 +435,25 @@ def get_cleaning_matrix(
     # nguồn) — dùng để phân biệt "toàn M vì thiếu dữ liệu import" với lỗi thuật toán thật.
     color_source_missing = color_source_present = 0
     for row in rows:
-        if capacity_filter is not None:
-            row_capacity = round(float(row["configured_capacity_kg"]), 2) if row["configured_capacity_kg"] not in (None, "") else None
-            if row_capacity not in capacity_filter:
-                continue
         if brand_program_filter is not None:
             row_brand_program = f"{row['brand']} - {row['brand_program']}" if row["brand"] and row["brand_program"] else None
             if row_brand_program not in brand_program_filter:
                 continue
         if fabric_type_filter is not None and row["fabric_type"] not in fabric_type_filter:
             continue
-        machine_key = (row["machine"], float(row["capacity_kg"] or 0))
+        raw_machine = (row["machine"] or "").strip()
+        norm = _normalize_code(raw_machine)
+        item = machines.get(norm)
+        if item is None:
+            master = master_by_norm.get(norm)
+            if master is not None:
+                # Máy CÓ trong Machine Master nhưng bị loại bởi filter Capacity đang chọn —
+                # đúng ý nghĩa filter, KHÔNG rơi vào nhóm 'unmapped' (đã biết máy này là gì).
+                continue
+            item = unmapped.setdefault(norm, _blank_machine_item(raw_machine or "(unknown)", None, None))
         normalized_batch_type = str(row["batch_type"] or "").strip().lower()
         if not normalized_batch_type:
             normalized_batch_type = "normal"
-        item = machines.setdefault(machine_key, {"machine": row["machine_code"], "machine_code": row["machine_code"], "mc_brand": row["mc_brand"] or "-", "tank_type": row["tank_type"] or "-", "mc_quantity": row["mc_quantity"] or 1, "tube_no": row["tube_no"] or "-", "capacity": row["configured_capacity_kg"], "cleaning_count": 0, "normal_batches": 0, "rd_batches": 0, "rework_batches": 0, "days": {}, "batches": []})
         if row["dyelot_ref"] or row["colour_no"] or row["shade_raw"]:
             color_source_present += 1
         else:
@@ -412,9 +479,10 @@ def get_cleaning_matrix(
             item["rework_batches"] += 1
             rework += 1
     matrix = []
-    for item in machines.values():
+    for item in list(machines.values()) + list(unmapped.values()):
         item["cleaning_ratio"] = round(item["normal_batches"] / item["cleaning_count"], 2) if item["cleaning_count"] else None
         matrix.append(item)
+    unmapped_machines = [{"machine": item["machine"], "batch_count": len(item["batches"])} for item in unmapped.values()]
     time_labels = sorted({day for item in matrix for day in item["days"]})
     color_summary = {
         "labels": list(COLOR_LABEL_ORDER),
@@ -431,13 +499,14 @@ def get_cleaning_matrix(
     )
     return {
         "time_labels": time_labels,
-        "daily_sequence": {item["machine_code"]: item["days"] for item in matrix},
+        "daily_sequence": {(item["machine_code"] or item["machine"]): item["days"] for item in matrix},
         "kpis": {"normal_batches": normal, "cleaning_count": cleaning_count, "cleaning_ratio": round(normal / cleaning_count, 2) if cleaning_count else 0.0, "rework_batches": rework},
         "matrix": matrix,
         "available_capacities": available_capacities,
         "available_brand_programs": available_brand_programs,
         "available_fabric_types": available_fabric_types,
         "color_summary": color_summary,
+        "unmapped_machines": unmapped_machines,
         "color_data_coverage": {
             "present": color_source_present,
             "missing": color_source_missing,
@@ -447,43 +516,49 @@ def get_cleaning_matrix(
 
 
 # ---------------------------------------------------------------------------
-# Quản lý cấu hình máy (`machines`) — MC brand/Tank/MC quantity/Tube no/Capacity.
+# Quản lý Machine Master (`machines`) — Group MC/MC brand/Tank/MC quantity/Tube no/
+# Capacity/Status/Production Status/Orgatex.
 #
-# Bảng `machines` hiện KHÔNG có UI nào để nhập (đã xoá sạch data mock DY-01..05, xem
-# memory-bank/progress.md quyết định -5) nên mọi máy đang hiển thị "-" ở các cột này trên
-# Batch Per Day by Machine — kể cả các máy CÓ dữ liệu Availability. Thêm CRUD tối giản ở
-# đây để user có quyền edit Engine `reports` tự nhập trực tiếp trên UI, KHÔNG cần chờ file
-# Excel danh mục máy (hiện không tồn tại).
+# Đổi thiết kế (2026-09-22, theo yêu cầu người dùng): TRƯỚC ĐÂY danh sách máy hiển thị
+# trên "Batch Per Day by Machine" tự phát hiện từ dữ liệu batch thật (availability_logs/
+# batch_details) — máy nào có mẻ trong kỳ đang lọc mới hiện ra, và bị ẩn nếu capacity_kg
+# thô của máy không khớp filter Capacity mặc định. Người dùng xác nhận KHÔNG muốn cơ chế
+# tự phát hiện này nữa — `machines` giờ là "Machine Master" NGUỒN DUY NHẤT quyết định máy
+# nào hiển thị (xem get_cleaning_matrix()), quản lý thủ công qua UI (nút "Add Machine" +
+# inline edit từng ô, cùng pattern Case Notes ở Engine downtime).
 # ---------------------------------------------------------------------------
+
+# Status: TEXT TỰ DO (2026-09-22, đổi từ dropdown 2 giá trị cố định ban đầu) — dữ liệu máy
+# thật ("0 CETVN Dyeing MC 2026_08 19.xlsm") có tới 6 giá trị Status khác nhau, gồm cả mô tả
+# gộp/tách máy (VD "Grouped to D514", "Splitted into 2 300kg tank D258, D259") không fit vào
+# tập cố định nhỏ — giữ nguyên linh hoạt như MC brand/Tank thay vì mất thông tin thật.
+# Production Status VẪN là dropdown cố định (dữ liệu thật khớp đúng 3 giá trị, không có case
+# lạ như Status) — "No production" thêm vào sau khi thấy 10/69 máy thật ở trạng thái này
+# (máy Uninstall/Removed/Grouped, không sản xuất gì).
+PRODUCTION_STATUS_VALUES = ("Sample", "Bulk", "No production")
 
 
 def list_machine_configs() -> list[dict[str, Any]]:
-    """Hợp toàn bộ mã máy đã từng xuất hiện ở `availability_logs.machine` HOẶC
-    `batch_details.machine` (kể cả máy chưa có dòng nào trong `machines`), LEFT JOIN
-    cấu hình hiện có — để UI liệt kê ĐẦY ĐỦ máy cần cấu hình, không chỉ máy đã có sẵn."""
+    """Liệt kê toàn bộ máy đã khai báo trong Machine Master — KHÔNG còn hợp thêm mã máy suy
+    ra từ availability_logs/batch_details (đã bỏ auto-detect, xem ghi chú ở đầu mục)."""
     conn = get_db()
     _ensure_batch_details_columns(conn)
     sql = """
-        SELECT code, MAX(mc_brand) AS mc_brand, MAX(tank_type) AS tank_type,
-               MAX(mc_quantity) AS mc_quantity, MAX(tube_no) AS tube_no, MAX(capacity_kg) AS capacity_kg
-        FROM (
-            SELECT DISTINCT TRIM(machine) AS code FROM availability_logs WHERE machine IS NOT NULL AND TRIM(machine) != ''
-            UNION
-            SELECT DISTINCT TRIM(machine) AS code FROM batch_details WHERE machine IS NOT NULL AND TRIM(machine) != ''
-        ) codes
-        LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(codes.code))
-        GROUP BY code
-        ORDER BY code
+        SELECT machine_id, COALESCE(machine_code, machine_id) AS machine_code, group_mc, mc_brand, tank_type,
+               mc_quantity, tube_no, capacity_kg, status, production_status, orgatex
+        FROM machines
+        WHERE domain = 'dyeing'
+        ORDER BY COALESCE(group_mc, ''), COALESCE(machine_code, machine_id)
     """
     rows = execute_query(sql, [])
     return [dict(row) for row in rows]
 
 
 def upsert_machine_config(machine_code: str, fields: Mapping[str, Any]) -> dict[str, Any]:
-    """UPSERT 1 dòng `machines` theo mã máy (khớp `machine_id` — bảng này hiện rỗng hoàn
-    toàn nên không có rủi ro đụng dữ liệu cũ). Chỉ ghi đè các field THỰC SỰ có trong
-    `fields` (partial update — cho phép sửa từng ô một, giống pattern Case Notes đã có ở
-    Engine downtime).
+    """UPSERT 1 dòng `machines` theo mã máy (khớp `machine_id`). Chỉ ghi đè các field THỰC
+    SỰ có trong `fields` (partial update — cho phép sửa từng ô một, giống pattern Case Notes
+    đã có ở Engine downtime). Dùng ĐỂ khai báo máy MỚI (Add Machine — machine_code chưa từng
+    tồn tại sẽ rơi vào nhánh INSERT của ON CONFLICT) LẪN sửa máy đã có.
 
     Dùng 1 câu `INSERT ... ON CONFLICT(machine_id) DO UPDATE` NGUYÊN TỬ — KHÔNG phải
     "SELECT xem đã có chưa, rồi INSERT hoặc UPDATE" ở 2 câu SQL riêng biệt như bản cũ.
@@ -498,10 +573,14 @@ def upsert_machine_config(machine_code: str, fields: Mapping[str, Any]) -> dict[
     machine_code = machine_code.strip()
     if not machine_code:
         raise ValueError("Machine code không được rỗng.")
-    allowed = {"mc_brand", "tank_type", "mc_quantity", "tube_no", "capacity_kg"}
+    allowed = {"group_mc", "mc_brand", "tank_type", "mc_quantity", "tube_no", "capacity_kg", "status", "production_status", "orgatex"}
     updates = {key: value for key, value in fields.items() if key in allowed}
     if not updates:
         raise ValueError("Không có field hợp lệ để cập nhật.")
+    if "production_status" in updates and updates["production_status"] not in (None, "") and updates["production_status"] not in PRODUCTION_STATUS_VALUES:
+        raise ValueError(f"Production Status phải là một trong: {', '.join(PRODUCTION_STATUS_VALUES)}.")
+    if "orgatex" in updates:
+        updates["orgatex"] = 1 if updates["orgatex"] in (True, 1, "1", "true", "True", "yes", "Yes") else 0
 
     conn = get_db()
     _ensure_batch_details_columns(conn)
