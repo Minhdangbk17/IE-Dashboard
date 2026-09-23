@@ -964,6 +964,15 @@
       Supabase theo ranh giới mới (xem `activeContext.md`) — CHƯA xác nhận đã
       chạy. Smoke test tự seed 6 máy phủ đủ mọi nhánh + full regression 6 bộ
       test PASS 100%. Chi tiết đầy đủ ở `activeContext.md`.
+- [x] **Nút "Ignore SapLot" cho tab Summary — HOÀN THÀNH 2026-09-24**: bật
+      lên chỉ xét điều kiện Dyelot của quy tắc Rework, bỏ qua điều kiện
+      SapLot — tính lại `is_rework` ngay tại read-time từ `dyelot_ref` đã có
+      sẵn trong `cleaning_mc_daily_summary` (không cần lưu thêm cột mới).
+      Tách `_dyelot_indicates_rework()` dùng chung với `classify_batch_badge()`.
+      Chỉ áp dụng tab Summary, không đổi tab Detail. Route thêm tham số
+      `ignore_sap_lot=1`. Phát hiện + sửa 1 bug phụ: schema DB tạm của
+      `tests/test_batch_summary_formula.py` thiếu cột `dyelot_ref`. Smoke
+      test + full regression 7 bộ test PASS 100%.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy `flask rebuild-summaries` trên production SAU KHI deploy bản có

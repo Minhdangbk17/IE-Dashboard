@@ -63,6 +63,15 @@ def _get_field(batch: Mapping[str, Any], name: str) -> str:
     return ""
 
 
+def _dyelot_indicates_rework(dyelot: str | None) -> bool:
+    """Điều kiện (a) của quy tắc Rework: chữ số CUỐI CÙNG của Dyelot là CHỮ SỐ khác '0'. Tách
+    riêng hàm này (không viết trực tiếp trong `classify_batch_badge()`) để dùng lại CHÍNH XÁC
+    ở `get_batch_summary()` khi người dùng bật nút "Ignore SapLot" trên tab Summary — tránh 2
+    nơi tự viết lại cùng 1 quy tắc rồi lệch nhau nếu sau này chỉ sửa 1 chỗ."""
+    dyelot = (dyelot or "").strip()
+    return bool(dyelot) and dyelot[-1].isdigit() and dyelot[-1] != "0"
+
+
 def classify_batch_badge(batch: Mapping[str, Any]) -> str:
     """Phân loại Batch Badge theo thuật toán 5 bước (CM -> Rework -> Base color -> ghép mã)."""
     # Bước 1: Mẻ rửa máy — Dyelot chứa '-WA' -> dừng kiểm tra, trả về CM ngay.
@@ -106,7 +115,7 @@ def classify_batch_badge(batch: Mapping[str, Any]) -> str:
     #   (b) Chữ số ĐẦU TIÊN của SapLot > 1 -> Rework, = 1 -> Normal. SapLot rỗng/không bắt đầu
     #       bằng chữ số -> KHÔNG tính là tín hiệu Rework từ điều kiện này (an toàn, không bịa).
     # 2 điều kiện nối bằng HOẶC — chỉ cần 1 trong 2 báo Rework là đủ.
-    dyelot_rework = bool(dyelot) and dyelot[-1].isdigit() and dyelot[-1] != "0"
+    dyelot_rework = _dyelot_indicates_rework(dyelot)
 
     sap_lot = _get_field(batch, "sap_lot")
     sap_lot_rework = False
@@ -739,9 +748,19 @@ def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]
     return [{"category": category, "values": values[category]} for category in SUMMARY_CATEGORIES]
 
 
-def get_batch_summary(year: int) -> dict[str, Any]:
+def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]:
     """Bảng Summary: Group Machine x Tank Type x Category (9 dòng cố định) x 12 tháng của
     `year`.
+
+    `ignore_sap_lot=True` (nút "Ignore SapLot" trên tab Summary, 2026-09-24): chỉ xét ĐIỀU
+    KIỆN (a) của quy tắc Rework (chữ số cuối Dyelot khác '0', xem `_dyelot_indicates_rework()`
+    — dùng LẠI CHÍNH XÁC hàm `classify_batch_badge()` đang gọi, không viết lại rule lần 2),
+    BỎ QUA điều kiện (b) dựa trên SapLot — tính lại `is_rework` NGAY TẠI ĐÂY từ `dyelot_ref`
+    đã có sẵn trong `cleaning_mc_daily_summary` (KHÔNG cần lưu thêm cột `sap_lot` vào bảng
+    rollup, vì điều kiện (a) không cần SapLot). Mặc định (`False`) giữ NGUYÊN `is_rework` đã
+    tính sẵn ở `recompute_daily()` (gộp CẢ 2 điều kiện, hành vi cũ không đổi). CHỈ ảnh hưởng
+    tab Summary — tab "Detail" (`get_cleaning_matrix()`) KHÔNG có nút này, đúng phạm vi người
+    dùng yêu cầu ("trong báo cáo summary").
 
     Nguồn dữ liệu: TÁI DÙNG `cleaning_mc_daily_summary` đã có (grain 1 mẻ/ngày, đã có
     badge/is_rework/batch_type/machine từ Daily Rollup) — LEFT JOIN `machines` lấy
@@ -780,7 +799,7 @@ def get_batch_summary(year: int) -> dict[str, Any]:
     from_date = f"{year:04d}-01-01"
     to_date = f"{year:04d}-12-31"
     rows = execute_query(
-        "SELECT production_date, machine, badge, is_rework, batch_type FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
+        "SELECT production_date, machine, badge, is_rework, batch_type, dyelot_ref FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
         [from_date, to_date],
     )
     master_rows = execute_query("SELECT machine_id, machine_code, group_mc, tank_type FROM machines WHERE domain = 'dyeing'", [])
@@ -814,7 +833,7 @@ def get_batch_summary(year: int) -> dict[str, Any]:
         distinct_groups.add(group_label)
         bucket = accumulators[group_label][tank_label].setdefault(month, _empty_summary_bucket())
         normalized_batch_type = str(row["batch_type"] or "").strip().lower() or "normal"
-        is_rework_badge = bool(row["is_rework"])
+        is_rework_badge = _dyelot_indicates_rework(row["dyelot_ref"]) if ignore_sap_lot else bool(row["is_rework"])
         if row["badge"] == "CM":
             bucket["cm"] += 1
         else:
@@ -865,14 +884,16 @@ def get_batch_summary(year: int) -> dict[str, Any]:
     }
 
 
-def export_batch_summary_excel(year: int) -> bytes:
+def export_batch_summary_excel(year: int, ignore_sap_lot: bool = False) -> bytes:
     """Xuất tab "Summary" ra file `.xlsx` — 1 sheet, cấu trúc y hệt bảng trên UI (cột Group
     Machine merge theo khối gồm mọi Tank con, cột Tank merge theo khối 9 dòng Category, 12
     cột tháng). Style header dùng CHUNG font/màu với `core/excel_importer.py::
     export_template()` (nền tối `24292F`/chữ trắng đậm) để nhất quán giao diện file export
-    trong toàn ứng dụng. Trả về bytes — route chỉ cần gói vào `send_file(io.BytesIO(...))`,
+    trong toàn ứng dụng. `ignore_sap_lot` chuyển thẳng cho `get_batch_summary()` — file xuất
+    ra PHẢI khớp đúng trạng thái nút "Ignore SapLot" đang bật/tắt trên UI lúc bấm Export, KHÔNG
+    export riêng theo mặc định. Trả về bytes — route chỉ cần gói vào `send_file(io.BytesIO(...))`,
     cùng pattern `excel_import/routes.py::download_template()`."""
-    data = get_batch_summary(year)
+    data = get_batch_summary(year, ignore_sap_lot=ignore_sap_lot)
 
     workbook = Workbook()
     sheet = workbook.active

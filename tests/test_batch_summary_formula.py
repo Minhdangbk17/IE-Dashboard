@@ -67,7 +67,7 @@ def _init_schema(db_path: str) -> None:
         CREATE TABLE cleaning_mc_daily_summary (
             production_date TEXT NOT NULL, availability_log_id INTEGER NOT NULL,
             machine TEXT NOT NULL, batch_type TEXT, badge TEXT NOT NULL,
-            is_rework INTEGER NOT NULL DEFAULT 0,
+            is_rework INTEGER NOT NULL DEFAULT 0, dyelot_ref TEXT,
             PRIMARY KEY (production_date, availability_log_id)
         )
     """)

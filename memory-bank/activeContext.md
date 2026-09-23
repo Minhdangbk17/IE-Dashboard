@@ -1,6 +1,32 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-24 — Tab "Summary" ("Batch Per Day by Machine") đổi cấu trúc
+**Cập nhật lần cuối:** 2026-09-24 (tiếp) — Thêm nút **"Ignore SapLot"** (checkbox) trên tab
+Summary. Bật lên: chỉ xét điều kiện (a) của quy tắc Rework (chữ số CUỐI Dyelot khác '0'), BỎ
+QUA điều kiện (b) dựa trên SapLot — ảnh hưởng trực tiếp "Rework batch"/"Rework ratio"/"No. of
+normal dyeing batch" (và mọi dòng suy ra: Cleaning MC Ratio/Daily batch/day). CHỈ áp dụng tab
+Summary, tab "Detail" không đổi. Tách `_dyelot_indicates_rework()` ra khỏi
+`classify_batch_badge()` (dùng LẠI CHÍNH XÁC ở `get_batch_summary(ignore_sap_lot=True)`,
+tránh viết lại rule lần 2) — tính lại `is_rework` NGAY TẠI READ-TIME từ `dyelot_ref` đã có
+sẵn trong `cleaning_mc_daily_summary` (KHÔNG cần lưu thêm cột `sap_lot` vào bảng rollup, vì
+điều kiện (a) không cần SapLot). Route `GET /dyeing/reports/api/batch-summary`/`.../export`
+thêm tham số `ignore_sap_lot=1`. Bật/tắt checkbox tự load lại dữ liệu, Export Excel giữ đúng
+trạng thái đang bật/tắt lúc bấm.
+
+**Bug thật bắt được lúc chạy lại `tests/test_batch_summary_formula.py`** (test cũ, DB tạm
+schema tối giản riêng): `_init_schema()` của test thiếu cột `dyelot_ref` trong bảng
+`cleaning_mc_daily_summary` mô phỏng — `get_batch_summary()` giờ LUÔN SELECT cột này (để phục
+vụ `ignore_sap_lot`) nên test crash `no such column: dyelot_ref` (kèm theo lỗi phụ Windows
+"file đang bị khoá" khi dọn DB tạm vì connection chưa đóng do crash giữa chừng — hết khi sửa
+lỗi gốc). Đã thêm cột vào schema test.
+
+**Verify đã làm**: smoke test tự seed 3 mẻ (1 mẻ Rework do RIÊNG Dyelot, 1 mẻ Rework do RIÊNG
+SapLot, 1 mẻ Normal) — xác nhận mặc định (`ignore_sap_lot` tắt) đếm ĐỦ 2 Rework, bật lên chỉ
+còn 1 Rework (mẻ do SapLot bị xếp lại thành Normal) — đúng kỳ vọng. Full regression 7 bộ test
+(`test_permission_model.py`/`test_batch_summary_formula.py`/`test_rework_classification.py`/
+`test_batch_matrix_formula.py`/`test_rft_classification.py`/`test_dca_cost.py`/
+`test_postgres_shim_translation.py`) PASS 100%.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-24 — Tab "Summary" ("Batch Per Day by Machine") đổi cấu trúc
 từ **2 tầng** (Group Machine x Category) sang **3 tầng** (Group Machine x Tank Type x
 Category) x 12 tháng, theo yêu cầu người dùng (đã hỏi-đáp 4 câu trước khi code, xem
 `AskUserQuestion` trong hội thoại):

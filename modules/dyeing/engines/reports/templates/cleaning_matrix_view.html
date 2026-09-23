@@ -57,7 +57,10 @@
 
 <section class="report-page" id="page-summary" data-page="summary" hidden>
 <section class="Box p-3 mb-3"><div class="d-flex flex-justify-between flex-items-end flex-wrap" style="gap:12px">
-    <div class="form-group mb-0"><label for="summary-year">Year</label><select id="summary-year" class="form-select"></select></div>
+    <div class="d-flex flex-items-end flex-wrap" style="gap:12px">
+        <div class="form-group mb-0"><label for="summary-year">Year</label><select id="summary-year" class="form-select"></select></div>
+        <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Chỉ xét chữ số cuối Dyelot khi phân loại Rework — bỏ qua điều kiện dựa trên SapLot"><input type="checkbox" id="summary-ignore-saplot"> Ignore SapLot</label>
+    </div>
     <a id="summary-export-btn" class="btn btn-sm" href="#">Export Excel</a>
 </div></section>
 <div class="Box p-3" style="overflow-x:auto">
@@ -423,6 +426,7 @@
     const summaryExportEndpoint = "{{ url_for('dyeing.reports.api_batch_summary_export') }}";
     const summaryYearSelect = document.getElementById("summary-year");
     const summaryExportBtn = document.getElementById("summary-export-btn");
+    const summaryIgnoreSapLot = document.getElementById("summary-ignore-saplot");
     const RATIO_CATEGORIES = new Set(["Cleaning MC Ratio", "Rework ratio", "Daily batch/day"]);
     const formatSummaryValue = (category, value) => {
         if (value === null || value === undefined) return "-";
@@ -455,16 +459,26 @@
         }).join("");
     }
     function loadSummary() {
-        const year = summaryYearSelect.value;
-        fetch(`${summaryEndpoint}${year ? `?year=${encodeURIComponent(year)}` : ""}`).then((response) => response.json()).then((data) => {
+        const params = new URLSearchParams();
+        if (summaryYearSelect.value) params.set("year", summaryYearSelect.value);
+        if (summaryIgnoreSapLot.checked) params.set("ignore_sap_lot", "1");
+        fetch(`${summaryEndpoint}?${params}`).then((response) => response.json()).then((data) => {
             if (!summaryYearSelect.options.length) {
                 summaryYearSelect.innerHTML = (data.available_years || [data.year]).map((y) => `<option value="${y}" ${y === data.year ? "selected" : ""}>${y}</option>`).join("");
             }
             renderSummary(data);
-            summaryExportBtn.href = `${summaryExportEndpoint}?year=${encodeURIComponent(data.year)}`;
+            const exportParams = new URLSearchParams({ year: data.year });
+            if (summaryIgnoreSapLot.checked) exportParams.set("ignore_sap_lot", "1");
+            summaryExportBtn.href = `${summaryExportEndpoint}?${exportParams}`;
         });
     }
     summaryYearSelect.addEventListener("change", loadSummary);
+    // "Ignore SapLot" (2026-09-24): bỏ qua điều kiện (b) của quy tắc Rework (SapLot), chỉ xét
+    // điều kiện (a) (chữ số cuối Dyelot) — ẢNH HƯỞNG TRỰC TIẾP "Rework batch"/"Rework ratio"/
+    // "No. of normal dyeing batch" (và mọi dòng suy ra từ đó) vì đổi số mẻ được tính là
+    // Rework. CHỈ áp dụng tab Summary (xem get_batch_summary(ignore_sap_lot=...)), tab
+    // "Detail" không có nút này. Bật/tắt tự load lại dữ liệu ngay, không cần bấm nút riêng.
+    summaryIgnoreSapLot.addEventListener("change", loadSummary);
 }());
 </script>
 {% endblock %}

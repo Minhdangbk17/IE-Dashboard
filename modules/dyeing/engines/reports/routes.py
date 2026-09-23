@@ -50,7 +50,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             year = int(request.args.get("year") or datetime.now().year)
         except ValueError:
             year = datetime.now().year
-        return jsonify(get_batch_summary(year))
+        ignore_sap_lot = request.args.get("ignore_sap_lot") == "1"
+        return jsonify(get_batch_summary(year, ignore_sap_lot=ignore_sap_lot))
 
     @bp.route("/api/batch-summary/export")
     @permission_required("dyeing", "reports", "view")
@@ -59,7 +60,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             year = int(request.args.get("year") or datetime.now().year)
         except ValueError:
             year = datetime.now().year
-        content = export_batch_summary_excel(year)
+        ignore_sap_lot = request.args.get("ignore_sap_lot") == "1"
+        content = export_batch_summary_excel(year, ignore_sap_lot=ignore_sap_lot)
         return send_file(
             io.BytesIO(content),
             as_attachment=True,
