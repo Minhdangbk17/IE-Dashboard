@@ -62,14 +62,14 @@
 </div></section>
 <div class="Box p-3" style="overflow-x:auto">
     <table class="preview-table matrix-table" id="summary-table">
-        <thead><tr id="summary-head"><th>Group Machine</th><th>Category</th></tr></thead>
+        <thead><tr id="summary-head"><th>Group Machine</th><th>Tank</th><th>Category</th></tr></thead>
         <tbody></tbody>
     </table>
     <p id="summary-empty" class="f6 color-fg-muted" style="display:none">No data for this year.</p>
 </div>
 </section>
 
-<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}.report-page[hidden]{display:none}.summary-group-cell{font-weight:600;vertical-align:middle;background:var(--bg-surface-raised, rgba(110,118,129,.06))}.summary-total-group td{font-weight:600}</style>
+<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}.report-page[hidden]{display:none}.summary-group-cell{font-weight:600;vertical-align:middle;background:var(--bg-surface-raised, rgba(110,118,129,.06))}.summary-total-group td{font-weight:600}.summary-subtotal-row td{font-style:italic}</style>
 <script>
     window.REPORTS_CAN_EDIT_MACHINES = {{ "true" if current_user_can('dyeing', 'reports', 'edit') else "false" }};
     window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE = "{{ url_for('dyeing.reports.api_update_machine', machine_code='__MACHINE__') }}";
@@ -428,17 +428,29 @@
         if (value === null || value === undefined) return "-";
         return RATIO_CATEGORIES.has(category) ? Number(value).toFixed(2) : value;
     };
+    // Bảng Summary 3 tầng (2026-09-24): Group Machine -> Tank Type ("Subtotal"/"J tank"/
+    // "O tank"/"Unclassified") -> 9 dòng Category. Cột Group Machine rowspan theo TỔNG số
+    // dòng của MỌI khối Tank trong group đó; cột Tank rowspan theo 9 dòng của riêng khối đó.
+    // "All Groups" cuối bảng chỉ có 1 khối Tank duy nhất (`tank: null`) — hiện "-" ở cột Tank.
     function renderSummary(data) {
         const head = document.getElementById("summary-head");
-        head.innerHTML = "<th>Group Machine</th><th>Category</th>" + data.months.map((month) => `<th>${month}</th>`).join("");
+        head.innerHTML = "<th>Group Machine</th><th>Tank</th><th>Category</th>" + data.months.map((month) => `<th>${month}</th>`).join("");
         const groups = data.groups || [];
         document.getElementById("summary-empty").style.display = groups.length ? "none" : "block";
         document.querySelector("#summary-table tbody").innerHTML = groups.map((group) => {
-            const isTotal = group.group === "All Groups";
-            return group.rows.map((row, rowIndex) => {
-                const groupCell = rowIndex === 0 ? `<td class="summary-group-cell" rowspan="${group.rows.length}">${escHtml(group.group)}</td>` : "";
-                const valueCells = row.values.map((value) => `<td>${formatSummaryValue(row.category, value)}</td>`).join("");
-                return `<tr${isTotal ? ' class="summary-total-group"' : ""}>${groupCell}<td>${escHtml(row.category)}</td>${valueCells}</tr>`;
+            const isTotalGroup = group.group === "All Groups";
+            const groupRowCount = group.tanks.reduce((sum, tankBlock) => sum + tankBlock.rows.length, 0);
+            let isFirstRowInGroup = true;
+            return group.tanks.map((tankBlock) => {
+                const isSubtotal = tankBlock.tank === "Subtotal";
+                return tankBlock.rows.map((row, rowIndexInTank) => {
+                    const groupCell = isFirstRowInGroup ? `<td class="summary-group-cell" rowspan="${groupRowCount}">${escHtml(group.group)}</td>` : "";
+                    isFirstRowInGroup = false;
+                    const tankCell = rowIndexInTank === 0 ? `<td class="summary-group-cell" rowspan="${tankBlock.rows.length}">${tankBlock.tank ? escHtml(tankBlock.tank) : "-"}</td>` : "";
+                    const valueCells = row.values.map((value) => `<td>${formatSummaryValue(row.category, value)}</td>`).join("");
+                    const rowClass = isTotalGroup ? "summary-total-group" : (isSubtotal ? "summary-subtotal-row" : "");
+                    return `<tr${rowClass ? ` class="${rowClass}"` : ""}>${groupCell}${tankCell}<td>${escHtml(row.category)}</td>${valueCells}</tr>`;
+                }).join("");
             }).join("");
         }).join("");
     }

@@ -1,6 +1,60 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-23 — **Đổi công thức tab "Summary" của "Batch Per Day by
+**Cập nhật lần cuối:** 2026-09-24 — Tab "Summary" ("Batch Per Day by Machine") đổi cấu trúc
+từ **2 tầng** (Group Machine x Category) sang **3 tầng** (Group Machine x Tank Type x
+Category) x 12 tháng, theo yêu cầu người dùng (đã hỏi-đáp 4 câu trước khi code, xem
+`AskUserQuestion` trong hội thoại):
+
+1. **Đổi ranh giới + nhãn 3 mức Group Machine**: `<300Kg`/`300 to 500 Kg`/`600kg or above` (cũ)
+   → **`>=500Kg`/`>=300 to <500Kg`/`<300Kg`** (mới, mốc 500 chuyển từ nhóm giữa sang nhóm
+   trên). `CANONICAL_GROUP_MC_ORDER` (`cleaning_matrix.py`) đổi theo — hiển thị giảm dần theo
+   sức chứa (đúng thứ tự người dùng nêu), KHÔNG sort alphabet. `group_mc` VẪN là field nhập
+   tay trên từng máy (không tự tính lại từ Capacity) — đổi ranh giới đòi hỏi chạy lại SQL
+   UPDATE trên Supabase (xem cuối mục này), KHÔNG tự đổi trong code.
+2. **Thêm tầng Tank Type lồng trong Group Machine**: mỗi Group giờ có 2-4 khối con theo thứ
+   tự `CANONICAL_TANK_ORDER`: **"Subtotal"** (gộp mọi Tank trong group, LUÔN có) → **"J tank"**
+   → **"O tank"** → **"Unclassified"** (chỉ hiện nếu group đó có máy chưa khai báo Tank Type
+   rõ ràng — so khớp `tank_type` không phân biệt hoa/thường, giá trị khác "J tank"/"O tank"
+   đều rơi vào đây, không bỏ sót dữ liệu). Khối **"All Groups"** cuối bảng **KHÔNG** tách theo
+   Tank (giữ 1 khối tổng gộp như cũ, theo yêu cầu người dùng) — JSON trả `tanks: [{tank: null,
+   rows: [...]}]` để dùng CHUNG 1 cấu trúc lặp với các Group khác, không cần rẽ nhánh riêng ở
+   frontend/Excel export.
+3. **JSON response đổi shape**: `group["rows"]` (cũ, phẳng) → `group["tanks"][i]["rows"]`
+   (mới, lồng thêm 1 tầng) — đã cập nhật `tests/test_batch_summary_formula.py` theo shape mới
+   (công thức 9 Category KHÔNG đổi, chỉ đổi cách đi tới đúng dòng dữ liệu qua khối
+   "Subtotal"). Frontend (`cleaning_matrix_view.html::renderSummary()`) đổi từ rowspan 2 cột
+   sang rowspan 3 cột (Group Machine rowspan theo TỔNG số dòng mọi khối Tank trong group, Tank
+   rowspan theo 9 dòng của riêng khối đó). Excel export (`export_batch_summary_excel()`) đổi
+   theo cùng cấu trúc merge 3 tầng, thêm font `italic` cho dòng "Subtotal" (khác `bold` của
+   dòng "All Groups") để phân biệt trực quan trên file xuất.
+
+**An toàn cộng dồn "No. Dyeing machine" lên cấp Subtotal/All Groups**: (Group Machine, Tank
+Type) là PHÂN HOẠCH không giao nhau (1 máy chỉ thuộc đúng 1 Group + 1 Tank tại 1 thời điểm)
+nên hợp (union) các `set()` rời nhau khi gộp = tổng đúng, không đếm trùng — cùng nguyên tắc
+đã áp dụng khi gộp "All Groups" ở bản 2 tầng trước đó, giờ áp dụng thêm 1 tầng nữa vẫn AN
+TOÀN vì tank_type cũng là thuộc tính máy (không giao nhau).
+
+**SQL migration CẦN CHẠY trên Supabase** (đổi ranh giới Group Machine — gửi người dùng, CHƯA
+xác nhận đã chạy):
+```sql
+begin;
+update machines set group_mc = '<300Kg' where domain='dyeing' and capacity_kg is not null and capacity_kg < 300;
+update machines set group_mc = '>=300 to <500Kg' where domain='dyeing' and capacity_kg is not null and capacity_kg >= 300 and capacity_kg < 500;
+update machines set group_mc = '>=500Kg' where domain='dyeing' and capacity_kg is not null and capacity_kg >= 500;
+commit;
+```
+Tank Type (`J tank`/`O tank`) KHÔNG cần migration mới — cột này đã được nạp sẵn qua SQL INSERT
+69 máy gửi người dùng ở phiên trước (từ file Excel "0 CETVN Dyeing MC...").
+
+**Verify đã làm**: smoke test Flask test client tự seed 6 máy tổng hợp đủ mọi nhánh (2 Tank
+trong 1 Group, Unclassified Tank trong 1 Group, Unclassified Group, All Groups tổng đúng
+không đếm trùng) — PASS toàn bộ, đối chiếu tay từng con số. Excel export xác nhận đúng 15 cột
+header + merged cells 3 tầng. Cập nhật + chạy lại `tests/test_batch_summary_formula.py` (cấu
+trúc mới) PASS. Full regression (`test_permission_model.py`/`test_batch_matrix_formula.py`/
+`test_postgres_shim_translation.py`/`test_rework_classification.py`/
+`test_rft_classification.py`/`test_dca_cost.py`) PASS 100%, không có gì vỡ.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-23 — **Đổi công thức tab "Summary" của "Batch Per Day by
 Machine"** (`get_batch_summary()`, `reports/cleaning_matrix.py`) theo yêu cầu người dùng: từ 8
 xuống rồi lên lại **9 dòng Category cố định**, đổi để dùng ĐÚNG NGUYÊN định nghĩa đã có sẵn ở
 tab "Detail" (`get_cleaning_matrix()`, cột "No. of normal dyeing batch"/"Cleaning MC Ratio"/

@@ -7,6 +7,13 @@ NGUYÊN định nghĩa "Normal"/"Cleaning MC Ratio"/"R&D"/"Rework" đã có sẵ
 (`get_cleaning_matrix()`), không tự đặt tiêu chí riêng — vì Summary chỉ là cộng dồn theo
 tháng của cùng 1 nguồn dữ liệu:
 
+CẬP NHẬT 2026-09-24: bảng Summary đổi thành 3 tầng Group Machine x Tank Type x Category
+(trước đó chỉ 2 tầng Group Machine x Category) — mỗi Group giờ có `["tanks"]` (danh sách
+khối "Subtotal"/"J tank"/"O tank"/"Unclassified"), KHÔNG còn `["rows"]` phẳng ở cấp Group.
+3 mức Group Machine cũng đổi ranh giới/nhãn: ">=500Kg"/">=300 to <500Kg"/"<300Kg" (trước đó
+"<300Kg"/"300 to 500 Kg"/"600kg or above"). Công thức 9 Category KHÔNG đổi — test này chỉ
+cập nhật cách ĐI TỚI đúng dòng dữ liệu (qua khối "Subtotal" của group, gộp mọi Tank).
+
   - "No. of normal dyeing batch" = đếm mẻ badge != CM, KHÔNG Rework, VÀ batch_type thuộc
     {normal, unknown, rỗng} (loại CẢ R&D).
   - "Cleaning MC Ratio" = No. of normal dyeing batch / No. of time Cleaning MC (KHÔNG PHẢI
@@ -66,12 +73,12 @@ def _init_schema(db_path: str) -> None:
     """)
     conn.execute("""
         CREATE TABLE machines (
-            machine_id TEXT, machine_code TEXT, group_mc TEXT, domain TEXT
+            machine_id TEXT, machine_code TEXT, group_mc TEXT, tank_type TEXT, domain TEXT
         )
     """)
     conn.execute("CREATE TABLE availability_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, batch TEXT, batch_ref_no TEXT, end_time TEXT)")
     conn.execute("CREATE TABLE batch_details (id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, machine TEXT, start_time TEXT, end_time TEXT, greige_code TEXT)")
-    conn.execute("INSERT INTO machines (machine_id, machine_code, group_mc, domain) VALUES ('M1', 'M1', '300 to 500 Kg', 'dyeing')")
+    conn.execute("INSERT INTO machines (machine_id, machine_code, group_mc, tank_type, domain) VALUES ('M1', 'M1', '>=300 to <500Kg', 'J tank', 'dyeing')")
     conn.commit()
     conn.close()
 
@@ -104,11 +111,17 @@ def main() -> int:
             data = get_batch_summary(2026)
             close_db()
 
-        group = next(g for g in data["groups"] if g["group"] == "300 to 500 Kg")
-        by_category = {row["category"]: row["values"] for row in group["rows"]}
+        group = next(g for g in data["groups"] if g["group"] == ">=300 to <500Kg")
+        tanks_by_label = {t["tank"]: t for t in group["tanks"]}
         jan = 0  # index 0 = January
 
-        print("=== Kịch bản 1: Group '300 to 500 Kg', tháng 01/2026 ===")
+        print("=== Kịch bản 0: cấu trúc 3 tầng (chỉ có M1 -> Tank 'J tank') ===")
+        _check("group có đúng 2 khối Tank: Subtotal + J tank (không có O tank/Unclassified)", set(tanks_by_label.keys()), {"Subtotal", "J tank"}, failures)
+
+        # "Subtotal" gộp mọi Tank trong group — vì chỉ có 1 máy/1 Tank nên bằng hệt "J tank".
+        by_category = {row["category"]: row["values"] for row in tanks_by_label["Subtotal"]["rows"]}
+
+        print("=== Kịch bản 1: Group '>=300 to <500Kg' / Subtotal, tháng 01/2026 ===")
         _check("No. of time Cleaning MC = 1", by_category["No. of time Cleaning MC"][jan], 1, failures)
         _check("No. of normal dyeing batch = 2 (loại Rework + R&D)", by_category["No. of normal dyeing batch"][jan], 2, failures)
         _check("Cleaning MC Ratio = Normal/CleaningMC = 2/1 = 2.0", by_category["Cleaning MC Ratio"][jan], 2.0, failures)
@@ -120,7 +133,9 @@ def main() -> int:
         _check("Daily batch/day = Normal/(days*machines) = 2/31", by_category["Daily batch/day"][jan], round(2 / 31, 2), failures)
 
         all_groups = next(g for g in data["groups"] if g["group"] == "All Groups")
-        all_by_category = {row["category"]: row["values"] for row in all_groups["rows"]}
+        check_no_tank_split = all_groups["tanks"][0]["tank"] is None and len(all_groups["tanks"]) == 1
+        _check("'All Groups' không tách theo Tank (1 khối duy nhất, tank=None)", check_no_tank_split, True, failures)
+        all_by_category = {row["category"]: row["values"] for row in all_groups["tanks"][0]["rows"]}
         print("\n=== Kịch bản 2: 'All Groups' cộng dồn đúng (chỉ 1 group nên bằng group con) ===")
         _check("All Groups: No. of normal dyeing batch = 2", all_by_category["No. of normal dyeing batch"][jan], 2, failures)
         _check("All Groups: No. of R&D batch = 1", all_by_category["No. of R&D batch"][jan], 1, failures)

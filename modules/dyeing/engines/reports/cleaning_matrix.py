@@ -637,20 +637,33 @@ def upsert_machine_config(machine_code: str, fields: Mapping[str, Any]) -> dict[
 
 
 # ---------------------------------------------------------------------------
-# Tab "Summary" (2026-09-23) — bảng tổng hợp theo Group Machine x Category x Tháng,
-# hiển thị cạnh tab "Detail" (bảng lịch máy hiện có) trên cùng trang "Batch Per Day by
-# Machine". Xem đầy đủ các quyết định nghiệp vụ đã hỏi-đáp với người dùng trước khi code
-# ở memory-bank/activeContext.md.
+# Tab "Summary" (2026-09-23, đổi cấu trúc 3 tầng 2026-09-24) — bảng tổng hợp theo
+# Group Machine x Tank Type x Category x Tháng, hiển thị cạnh tab "Detail" (bảng lịch máy
+# hiện có) trên cùng trang "Batch Per Day by Machine". Xem đầy đủ các quyết định nghiệp vụ
+# đã hỏi-đáp với người dùng trước khi code ở memory-bank/activeContext.md.
 # ---------------------------------------------------------------------------
 
-# 3 mức Group Machine chuẩn đã thống nhất qua migrate_group_mc_capacity_buckets — ưu tiên
-# hiển thị theo ĐÚNG thứ tự sức chứa này (KHÔNG sort alphabet, vì "<300Kg" < "300 to 500 Kg"
-# theo alphabet sẽ SAI thứ tự sức chứa thật). Giá trị group_mc nào KHÔNG khớp 3 mức này (VD
-# còn sót "<500"/">=500" cũ chưa migrate, hoặc tên tuỳ ý người dùng tự đặt sau này) vẫn được
-# hiển thị đầy đủ (không bỏ sót), xếp SAU 3 mức chuẩn, sắp theo alphabet.
-CANONICAL_GROUP_MC_ORDER = ("<300Kg", "300 to 500 Kg", "600kg or above")
+# 3 mức Group Machine chuẩn (đổi ranh giới 2026-09-24 — mốc 500 chuyển từ nhóm giữa sang
+# nhóm trên, KHÁC bản cũ "<300Kg"/"300 to 500 Kg"/"600kg or above") — hiển thị ĐÚNG theo thứ
+# tự người dùng nêu (giảm dần theo sức chứa), KHÔNG sort alphabet. `group_mc` VẪN là field
+# nhập tay trên từng máy (không tự tính lại từ Capacity mỗi lần đọc) — đổi ranh giới đòi hỏi
+# chạy lại 1 SQL UPDATE trên Supabase để gán lại `group_mc` theo mốc mới, xem
+# activeContext.md. Giá trị group_mc nào KHÔNG khớp 3 mức chuẩn (VD còn sót nhãn cũ chưa
+# migrate) vẫn hiển thị đầy đủ (không bỏ sót), xếp SAU 3 mức chuẩn, sắp theo alphabet.
+CANONICAL_GROUP_MC_ORDER = (">=500Kg", ">=300 to <500Kg", "<300Kg")
 UNCLASSIFIED_GROUP_LABEL = "Unclassified"
 ALL_GROUPS_LABEL = "All Groups"
+
+# Tầng nhóm phụ THEO TANK TYPE (2026-09-24, mới) — lồng BÊN TRONG từng Group Machine. Mỗi
+# Group Machine giờ có: 1 khối "Subtotal" (gộp CẢ tank) + khối "J tank" + khối "O tank" +
+# khối "Unclassified" (chỉ hiện nếu có máy chưa khai báo Tank Type rõ ràng) — theo đúng thứ
+# tự CANONICAL_TANK_ORDER. So khớp `tank_type` KHÔNG phân biệt hoa/thường + khoảng trắng thừa
+# (giống mọi so khớp text khác trong dự án) — giá trị khác "J tank"/"O tank" (rỗng hoặc lạ)
+# đều rơi vào "Unclassified", KHÔNG bỏ sót dữ liệu.
+CANONICAL_TANK_ORDER = ("J tank", "O tank")
+UNCLASSIFIED_TANK_LABEL = "Unclassified"
+SUBTOTAL_TANK_LABEL = "Subtotal"
+
 SUMMARY_CATEGORIES = (
     "No. total day",
     "No. Dyeing machine",
@@ -666,6 +679,32 @@ SUMMARY_CATEGORIES = (
 
 def _empty_summary_bucket() -> dict[str, Any]:
     return {"cm": 0, "normal": 0, "rd": 0, "rework": 0, "machines": set()}
+
+
+def _normalize_tank_label(raw: str | None) -> str:
+    normalized = (raw or "").strip().lower()
+    if not normalized:
+        return UNCLASSIFIED_TANK_LABEL
+    for canonical in CANONICAL_TANK_ORDER:
+        if normalized == canonical.lower():
+            return canonical
+    return UNCLASSIFIED_TANK_LABEL
+
+
+def _merge_summary_buckets(month_data_list: list[dict[int, dict[str, Any]]]) -> dict[int, dict[str, Any]]:
+    """Cộng dồn TRỰC TIẾP từ accumulator thô (KHÔNG suy từ giá trị đã làm tròn ở
+    `_build_summary_category_rows()`) — dùng cho cả khối "Subtotal" trong 1 Group (gộp các
+    Tank) LẪN khối "All Groups" cuối bảng (gộp mọi Group/Tank)."""
+    merged: dict[int, dict[str, Any]] = {}
+    for month_data in month_data_list:
+        for month, bucket in month_data.items():
+            target = merged.setdefault(month, _empty_summary_bucket())
+            target["cm"] += bucket["cm"]
+            target["normal"] += bucket["normal"]
+            target["rd"] += bucket["rd"]
+            target["rework"] += bucket["rework"]
+            target["machines"] |= bucket["machines"]
+    return merged
 
 
 def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -701,12 +740,13 @@ def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]
 
 
 def get_batch_summary(year: int) -> dict[str, Any]:
-    """Bảng Summary: Group Machine x Category (9 dòng cố định) x 12 tháng của `year`.
+    """Bảng Summary: Group Machine x Tank Type x Category (9 dòng cố định) x 12 tháng của
+    `year`.
 
     Nguồn dữ liệu: TÁI DÙNG `cleaning_mc_daily_summary` đã có (grain 1 mẻ/ngày, đã có
-    badge/is_rework/batch_type/machine từ Daily Rollup) — LEFT JOIN `machines` lấy `group_mc`
-    tại thời điểm đọc (giống hệt cách get_cleaning_matrix() tra Machine Master), gộp theo
-    THÁNG thay vì theo ngày. KHÔNG cần bảng mới, KHÔNG cần luồng import mới.
+    badge/is_rework/batch_type/machine từ Daily Rollup) — LEFT JOIN `machines` lấy
+    `group_mc`/`tank_type` tại thời điểm đọc (giống hệt cách get_cleaning_matrix() tra Machine
+    Master), gộp theo THÁNG thay vì theo ngày. KHÔNG cần bảng mới, KHÔNG cần luồng import mới.
 
     "No. of normal dyeing batch"/"No. of time Cleaning MC"/"Cleaning MC Ratio"/"No. of R&D
     batch"/"Rework batch" dùng ĐÚNG NGUYÊN 4 điều kiện phân loại của tab "Detail"
@@ -720,11 +760,18 @@ def get_batch_summary(year: int) -> dict[str, Any]:
     "No. Dyeing machine" đếm SỐ MÁY DISTINCT có >=1 mẻ NHUỘM THẬT (Normal/Rework/R&D, loại
     CM) trong tháng — máy chỉ chạy CM tháng đó KHÔNG được tính (đã xác nhận với người dùng,
     ĐỊNH NGHĨA NÀY KHÔNG ĐỔI so với bản trước — chỉ 4 dòng Category ở trên đổi). Tính bằng
-    set() theo từng (group, tháng) rồi lấy len(), KHÔNG cộng dồn số đếm sẵn — tránh đúng bug
-    COUNT DISTINCT kinh điển của dự án (cộng số đếm distinct từ nhiều nhóm con có thể đếm
-    trùng nếu giao nhau). Ở đây AN TOÀN cộng dồn set MACHINES giữa các Group MC lên cấp "All
-    Groups" vì Group Machine là PHÂN HOẠCH không giao nhau (1 máy chỉ thuộc đúng 1 Group tại 1
-    thời điểm) — hợp (union) các set rời nhau = tổng độ lớn, không đếm trùng.
+    set() theo từng (group, tank, tháng) rồi lấy len(), KHÔNG cộng dồn số đếm sẵn — tránh đúng
+    bug COUNT DISTINCT kinh điển của dự án. AN TOÀN cộng dồn set MACHINES giữa các Group/Tank
+    lên cấp "Subtotal"/"All Groups" vì (Group Machine, Tank Type) là PHÂN HOẠCH không giao
+    nhau (1 máy chỉ thuộc đúng 1 Group + 1 Tank tại 1 thời điểm) — hợp (union) các set rời
+    nhau = tổng độ lớn, không đếm trùng.
+
+    Mỗi Group Machine có 2-4 khối con theo Tank Type, THEO THỨ TỰ: "Subtotal" (gộp mọi Tank
+    trong group đó) -> "J tank" -> "O tank" -> "Unclassified" (chỉ hiện nếu group đó có máy
+    chưa khai báo Tank Type rõ ràng). Khối "All Groups" cuối bảng KHÔNG tách theo Tank (giữ 1
+    khối tổng gộp duy nhất, đúng yêu cầu người dùng) — trả về dưới dạng `tanks` chỉ có 1 phần
+    tử với `tank=None` để frontend/Excel export dùng CHUNG 1 cấu trúc lặp, không cần rẽ nhánh
+    riêng cho "All Groups".
     """
     conn = get_db()
     _ensure_batch_details_columns(conn)
@@ -736,16 +783,19 @@ def get_batch_summary(year: int) -> dict[str, Any]:
         "SELECT production_date, machine, badge, is_rework, batch_type FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
         [from_date, to_date],
     )
-    master_rows = execute_query("SELECT machine_id, machine_code, group_mc FROM machines WHERE domain = 'dyeing'", [])
-    group_by_norm: dict[str, str | None] = {}
+    master_rows = execute_query("SELECT machine_id, machine_code, group_mc, tank_type FROM machines WHERE domain = 'dyeing'", [])
+    machine_meta_by_norm: dict[str, dict[str, str | None]] = {}
     for master in master_rows:
         code = master["machine_code"] or master["machine_id"]
         if not code:
             continue
-        group_by_norm[_normalize_code(code)] = (master["group_mc"] or "").strip() or None
+        machine_meta_by_norm[_normalize_code(code)] = {
+            "group": (master["group_mc"] or "").strip() or None,
+            "tank": master["tank_type"],
+        }
 
-    # accumulators[group_label][month] = {"cm", "normal", "rd", "rework", "machines": set()}
-    accumulators: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    # accumulators[group_label][tank_label][month] = {"cm","normal","rd","rework","machines"}
+    accumulators: dict[str, dict[str, dict[int, dict[str, Any]]]] = defaultdict(lambda: defaultdict(dict))
     distinct_groups: set[str] = set()
     for row in rows:
         production_date = row["production_date"] or ""
@@ -758,9 +808,11 @@ def get_batch_summary(year: int) -> dict[str, Any]:
         if not (1 <= month <= 12):
             continue
         norm = _normalize_code(row["machine"])
-        group_label = group_by_norm.get(norm) or UNCLASSIFIED_GROUP_LABEL
+        meta = machine_meta_by_norm.get(norm)
+        group_label = (meta["group"] if meta else None) or UNCLASSIFIED_GROUP_LABEL
+        tank_label = _normalize_tank_label(meta["tank"] if meta else None)
         distinct_groups.add(group_label)
-        bucket = accumulators[group_label].setdefault(month, _empty_summary_bucket())
+        bucket = accumulators[group_label][tank_label].setdefault(month, _empty_summary_bucket())
         normalized_batch_type = str(row["batch_type"] or "").strip().lower() or "normal"
         is_rework_badge = bool(row["is_rework"])
         if row["badge"] == "CM":
@@ -779,20 +831,25 @@ def get_batch_summary(year: int) -> dict[str, Any]:
     if UNCLASSIFIED_GROUP_LABEL in distinct_groups:
         ordered_groups.append(UNCLASSIFIED_GROUP_LABEL)
 
-    groups_output = [{"group": group_label, "rows": _build_summary_category_rows(year, accumulators[group_label])} for group_label in ordered_groups]
-
-    # All Groups: cộng dồn TRỰC TIẾP từ accumulator thô của từng group (KHÔNG suy từ giá trị
-    # đã làm tròn ở groups_output) rồi mới tính lại 3 dòng tỷ lệ theo Sum/Sum của TOÀN nhà máy.
-    all_groups_data: dict[int, dict[str, Any]] = {}
+    groups_output = []
     for group_label in ordered_groups:
-        for month, bucket in accumulators[group_label].items():
-            target = all_groups_data.setdefault(month, _empty_summary_bucket())
-            target["cm"] += bucket["cm"]
-            target["normal"] += bucket["normal"]
-            target["rd"] += bucket["rd"]
-            target["rework"] += bucket["rework"]
-            target["machines"] |= bucket["machines"]
-    groups_output.append({"group": ALL_GROUPS_LABEL, "rows": _build_summary_category_rows(year, all_groups_data)})
+        tank_buckets = accumulators[group_label]
+        present_tanks = set(tank_buckets.keys())
+        ordered_tanks = [t for t in CANONICAL_TANK_ORDER if t in present_tanks]
+        if UNCLASSIFIED_TANK_LABEL in present_tanks:
+            ordered_tanks.append(UNCLASSIFIED_TANK_LABEL)
+
+        tanks_output = [{"tank": SUBTOTAL_TANK_LABEL, "rows": _build_summary_category_rows(year, _merge_summary_buckets(list(tank_buckets.values())))}]
+        for tank_label in ordered_tanks:
+            tanks_output.append({"tank": tank_label, "rows": _build_summary_category_rows(year, tank_buckets[tank_label])})
+        groups_output.append({"group": group_label, "tanks": tanks_output})
+
+    # All Groups: cộng dồn TRỰC TIẾP từ accumulator thô của MỌI (group, tank) — KHÔNG suy từ
+    # giá trị đã làm tròn ở groups_output — rồi mới tính lại 3 dòng tỷ lệ theo Sum/Sum của
+    # TOÀN nhà máy. KHÔNG tách theo Tank (giữ 1 khối tổng gộp, đúng yêu cầu người dùng).
+    all_groups_month_data = [accumulators[group_label][tank_label] for group_label in ordered_groups for tank_label in accumulators[group_label]]
+    all_groups_data = _merge_summary_buckets(all_groups_month_data)
+    groups_output.append({"group": ALL_GROUPS_LABEL, "tanks": [{"tank": None, "rows": _build_summary_category_rows(year, all_groups_data)}]})
 
     month_labels = [date(year, month, 1).strftime("%b-%y") for month in range(1, 13)]
     year_rows = execute_query("SELECT DISTINCT substr(production_date, 1, 4) AS y FROM cleaning_mc_daily_summary WHERE production_date IS NOT NULL", [])
@@ -810,10 +867,11 @@ def get_batch_summary(year: int) -> dict[str, Any]:
 
 def export_batch_summary_excel(year: int) -> bytes:
     """Xuất tab "Summary" ra file `.xlsx` — 1 sheet, cấu trúc y hệt bảng trên UI (cột Group
-    Machine merge theo khối 8 dòng Category, 12 cột tháng). Style header dùng CHUNG font/màu
-    với `core/excel_importer.py::export_template()` (nền tối `24292F`/chữ trắng đậm) để nhất
-    quán giao diện file export trong toàn ứng dụng. Trả về bytes — route chỉ cần gói vào
-    `send_file(io.BytesIO(...))`, cùng pattern `excel_import/routes.py::download_template()`."""
+    Machine merge theo khối gồm mọi Tank con, cột Tank merge theo khối 9 dòng Category, 12
+    cột tháng). Style header dùng CHUNG font/màu với `core/excel_importer.py::
+    export_template()` (nền tối `24292F`/chữ trắng đậm) để nhất quán giao diện file export
+    trong toàn ứng dụng. Trả về bytes — route chỉ cần gói vào `send_file(io.BytesIO(...))`,
+    cùng pattern `excel_import/routes.py::download_template()`."""
     data = get_batch_summary(year)
 
     workbook = Workbook()
@@ -823,34 +881,43 @@ def export_batch_summary_excel(year: int) -> bytes:
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="24292F", end_color="24292F", fill_type="solid")
     group_font = Font(bold=True)
+    subtotal_font = Font(bold=True, italic=True)
     total_font = Font(bold=True)
 
-    headers = ["Group Machine", "Category", *data["months"]]
+    headers = ["Group Machine", "Tank", "Category", *data["months"]]
     for col_idx, header in enumerate(headers, start=1):
         cell = sheet.cell(row=1, column=col_idx, value=header)
         cell.font = header_font
         cell.fill = header_fill
-    sheet.column_dimensions["A"].width = 20
-    sheet.column_dimensions["B"].width = 26
-    for col_idx in range(3, len(headers) + 1):
+    sheet.column_dimensions["A"].width = 18
+    sheet.column_dimensions["B"].width = 14
+    sheet.column_dimensions["C"].width = 26
+    for col_idx in range(4, len(headers) + 1):
         sheet.column_dimensions[sheet.cell(row=1, column=col_idx).column_letter].width = 12
 
     current_row = 2
     for group in data["groups"]:
-        is_total = group["group"] == ALL_GROUPS_LABEL
+        is_total_group = group["group"] == ALL_GROUPS_LABEL
         group_start_row = current_row
-        for row in group["rows"]:
-            sheet.cell(row=current_row, column=1, value=group["group"] if current_row == group_start_row else None)
-            category_cell = sheet.cell(row=current_row, column=2, value=row["category"])
-            if is_total:
-                category_cell.font = total_font
-            for col_offset, value in enumerate(row["values"]):
-                value_cell = sheet.cell(row=current_row, column=3 + col_offset, value=value)
-                if is_total:
-                    value_cell.font = total_font
-            current_row += 1
+        for tank_block in group["tanks"]:
+            is_subtotal = tank_block["tank"] == SUBTOTAL_TANK_LABEL
+            emphasize = is_total_group or is_subtotal
+            tank_start_row = current_row
+            for row in tank_block["rows"]:
+                sheet.cell(row=current_row, column=1, value=group["group"] if current_row == group_start_row else None)
+                sheet.cell(row=current_row, column=2, value=(tank_block["tank"] or "-") if current_row == tank_start_row else None)
+                category_cell = sheet.cell(row=current_row, column=3, value=row["category"])
+                if emphasize:
+                    category_cell.font = total_font if is_total_group else subtotal_font
+                for col_offset, value in enumerate(row["values"]):
+                    value_cell = sheet.cell(row=current_row, column=4 + col_offset, value=value)
+                    if emphasize:
+                        value_cell.font = total_font if is_total_group else subtotal_font
+                current_row += 1
+            sheet.merge_cells(start_row=tank_start_row, start_column=2, end_row=current_row - 1, end_column=2)
+            sheet.cell(row=tank_start_row, column=2).font = total_font if is_total_group else (subtotal_font if is_subtotal else group_font)
         sheet.merge_cells(start_row=group_start_row, start_column=1, end_row=current_row - 1, end_column=1)
-        sheet.cell(row=group_start_row, column=1).font = total_font if is_total else group_font
+        sheet.cell(row=group_start_row, column=1).font = total_font if is_total_group else group_font
 
     buffer = io.BytesIO()
     workbook.save(buffer)

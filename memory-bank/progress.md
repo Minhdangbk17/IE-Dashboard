@@ -953,6 +953,17 @@
       từ 8 lên 9 dòng. File test mới `tests/test_batch_summary_formula.py`
       PASS 100%, full regression 14 file test PASS 100%. Chi tiết đầy đủ +
       lịch sử hỏi-đáp 2 vòng ở `activeContext.md`.
+- [x] **Tab "Summary" đổi cấu trúc 3 tầng Group Machine x Tank Type x Category
+      — HOÀN THÀNH 2026-09-24**: đổi ranh giới/nhãn 3 mức Group Machine
+      (`>=500Kg`/`>=300 to <500Kg`/`<300Kg`, thay `<300Kg`/`300 to 500 Kg`/
+      `600kg or above` cũ) + thêm tầng Tank Type lồng trong mỗi Group
+      ("Subtotal"/"J tank"/"O tank"/"Unclassified"). Khối "All Groups" cuối
+      bảng KHÔNG tách theo Tank (giữ 1 khối tổng gộp). JSON đổi shape
+      `group["rows"]` -> `group["tanks"][i]["rows"]`. Frontend + Excel export
+      đổi theo cấu trúc merge 3 tầng. Cần chạy lại SQL UPDATE `group_mc` trên
+      Supabase theo ranh giới mới (xem `activeContext.md`) — CHƯA xác nhận đã
+      chạy. Smoke test tự seed 6 máy phủ đủ mọi nhánh + full regression 6 bộ
+      test PASS 100%. Chi tiết đầy đủ ở `activeContext.md`.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy `flask rebuild-summaries` trên production SAU KHI deploy bản có
