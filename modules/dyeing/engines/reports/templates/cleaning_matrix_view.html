@@ -427,7 +427,7 @@
     const summaryYearSelect = document.getElementById("summary-year");
     const summaryExportBtn = document.getElementById("summary-export-btn");
     const summaryIgnoreSapLot = document.getElementById("summary-ignore-saplot");
-    const RATIO_CATEGORIES = new Set(["Cleaning MC Ratio", "Rework ratio", "Daily batch/day"]);
+    const RATIO_CATEGORIES = new Set(["Cleaning MC Ratio", "Rework ratio", "Daily batch/day", "Plan PRD time", "Batch/day (Plan PRD)"]);
     const formatSummaryValue = (category, value) => {
         if (value === null || value === undefined) return "-";
         return RATIO_CATEGORIES.has(category) ? Number(value).toFixed(2) : value;

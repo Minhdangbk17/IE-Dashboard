@@ -458,6 +458,7 @@ create table if not exists cleaning_mc_daily_summary (
     fabric_type text,
     badge text not null,
     is_rework integer not null default 0,
+    run_time double precision not null default 0,
     updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
     primary key (production_date, availability_log_id)
 );

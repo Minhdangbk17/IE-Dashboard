@@ -989,6 +989,16 @@
       (gần khớp 1811, phần lệch còn lại do khác nguồn Capacity dùng để test).
       Cập nhật `tests/test_batch_summary_formula.py`, full regression 7 bộ
       test PASS 100%. Chi tiết đầy đủ ở `activeContext.md`.
+- [x] **Thêm "Plan PRD time"/"Batch/day (Plan PRD)" vào tab Summary — HOÀN
+      THÀNH 2026-09-24**: Summary giờ có 11 dòng Category (từ 9). "Plan PRD
+      time" = Sum(RunTime mọi mẻ, gồm CM+Normal+Rework)/3600 ra giờ —
+      `run_time` (giây, có sẵn ở `batch_details` từ trước) lần đầu được đưa
+      vào rollup `cleaning_mc_daily_summary` (thêm cột mới, cả nguồn JOIN
+      chính lẫn nguồn "mồ côi"). "Batch/day (Plan PRD)" = No. of normal
+      dyeing batch × 24 / Plan PRD time. Migration mới `supabase/
+      migrate_cleaning_summary_run_time.sql` — CẦN chạy `flask
+      rebuild-summaries` ngay sau đó để backfill lịch sử, CHƯA xác nhận đã
+      chạy. Smoke test + full regression 8 bộ test PASS 100%.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy `flask rebuild-summaries` trên production SAU KHI deploy bản có

@@ -159,7 +159,7 @@ def _ensure_batch_details_columns(conn: Any) -> None:
             )
         """)
     batch_columns = {row["name"] for row in conn.execute("PRAGMA table_info(batch_details)")}
-    for column, definition in (("colour_no", "TEXT"), ("is_rework", "INTEGER NOT NULL DEFAULT 0"), ("recipe_no", "TEXT"), ("customer_color", "TEXT"), ("sap_lot", "TEXT")):
+    for column, definition in (("colour_no", "TEXT"), ("is_rework", "INTEGER NOT NULL DEFAULT 0"), ("recipe_no", "TEXT"), ("customer_color", "TEXT"), ("sap_lot", "TEXT"), ("run_time", "REAL NOT NULL DEFAULT 0")):
         if column not in batch_columns:
             conn.execute(f"ALTER TABLE batch_details ADD COLUMN {column} {definition}")
     machine_columns = {row["name"] for row in conn.execute("PRAGMA table_info(machines)")}
@@ -215,14 +215,15 @@ def _ensure_summary_table(conn: Any) -> None:
                 fabric_type TEXT,
                 badge TEXT NOT NULL,
                 is_rework INTEGER NOT NULL DEFAULT 0,
+                run_time REAL NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (production_date, availability_log_id)
             )
         """)
         existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(cleaning_mc_daily_summary)")}
-        for column in ("brand_program", "brand", "fabric_type"):
+        for column, definition in (("brand_program", "TEXT"), ("brand", "TEXT"), ("fabric_type", "TEXT"), ("run_time", "REAL NOT NULL DEFAULT 0")):
             if column not in existing_cols:
-                conn.execute(f"ALTER TABLE cleaning_mc_daily_summary ADD COLUMN {column} TEXT")
+                conn.execute(f"ALTER TABLE cleaning_mc_daily_summary ADD COLUMN {column} {definition}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cleaning_mc_daily_summary_date ON cleaning_mc_daily_summary (production_date)")
 
 
@@ -244,6 +245,7 @@ def _orphan_batch_rows(conn: Any, day_str: str, batch_columns: set[str]) -> list
              COALESCE(b.recipe_no, '') AS recipe_no, COALESCE(b.customer_color, '') AS customer_color,
              COALESCE(b.sap_lot, '') AS sap_lot,
              COALESCE(b.is_rework, 0) AS is_rework,
+             COALESCE(b.run_time, 0) AS run_time,
              COALESCE(m.machine_code, b.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
              m.capacity_kg AS configured_capacity_kg,
              COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand,
@@ -291,6 +293,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
              COALESCE(b.sap_lot, '') AS sap_lot,
              {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
              COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref,
+             COALESCE(b.run_time, 0) AS run_time,
              COALESCE(m.machine_code, a.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
              COALESCE(m.capacity_kg, a.capacity_kg) AS configured_capacity_kg,
              COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand,
@@ -327,7 +330,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, row["availability_log_id"], row["machine"], float(row["capacity_kg"] or 0), row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["sequence_order"], batch_no, row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), now_str,
+            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), now_str,
         ))
 
     # `availability_log_id` âm (-1, -2, ...) đánh dấu mẻ "mồ côi" (không có availability_logs.id
@@ -352,7 +355,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, -index, row["machine"], capacity_value, row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["start_time"], row["dyelot_ref"], row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), now_str,
+            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), now_str,
         ))
 
     conn.executemany(
@@ -361,8 +364,8 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             production_date, availability_log_id, machine, capacity_kg, configured_capacity_kg,
             machine_code, mc_brand, tank_type, mc_quantity, tube_no,
             sequence_order, batch_no, dyelot_ref, shade_raw, colour_no, batch_type,
-            start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, run_time, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         inserts,
     )
@@ -692,11 +695,13 @@ SUMMARY_CATEGORIES = (
     "Rework batch",
     "Rework ratio",
     "Daily batch/day",
+    "Plan PRD time",
+    "Batch/day (Plan PRD)",
 )
 
 
 def _empty_summary_bucket() -> dict[str, Any]:
-    return {"cm": 0, "normal": 0, "rd": 0, "rework": 0, "machines": set()}
+    return {"cm": 0, "normal": 0, "rd": 0, "rework": 0, "machines": set(), "run_time_sec": 0.0}
 
 
 def _normalize_tank_label(raw: str | None) -> str:
@@ -722,6 +727,7 @@ def _merge_summary_buckets(month_data_list: list[dict[int, dict[str, Any]]]) -> 
             target["rd"] += bucket["rd"]
             target["rework"] += bucket["rework"]
             target["machines"] |= bucket["machines"]
+            target["run_time_sec"] += bucket["run_time_sec"]
     return merged
 
 
@@ -735,7 +741,13 @@ def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]
     NGUYÊN định nghĩa đã dùng ở tab "Detail" (`get_cleaning_matrix()` — cột "No. of normal
     dyeing batch"/"Cleaning MC Ratio"/"No. of R&D batch"/"Rework batch" trên bảng lịch máy) —
     Summary chỉ CỘNG DỒN THEO THÁNG cùng 1 định nghĩa, không tự đặt tiêu chí riêng (người dùng
-    yêu cầu rõ 2026-09-23, xem activeContext.md)."""
+    yêu cầu rõ 2026-09-23, xem activeContext.md).
+
+    "Plan PRD time" (2026-09-24, mới) = Sum(RunTime) của TẤT CẢ mẻ trong bucket (CM/wash +
+    Normal + Rework, KHÔNG loại trừ mẻ nào) / 3600 — quy đổi giây (`batch_details.run_time`,
+    đơn vị gốc trong file Batch Detail) sang giờ. "Batch/day (Plan PRD)" = No. of normal
+    dyeing batch * 24 / Plan PRD time (giờ) — số mẻ Normal sản xuất được mỗi ngày NẾU chạy hết
+    công suất theo đúng tổng thời gian đã lên kế hoạch, quy đổi ra ngày 24h."""
     values: dict[str, list[Any]] = {category: [] for category in SUMMARY_CATEGORIES}
     for month in range(1, 13):
         bucket = month_data.get(month) or _empty_summary_bucket()
@@ -745,6 +757,7 @@ def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]
         normal = bucket["normal"]
         rd = bucket["rd"]
         rework = bucket["rework"]
+        plan_prd_time_hours = bucket["run_time_sec"] / 3600
         values["No. total day"].append(days)
         values["No. Dyeing machine"].append(n_machines)
         values["No. of time Cleaning MC"].append(cm)
@@ -754,6 +767,8 @@ def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]
         values["Rework batch"].append(rework)
         values["Rework ratio"].append(round(normal / rework, 2) if rework else None)
         values["Daily batch/day"].append(round(normal / (days * n_machines), 2) if (days and n_machines) else None)
+        values["Plan PRD time"].append(round(plan_prd_time_hours, 2))
+        values["Batch/day (Plan PRD)"].append(round(normal * 24 / plan_prd_time_hours, 2) if plan_prd_time_hours else None)
     return [{"category": category, "values": values[category]} for category in SUMMARY_CATEGORIES]
 
 
@@ -811,7 +826,7 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]
     from_date = f"{year:04d}-01-01"
     to_date = f"{year:04d}-12-31"
     rows = execute_query(
-        "SELECT production_date, machine, badge, is_rework, batch_type, dyelot_ref FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
+        "SELECT production_date, machine, badge, is_rework, batch_type, dyelot_ref, run_time FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
         [from_date, to_date],
     )
     master_rows = execute_query("SELECT machine_id, machine_code, group_mc, tank_type FROM machines WHERE domain = 'dyeing'", [])
@@ -846,6 +861,9 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]
         bucket = accumulators[group_label][tank_label].setdefault(month, _empty_summary_bucket())
         normalized_batch_type = str(row["batch_type"] or "").strip().lower() or "normal"
         is_rework_badge = _dyelot_indicates_rework(row["dyelot_ref"]) if ignore_sap_lot else bool(row["is_rework"])
+        # "Plan PRD time" cộng RunTime của TẤT CẢ mẻ (CM/wash + Normal + Rework), KHÔNG loại
+        # mẻ nào — cộng dồn TRƯỚC nhánh CM/else bên dưới để không bỏ sót mẻ CM.
+        bucket["run_time_sec"] += float(row["run_time"] or 0)
         if row["badge"] == "CM":
             bucket["cm"] += 1
         else:

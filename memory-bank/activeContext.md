@@ -1,6 +1,38 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-24 (tiếp, bug thật) — **BUG THẬT phát hiện + sửa**: người dùng
+**Cập nhật lần cuối:** 2026-09-24 (tiếp, tính năng mới) — Thêm 2 dòng Category MỚI vào tab
+Summary: **"Plan PRD time"** và **"Batch/day (Plan PRD)"** (giờ là **11 dòng**, tăng từ 9).
+
+- **"Plan PRD time"** = Sum(`RunTime`) của **TẤT CẢ** mẻ trong bucket (CM/wash + Normal +
+  Rework, KHÔNG loại mẻ nào) / 3600, quy đổi giây → giờ. `RunTime` (cột `batch_details.
+  run_time`, đơn vị giây, đã có sẵn từ trước qua import Batch Detail — xem `core/
+  batch_importer.py::BATCH_HEADER_MAP`) trước đây CHƯA từng được đưa vào rollup
+  `cleaning_mc_daily_summary` (bảng nguồn của cả 2 tab Detail/Summary) — phải: (1) thêm cột
+  `run_time` vào `cleaning_mc_daily_summary` (SQLite lazy ALTER trong `_ensure_summary_table()`
+  + Postgres migration mới `supabase/migrate_cleaning_summary_run_time.sql`), (2) SELECT
+  `b.run_time` (qua `batch_details_join_sql()`) trong CẢ 2 nguồn dựng rollup của
+  `recompute_daily()` — JOIN chính (availability_logs) VÀ `_orphan_batch_rows()` (batch_details
+  "mồ côi" không có availability_logs) — để không bỏ sót RunTime của bất kỳ mẻ nào.
+- **"Batch/day (Plan PRD)"** = No. of normal dyeing batch × 24 / Plan PRD time (giờ) — số mẻ
+  Normal có thể sản xuất mỗi ngày NẾU chạy hết công suất theo đúng tổng thời gian đã lên kế
+  hoạch, quy đổi ra ngày 24h.
+
+**Cộng dồn "Plan PRD time" lên Subtotal/All Groups**: chỉ là SUM số thực bình thường (không
+phải COUNT DISTINCT như "No. Dyeing machine") — an toàn cộng dồn ở MỌI cấp gộp, không có rủi
+ro đếm trùng đặc thù nào (thêm `run_time_sec` vào `_empty_summary_bucket()`/
+`_merge_summary_buckets()` như các field số khác).
+
+**Migration production CẦN CHẠY**: `supabase/migrate_cleaning_summary_run_time.sql` (thêm cột
+`run_time` vào `cleaning_mc_daily_summary`) — **BẮT BUỘC chạy `flask rebuild-summaries` NGAY
+SAU ĐÓ** để backfill lại RunTime cho dữ liệu lịch sử (nếu không, mọi ngày cũ trước khi chạy
+migration sẽ hiện Plan PRD time = 0 dù `batch_details.run_time` đã có sẵn dữ liệu thật) — CHƯA
+xác nhận đã chạy.
+
+**Verify đã làm**: smoke test tự seed 3 mẻ (1 CM=1h, 1 Normal=2h, 1 Rework=1h) — xác nhận
+Plan PRD time=4.0h (tổng cả 3 loại), Batch/day (Plan PRD)=1×24/4=6.0 đúng công thức. Excel
+export có đủ 2 dòng mới. Full regression 8 bộ test (thêm `test_batch_importer.py`) PASS 100%.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-24 (tiếp, bug thật) — **BUG THẬT phát hiện + sửa**: người dùng
 report nút "Ignore SapLot" "bật/tắt vẫn không hoạt động" — điều tra bằng cách import THẲNG
 file Batch Detail thật của người dùng (`tests/fixtures/sample_imports/
 batch_2026-08-01_to_2026-08-31 (1).xlsx`, 3418 dòng) qua đúng pipeline sản xuất
