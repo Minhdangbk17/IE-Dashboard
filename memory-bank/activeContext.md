@@ -1,6 +1,42 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-24 (tiếp) — Thêm nút **"Ignore SapLot"** (checkbox) trên tab
+**Cập nhật lần cuối:** 2026-09-24 (tiếp, bug thật) — **BUG THẬT phát hiện + sửa**: người dùng
+report nút "Ignore SapLot" "bật/tắt vẫn không hoạt động" — điều tra bằng cách import THẲNG
+file Batch Detail thật của người dùng (`tests/fixtures/sample_imports/
+batch_2026-08-01_to_2026-08-31 (1).xlsx`, 3418 dòng) qua đúng pipeline sản xuất
+(`sync_batch_details()`) vào DB tạm, rồi gọi TRỰC TIẾP `get_batch_summary()` thật (không mô
+phỏng) — xác nhận nút **THỰC SỰ có hoạt động** (Rework batch đổi 499→430 khi bật/tắt), nhưng
+"No. of normal dyeing batch" chỉ đổi rất nhẹ (1714→1717) trong khi người dùng tự pivot tay kỳ
+vọng 1714→1811 (chênh ~97). Nguyên nhân THẬT: "No. of normal dyeing batch" từ trước tới nay
+LUÔN loại bỏ CẢ mẻ có `batch_type`='Rework'/'ReDye' khỏi "Normal" (không chỉ dựa vào
+is_rework suy từ Dyelot/SapLot) — người dùng xác nhận pivot tay của họ CHỈ dựa THUẦN vào quy
+tắc Dyelot/SapLot, không quan tâm cột `batch_type` gốc. Đã hỏi-đáp xác nhận phạm vi sửa (2
+câu AskUserQuestion): **bỏ HẲN điều kiện lọc theo `batch_type`** cho "Normal", áp dụng **CẢ 2
+tab Detail VÀ Summary** (giữ 2 tab đồng bộ, đúng nguyên tắc đã có từ trước — không để 1 tab
+sửa mà tab kia không, gây lệch số trở lại).
+
+**Thay đổi cụ thể**: `get_cleaning_matrix()` (Detail) và `get_batch_summary()` (Summary) —
+điều kiện `elif not is_rework_badge and normalized_batch_type in {"normal","unknown",""}:` đổi
+thành `elif not is_rework_badge:` (bỏ hẳn vế `batch_type`). **Hệ quả nghiệp vụ cần lưu ý**: 1
+mẻ có `batch_type`='R&D' nhưng KHÔNG rework giờ tính vào **CẢ "Normal" LẪN "R&D"** (2 cờ độc
+lập, không loại trừ nhau nữa) — trước đây "Normal" và "R&D" loại trừ nhau vì cùng dựa vào 1
+field `batch_type` duy nhất.
+
+**Verify bằng chính file thật của người dùng** (không phải test tự tạo): sau khi sửa, số
+"No. of normal dyeing batch" khi bật "Ignore SapLot" tăng từ 1717 lên **1783** (gần khớp 1811
+hơn nhiều — phần chênh lệch còn lại ~28 mẻ là do cách tôi tự suy ra Capacity từ cột
+`MachineGroup` trong file raw để test, khác với Machine Master thật của người dùng, KHÔNG
+phải bug công thức). Cập nhật `tests/test_batch_summary_formula.py` (kịch bản mẻ R&D giờ kỳ
+vọng Normal=3 thay vì 2). Full regression 7 bộ test PASS 100%. Detail tab
+(`get_cleaning_matrix()`) chạy thử trên cùng file thật, không crash, KPI hợp lý
+(normal=2271, cleaning=435, rework=696, cả file/mọi capacity).
+
+**Bài học quy trình**: khi người dùng report "tính năng không hoạt động" nhưng nghi ngờ dựa
+trên so sánh với pivot tay, PHẢI verify bằng dữ liệu THẬT của người dùng (không phải test tự
+bịa) trước khi kết luận nguyên nhân — ở đây nút TOGGLE hoàn toàn đúng, cái sai là 1 GIẢ ĐỊNH
+công thức cũ (batch_type filter) mà không ai review lại kỹ khi thêm tính năng Ignore SapLot.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-24 (tiếp) — Thêm nút **"Ignore SapLot"** (checkbox) trên tab
 Summary. Bật lên: chỉ xét điều kiện (a) của quy tắc Rework (chữ số CUỐI Dyelot khác '0'), BỎ
 QUA điều kiện (b) dựa trên SapLot — ảnh hưởng trực tiếp "Rework batch"/"Rework ratio"/"No. of
 normal dyeing batch" (và mọi dòng suy ra: Cleaning MC Ratio/Daily batch/day). CHỈ áp dụng tab

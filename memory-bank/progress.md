@@ -973,6 +973,22 @@
       `ignore_sap_lot=1`. Phát hiện + sửa 1 bug phụ: schema DB tạm của
       `tests/test_batch_summary_formula.py` thiếu cột `dyelot_ref`. Smoke
       test + full regression 7 bộ test PASS 100%.
+- [x] **BUG THẬT: "No. of normal dyeing batch" tính thấp hơn thực tế — SỬA
+      2026-09-24**: người dùng report nút "Ignore SapLot" "không hoạt động",
+      điều tra bằng cách import THẲNG file Batch Detail thật của người dùng
+      (3418 dòng) qua đúng pipeline sản xuất — xác nhận nút toggle THỰC SỰ
+      chạy đúng (Rework 499→430), nhưng "Normal" chỉ đổi 1714→1717 thay vì
+      ~1811 như người dùng tự pivot tay. Nguyên nhân: "Normal" từ trước luôn
+      loại thêm mẻ có `batch_type`='Rework'/'ReDye' (không chỉ dựa is_rework
+      suy từ Dyelot/SapLot) — người dùng xác nhận pivot tay CHỈ dựa thuần
+      Dyelot/SapLot. Đã bỏ hẳn điều kiện lọc `batch_type` khỏi "Normal" ở
+      CẢ `get_cleaning_matrix()` (Detail) và `get_batch_summary()` (Summary)
+      — giữ 2 tab đồng bộ. Hệ quả: mẻ `batch_type`='R&D' không rework giờ
+      tính CẢ Normal lẫn R&D (2 cờ độc lập, trước đây loại trừ nhau). Verify
+      lại bằng chính file thật: Normal khi bật Ignore SapLot tăng lên 1783
+      (gần khớp 1811, phần lệch còn lại do khác nguồn Capacity dùng để test).
+      Cập nhật `tests/test_batch_summary_formula.py`, full regression 7 bộ
+      test PASS 100%. Chi tiết đầy đủ ở `activeContext.md`.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy `flask rebuild-summaries` trên production SAU KHI deploy bản có

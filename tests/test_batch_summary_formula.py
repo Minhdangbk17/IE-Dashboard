@@ -11,15 +11,25 @@ CẬP NHẬT 2026-09-24: bảng Summary đổi thành 3 tầng Group Machine x T
 (trước đó chỉ 2 tầng Group Machine x Category) — mỗi Group giờ có `["tanks"]` (danh sách
 khối "Subtotal"/"J tank"/"O tank"/"Unclassified"), KHÔNG còn `["rows"]` phẳng ở cấp Group.
 3 mức Group Machine cũng đổi ranh giới/nhãn: ">=500Kg"/">=300 to <500Kg"/"<300Kg" (trước đó
-"<300Kg"/"300 to 500 Kg"/"600kg or above"). Công thức 9 Category KHÔNG đổi — test này chỉ
-cập nhật cách ĐI TỚI đúng dòng dữ liệu (qua khối "Subtotal" của group, gộp mọi Tank).
+"<300Kg"/"300 to 500 Kg"/"600kg or above"). Test này cập nhật cách ĐI TỚI đúng dòng dữ liệu
+(qua khối "Subtotal" của group, gộp mọi Tank).
 
-  - "No. of normal dyeing batch" = đếm mẻ badge != CM, KHÔNG Rework, VÀ batch_type thuộc
-    {normal, unknown, rỗng} (loại CẢ R&D).
+CẬP NHẬT 2026-09-24 (tiếp, cùng ngày) — ĐỔI CÔNG THỨC "Normal": người dùng tự tải file Batch
+Detail thật (`batch_2026-08-01_to_2026-08-31.xlsx`) về pivot tay, đối chiếu với nút "Ignore
+SapLot" trên UI, phát hiện "No. of normal dyeing batch" tính RA THẤP HƠN THỰC TẾ đáng kể
+(1717 so với pivot tay ~1811) — nguyên nhân: bản cũ loại bỏ CẢ mẻ có `batch_type`='Rework'/
+'ReDye' khỏi "Normal" (không chỉ dựa vào is_rework suy từ Dyelot/SapLot), trong khi pivot tay
+của người dùng CHỈ dựa THUẦN vào quy tắc Dyelot/SapLot. Người dùng xác nhận rõ: bỏ HẲN điều
+kiện lọc theo `batch_type` gốc, áp dụng CẢ 2 tab Detail VÀ Summary (giữ 2 tab đồng bộ, không
+lệch số nhau) — xem comment chi tiết ở `get_cleaning_matrix()`/`get_batch_summary()`.
+
+  - "No. of normal dyeing batch" = đếm mẻ badge != CM VÀ KHÔNG Rework (theo Dyelot/SapLot) —
+    KHÔNG còn lọc thêm theo `batch_type` gốc (ĐỔI, xem trên). Hệ quả: 1 mẻ batch_type='R&D'
+    nhưng KHÔNG rework giờ tính vào CẢ "Normal" LẪN "R&D" (2 cờ độc lập, không loại trừ nhau).
   - "Cleaning MC Ratio" = No. of normal dyeing batch / No. of time Cleaning MC (KHÔNG PHẢI
     (Normal+Rework)/Cleaning MC như bản cũ).
   - "No. of R&D batch" = đếm mẻ batch_type thuộc {r&d, rd, research, development} — cờ RIÊNG,
-    không loại trừ Rework (1 mẻ có thể vừa Rework vừa R&D).
+    không loại trừ Rework/Normal (1 mẻ có thể vừa Rework vừa R&D, hoặc vừa Normal vừa R&D).
   - "Rework batch" = đếm mẻ is_rework (badge kết thúc "R") — không đổi.
   - "Rework ratio" = No. of normal dyeing batch / Rework batch (người dùng xác nhận đảo
     ngược so với bản cũ Rework/Normal+Rework).
@@ -91,7 +101,8 @@ def main() -> int:
         _init_schema(db_path)
         conn = sqlite3.connect(db_path)
         # Tháng 01/2026, máy M1: 2 mẻ Normal, 1 mẻ Rework (batch_type Normal + is_rework=1),
-        # 1 mẻ R&D (badge D, KHÔNG rework), 1 mẻ CM.
+        # 1 mẻ batch_type='R&D' KHÔNG rework (giờ tính CẢ Normal LẪN R&D, xem đổi công thức ở
+        # đầu file), 1 mẻ CM.
         rows = [
             ("2026-01-05", 1, "M1", "Normal", "D", 0),
             ("2026-01-06", 2, "M1", "Normal", "M", 0),
@@ -123,23 +134,23 @@ def main() -> int:
 
         print("=== Kịch bản 1: Group '>=300 to <500Kg' / Subtotal, tháng 01/2026 ===")
         _check("No. of time Cleaning MC = 1", by_category["No. of time Cleaning MC"][jan], 1, failures)
-        _check("No. of normal dyeing batch = 2 (loại Rework + R&D)", by_category["No. of normal dyeing batch"][jan], 2, failures)
-        _check("Cleaning MC Ratio = Normal/CleaningMC = 2/1 = 2.0", by_category["Cleaning MC Ratio"][jan], 2.0, failures)
-        _check("No. of R&D batch = 1", by_category["No. of R&D batch"][jan], 1, failures)
+        _check("No. of normal dyeing batch = 3 (loại Rework, KHÔNG loại R&D nữa)", by_category["No. of normal dyeing batch"][jan], 3, failures)
+        _check("Cleaning MC Ratio = Normal/CleaningMC = 3/1 = 3.0", by_category["Cleaning MC Ratio"][jan], 3.0, failures)
+        _check("No. of R&D batch = 1 (vẫn đếm riêng, không loại trừ Normal)", by_category["No. of R&D batch"][jan], 1, failures)
         _check("Rework batch = 1", by_category["Rework batch"][jan], 1, failures)
-        _check("Rework ratio = Normal/Rework = 2/1 = 2.0 (đảo ngược so với bản cũ)", by_category["Rework ratio"][jan], 2.0, failures)
+        _check("Rework ratio = Normal/Rework = 3/1 = 3.0", by_category["Rework ratio"][jan], 3.0, failures)
         _check("No. Dyeing machine = 1 (M1 có mẻ thật)", by_category["No. Dyeing machine"][jan], 1, failures)
         _check("No. total day = 31 (tháng 1)", by_category["No. total day"][jan], 31, failures)
-        _check("Daily batch/day = Normal/(days*machines) = 2/31", by_category["Daily batch/day"][jan], round(2 / 31, 2), failures)
+        _check("Daily batch/day = Normal/(days*machines) = 3/31", by_category["Daily batch/day"][jan], round(3 / 31, 2), failures)
 
         all_groups = next(g for g in data["groups"] if g["group"] == "All Groups")
         check_no_tank_split = all_groups["tanks"][0]["tank"] is None and len(all_groups["tanks"]) == 1
         _check("'All Groups' không tách theo Tank (1 khối duy nhất, tank=None)", check_no_tank_split, True, failures)
         all_by_category = {row["category"]: row["values"] for row in all_groups["tanks"][0]["rows"]}
         print("\n=== Kịch bản 2: 'All Groups' cộng dồn đúng (chỉ 1 group nên bằng group con) ===")
-        _check("All Groups: No. of normal dyeing batch = 2", all_by_category["No. of normal dyeing batch"][jan], 2, failures)
+        _check("All Groups: No. of normal dyeing batch = 3", all_by_category["No. of normal dyeing batch"][jan], 3, failures)
         _check("All Groups: No. of R&D batch = 1", all_by_category["No. of R&D batch"][jan], 1, failures)
-        _check("All Groups: Cleaning MC Ratio = 2.0", all_by_category["Cleaning MC Ratio"][jan], 2.0, failures)
+        _check("All Groups: Cleaning MC Ratio = 3.0", all_by_category["Cleaning MC Ratio"][jan], 3.0, failures)
     finally:
         os.unlink(db_path)
 

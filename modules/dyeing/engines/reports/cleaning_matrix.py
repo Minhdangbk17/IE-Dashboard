@@ -499,7 +499,16 @@ def get_cleaning_matrix(
         if code == "CM":
             item["cleaning_count"] += 1
             cleaning_count += 1
-        elif not is_rework_badge and normalized_batch_type in {"normal", "unknown", ""}:
+        elif not is_rework_badge:
+            # "Normal" = KHÔNG phải CM, KHÔNG phải Rework theo quy tắc Dyelot/SapLot
+            # (`classify_batch_badge()`) — KHÔNG còn lọc thêm theo cột `batch_type` gốc
+            # (2026-09-24, người dùng xác nhận qua đối chiếu số liệu thật: pivot tay của họ
+            # tính Normal THUẦN theo Dyelot/SapLot, không loại batch_type='Rework'/'ReDye'
+            # như bản cũ — bản cũ khiến "No. of normal dyeing batch" thấp hơn thực tế, VD lệch
+            # 1717 so với 1811 khi đối chiếu file "batch_2026-08-01_to_2026-08-31.xlsx" thật).
+            # Hệ quả: 1 mẻ batch_type='R&D' nhưng KHÔNG rework giờ tính vào CẢ "Normal" LẪN
+            # "R&D" (2 cờ độc lập, không loại trừ nhau — cùng nguyên tắc "Rework"+"R&D" có thể
+            # cùng xảy ra trên 1 mẻ đã áp dụng trước đó).
             item["normal_batches"] += 1
             normal += 1
             color_label = BADGE_TO_COLOR_LABEL.get(code)
@@ -768,13 +777,16 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]
     Master), gộp theo THÁNG thay vì theo ngày. KHÔNG cần bảng mới, KHÔNG cần luồng import mới.
 
     "No. of normal dyeing batch"/"No. of time Cleaning MC"/"Cleaning MC Ratio"/"No. of R&D
-    batch"/"Rework batch" dùng ĐÚNG NGUYÊN 4 điều kiện phân loại của tab "Detail"
+    batch"/"Rework batch" dùng ĐÚNG NGUYÊN điều kiện phân loại của tab "Detail"
     (`get_cleaning_matrix()`, xem đoạn phân loại `normal`/`rd_batches`/`is_rework_badge` ở đó)
     — Summary CHỈ cộng dồn theo tháng, KHÔNG tự định nghĩa lại tiêu chí "Normal"/"R&D" riêng
     (người dùng yêu cầu rõ 2026-09-23, tránh 2 số "Normal"/"Cleaning MC Ratio" lệch nhau giữa
-    2 tab). "Normal" = badge != CM, KHÔNG phải Rework, VÀ batch_type thuộc {normal, unknown,
-    rỗng} (loại cả R&D). "R&D" = batch_type thuộc {r&d, rd, research, development} — CỜ RIÊNG,
-    không loại trừ lẫn "Rework" (1 mẻ có thể vừa Rework vừa R&D nếu dữ liệu thật vậy).
+    2 tab). "Normal" = badge != CM VÀ KHÔNG phải Rework theo quy tắc Dyelot/SapLot — KHÔNG
+    còn lọc thêm theo cột `batch_type` gốc (ĐỔI 2026-09-24, xem comment chi tiết + số liệu đối
+    chiếu thật ở `get_cleaning_matrix()`, người dùng xác nhận qua đối chiếu file Batch Detail
+    thật rằng bản cũ lọc batch_type='Rework'/'ReDye' khiến số "Normal" thấp hơn thực tế đáng
+    kể). "R&D" = batch_type thuộc {r&d, rd, research, development} — CỜ RIÊNG, không loại trừ
+    lẫn "Normal" hay "Rework" (1 mẻ có thể vừa Normal vừa R&D, hoặc vừa Rework vừa R&D).
 
     "No. Dyeing machine" đếm SỐ MÁY DISTINCT có >=1 mẻ NHUỘM THẬT (Normal/Rework/R&D, loại
     CM) trong tháng — máy chỉ chạy CM tháng đó KHÔNG được tính (đã xác nhận với người dùng,
@@ -838,7 +850,10 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]
             bucket["cm"] += 1
         else:
             bucket["machines"].add(norm)
-            if not is_rework_badge and normalized_batch_type in {"normal", "unknown", ""}:
+            if not is_rework_badge:
+                # "Normal" thuần theo Dyelot/SapLot, KHÔNG lọc thêm batch_type gốc — ĐÚNG
+                # NGUYÊN thay đổi vừa áp dụng cho get_cleaning_matrix() (xem comment ở đó),
+                # giữ 2 tab Detail/Summary khớp số nhau (2026-09-24).
                 bucket["normal"] += 1
             if normalized_batch_type in {"r&d", "rd", "research", "development"}:
                 bucket["rd"] += 1
