@@ -38,8 +38,9 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
                 continue
         brand_programs = [value for value in request.args.getlist("brand_program") if value]
         fabric_types = [value for value in request.args.getlist("fabric_type") if value]
+        sap_lot_prefixes = [value for value in request.args.getlist("sap_lot_prefix") if value]
         try:
-            return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None, fabric_types or None))
+            return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None, fabric_types or None, sap_lot_prefixes or None))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -51,7 +52,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         except ValueError:
             year = datetime.now().year
         ignore_sap_lot = request.args.get("ignore_sap_lot") == "1"
-        return jsonify(get_batch_summary(year, ignore_sap_lot=ignore_sap_lot))
+        sap_lot_prefixes = [value for value in request.args.getlist("sap_lot_prefix") if value]
+        return jsonify(get_batch_summary(year, ignore_sap_lot=ignore_sap_lot, sap_lot_prefixes=sap_lot_prefixes or None))
 
     @bp.route("/api/batch-summary/export")
     @permission_required("dyeing", "reports", "view")
@@ -61,7 +63,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         except ValueError:
             year = datetime.now().year
         ignore_sap_lot = request.args.get("ignore_sap_lot") == "1"
-        content = export_batch_summary_excel(year, ignore_sap_lot=ignore_sap_lot)
+        sap_lot_prefixes = [value for value in request.args.getlist("sap_lot_prefix") if value]
+        content = export_batch_summary_excel(year, ignore_sap_lot=ignore_sap_lot, sap_lot_prefixes=sap_lot_prefixes or None)
         return send_file(
             io.BytesIO(content),
             as_attachment=True,

@@ -1,6 +1,47 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-24 (tiếp, tính năng mới) — Thêm 2 dòng Category MỚI vào tab
+**Cập nhật lần cuối:** 2026-09-24 (tiếp 3, tính năng mới) — Thêm **bộ lọc SapLot 1*/3*** cho
+CẢ 2 tab Detail và Summary của báo cáo "Batch Per Day by Machine". Sau vòng đối chiếu raw data
+dài (xem bản ghi cũ bên dưới, mục "BUG THẬT"), người dùng tự kết luận: **"Công thức đã đúng
+trong báo cáo batch per day by machine, chỉ cần filter thêm saplot 1* và 3*"** — không còn
+theo đuổi chênh lệch số đếm tay/code nữa, chuyển sang yêu cầu thêm 1 bộ lọc UI.
+
+- **Phạm vi xác nhận qua AskUserQuestion**: áp dụng CẢ 2 tab Detail và Summary; dùng **2
+  checkbox CỐ ĐỊNH** "SapLot = 1" / "SapLot = 3" (khớp `startswith("1")`/`startswith("3")`),
+  KHÔNG phải dropdown multi-select tuỳ ý như Capacity/Fabric Type/Brand Program.
+- **Độc lập với nút "Ignore SapLot"** đã có: "Ignore SapLot" đổi CÔNG THỨC phân loại
+  `is_rework` (bỏ điều kiện (b) dựa trên SapLot); bộ lọc mới này KHÔNG đụng `is_rework`, chỉ
+  THU HẸP tập mẻ được tính trước khi cộng dồn (loại hẳn mẻ có SapLot không khớp 1*/3* khỏi MỌI
+  Category, kể cả "No. of time Cleaning MC"/"Plan PRD time").
+- **Cột mới**: `cleaning_mc_daily_summary.sap_lot` (TEXT, giá trị text thô từ `batch_details.
+  sap_lot`, xem lazy ALTER trong `_ensure_summary_table()` + migration mới `supabase/
+  migrate_cleaning_summary_sap_lot.sql`) — trước đây rollup CHƯA lưu cột này (chỉ có trong
+  `batch_details` gốc), phải thêm mới rồi backfill.
+- **Helper mới** `_sap_lot_matches_prefixes()` + hằng `SAP_LOT_FILTER_PREFIXES = ("1", "3")` —
+  dùng chung logic `.strip().startswith(prefix)` cho cả 2 tab, tránh viết lại rule 2 lần.
+- **`get_cleaning_matrix()`/`get_batch_summary()`/`export_batch_summary_excel()`** đều thêm
+  tham số `sap_lot_prefixes: list[str] | None` — filter áp dụng NGAY trong vòng lặp row-level
+  (cùng vị trí với `brand_program_filter`/`fabric_type_filter` đã có ở Detail; thêm mới ở đầu
+  vòng lặp tích luỹ của Summary).
+- **Routes** (`/api/cleaning-matrix`, `/api/batch-summary`, `/api/batch-summary/export`) parse
+  query param `sap_lot_prefix` (getlist, có thể lặp lại nhiều lần) và truyền xuống.
+- **UI**: 2 checkbox mới ở CẢ 2 filter bar (Detail: `.matrix-sap-lot-prefix`, Summary:
+  `.summary-sap-lot-prefix`), tự động gọi lại `load()`/`loadSummary()` khi tick/untick (giống
+  hành vi các filter khác), export URL Summary cũng gắn kèm `sap_lot_prefix`.
+
+**Migration production CẦN CHẠY (MỚI, CHƯA XÁC NHẬN)**: `supabase/
+migrate_cleaning_summary_sap_lot.sql` (thêm cột `sap_lot`) — **BẮT BUỘC chạy `flask
+rebuild-summaries` NGAY SAU ĐÓ** để backfill SapLot cho dữ liệu lịch sử (nếu không, mọi ngày cũ
+trước khi chạy migration sẽ có `sap_lot` NULL, bị bộ lọc loại nhầm dù `batch_details.sap_lot`
+đã có sẵn) — VẪN CÒN nợ migration `run_time` (bản ghi cũ bên dưới) CHƯA xác nhận đã chạy, cả 2
+migration này nên chạy cùng lúc trên production.
+
+**Verify đã làm**: smoke test mới trong `tests/test_batch_summary_formula.py` (Kịch bản 3, seed
+5 mẻ với sap_lot khác prefix, xác nhận lọc đúng còn 3/5 mẻ khớp 1*/3*) + smoke test rời (không
+lưu vào repo, chạy tại chỗ) xác nhận `get_cleaning_matrix()` (Detail) cũng lọc đúng qua toàn bộ
+pipeline `_ensure_summary_table()`. Full regression 8 bộ test PASS 100%.
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-24 (tiếp, tính năng mới) — Thêm 2 dòng Category MỚI vào tab
 Summary: **"Plan PRD time"** và **"Batch/day (Plan PRD)"** (giờ là **11 dòng**, tăng từ 9).
 
 - **"Plan PRD time"** = Sum(`RunTime`) của **TẤT CẢ** mẻ trong bucket (CM/wash + Normal +

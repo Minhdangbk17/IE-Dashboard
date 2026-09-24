@@ -36,6 +36,10 @@
         <button id="brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
         <div id="brand-program-menu" class="capacity-menu" hidden></div>
     </div>
+    <div class="form-group mb-0" style="display:flex;align-items:center;gap:10px;padding-bottom:6px">
+        <label class="mb-0" style="display:flex;align-items:center;gap:6px" title="Chỉ tính mẻ có SapLot bắt đầu bằng &quot;1&quot;"><input type="checkbox" class="matrix-sap-lot-prefix" value="1"> SapLot = 1</label>
+        <label class="mb-0" style="display:flex;align-items:center;gap:6px" title="Chỉ tính mẻ có SapLot bắt đầu bằng &quot;3&quot;"><input type="checkbox" class="matrix-sap-lot-prefix" value="3"> SapLot = 3</label>
+    </div>
     <button id="matrix-load" class="btn btn-primary">Load Matrix</button>
 </div></section>
 <div id="matrix-coverage-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
@@ -60,6 +64,8 @@
     <div class="d-flex flex-items-end flex-wrap" style="gap:12px">
         <div class="form-group mb-0"><label for="summary-year">Year</label><select id="summary-year" class="form-select"></select></div>
         <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Chỉ xét chữ số cuối Dyelot khi phân loại Rework — bỏ qua điều kiện dựa trên SapLot"><input type="checkbox" id="summary-ignore-saplot"> Ignore SapLot</label>
+        <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Chỉ tính mẻ có SapLot bắt đầu bằng &quot;1&quot;"><input type="checkbox" class="summary-sap-lot-prefix" value="1"> SapLot = 1</label>
+        <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Chỉ tính mẻ có SapLot bắt đầu bằng &quot;3&quot;"><input type="checkbox" class="summary-sap-lot-prefix" value="3"> SapLot = 3</label>
     </div>
     <a id="summary-export-btn" class="btn btn-sm" href="#">Export Excel</a>
 </div></section>
@@ -277,6 +283,7 @@
         capacityFilter.selected().forEach((value) => params.append("capacity", value));
         fabricTypeFilter.selected().forEach((value) => params.append("fabric_type", value));
         brandProgramFilter.selected().forEach((value) => params.append("brand_program", value));
+        document.querySelectorAll(".matrix-sap-lot-prefix:checked").forEach((el) => params.append("sap_lot_prefix", el.value));
         fetch(`${endpoint}?${params}`).then((response) => response.json()).then((data) => {
             render(data);
             capacityFilter.setOptions((data.available_capacities || []).map(String));
@@ -347,7 +354,9 @@
     const today = new Date();
     document.getElementById("matrix-from").value = formatDate(new Date(today.getFullYear(), today.getMonth(), 1));
     document.getElementById("matrix-to").value = formatDate(today);
-    document.getElementById("matrix-load").addEventListener("click", load); load();
+    document.getElementById("matrix-load").addEventListener("click", load);
+    document.querySelectorAll(".matrix-sap-lot-prefix").forEach((el) => el.addEventListener("change", () => load()));
+    load();
 
     // "+ Add Machine": khai báo máy MỚI vào Machine Master TRƯỚC KHI có dữ liệu batch nào —
     // dùng lại ĐÚNG endpoint upsert đã có (api_update_machine), Machine code chưa từng tồn
@@ -462,6 +471,8 @@
         const params = new URLSearchParams();
         if (summaryYearSelect.value) params.set("year", summaryYearSelect.value);
         if (summaryIgnoreSapLot.checked) params.set("ignore_sap_lot", "1");
+        const summarySapLotPrefixes = Array.from(document.querySelectorAll(".summary-sap-lot-prefix:checked")).map((el) => el.value);
+        summarySapLotPrefixes.forEach((value) => params.append("sap_lot_prefix", value));
         fetch(`${summaryEndpoint}?${params}`).then((response) => response.json()).then((data) => {
             if (!summaryYearSelect.options.length) {
                 summaryYearSelect.innerHTML = (data.available_years || [data.year]).map((y) => `<option value="${y}" ${y === data.year ? "selected" : ""}>${y}</option>`).join("");
@@ -469,10 +480,12 @@
             renderSummary(data);
             const exportParams = new URLSearchParams({ year: data.year });
             if (summaryIgnoreSapLot.checked) exportParams.set("ignore_sap_lot", "1");
+            summarySapLotPrefixes.forEach((value) => exportParams.append("sap_lot_prefix", value));
             summaryExportBtn.href = `${summaryExportEndpoint}?${exportParams}`;
         });
     }
     summaryYearSelect.addEventListener("change", loadSummary);
+    document.querySelectorAll(".summary-sap-lot-prefix").forEach((el) => el.addEventListener("change", loadSummary));
     // "Ignore SapLot" (2026-09-24): bỏ qua điều kiện (b) của quy tắc Rework (SapLot), chỉ xét
     // điều kiện (a) (chữ số cuối Dyelot) — ẢNH HƯỞNG TRỰC TIẾP "Rework batch"/"Rework ratio"/
     // "No. of normal dyeing batch" (và mọi dòng suy ra từ đó) vì đổi số mẻ được tính là

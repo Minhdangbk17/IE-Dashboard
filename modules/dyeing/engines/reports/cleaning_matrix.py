@@ -72,6 +72,19 @@ def _dyelot_indicates_rework(dyelot: str | None) -> bool:
     return bool(dyelot) and dyelot[-1].isdigit() and dyelot[-1] != "0"
 
 
+# Bộ lọc "SapLot bắt đầu bằng X" (2026-09-24, mới) — cho cả 2 tab Detail/Summary của báo cáo
+# "Batch Per Day by Machine", theo yêu cầu người dùng sau khi tự đối chiếu số liệu tay (2
+# checkbox cố định "SapLot = 1"/"SapLot = 3", KHÔNG phải dropdown tuỳ ý — xem hỏi-đáp trong
+# hội thoại). ĐỘC LẬP với nút "Ignore SapLot" (đổi CÁCH PHÂN LOẠI Rework) — bộ lọc này chỉ
+# thu hẹp TẬP MẺ được tính, không đụng tới công thức is_rework.
+SAP_LOT_FILTER_PREFIXES = ("1", "3")
+
+
+def _sap_lot_matches_prefixes(sap_lot: str | None, prefixes: set[str]) -> bool:
+    normalized = (sap_lot or "").strip()
+    return any(normalized.startswith(prefix) for prefix in prefixes)
+
+
 def classify_batch_badge(batch: Mapping[str, Any]) -> str:
     """Phân loại Batch Badge theo thuật toán 5 bước (CM -> Rework -> Base color -> ghép mã)."""
     # Bước 1: Mẻ rửa máy — Dyelot chứa '-WA' -> dừng kiểm tra, trả về CM ngay.
@@ -216,12 +229,13 @@ def _ensure_summary_table(conn: Any) -> None:
                 badge TEXT NOT NULL,
                 is_rework INTEGER NOT NULL DEFAULT 0,
                 run_time REAL NOT NULL DEFAULT 0,
+                sap_lot TEXT,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (production_date, availability_log_id)
             )
         """)
         existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(cleaning_mc_daily_summary)")}
-        for column, definition in (("brand_program", "TEXT"), ("brand", "TEXT"), ("fabric_type", "TEXT"), ("run_time", "REAL NOT NULL DEFAULT 0")):
+        for column, definition in (("brand_program", "TEXT"), ("brand", "TEXT"), ("fabric_type", "TEXT"), ("run_time", "REAL NOT NULL DEFAULT 0"), ("sap_lot", "TEXT")):
             if column not in existing_cols:
                 conn.execute(f"ALTER TABLE cleaning_mc_daily_summary ADD COLUMN {column} {definition}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cleaning_mc_daily_summary_date ON cleaning_mc_daily_summary (production_date)")
@@ -330,7 +344,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, row["availability_log_id"], row["machine"], float(row["capacity_kg"] or 0), row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["sequence_order"], batch_no, row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), now_str,
+            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), row["sap_lot"], now_str,
         ))
 
     # `availability_log_id` âm (-1, -2, ...) đánh dấu mẻ "mồ côi" (không có availability_logs.id
@@ -355,7 +369,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, -index, row["machine"], capacity_value, row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["start_time"], row["dyelot_ref"], row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), now_str,
+            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), row["sap_lot"], now_str,
         ))
 
     conn.executemany(
@@ -364,8 +378,8 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             production_date, availability_log_id, machine, capacity_kg, configured_capacity_kg,
             machine_code, mc_brand, tank_type, mc_quantity, tube_no,
             sequence_order, batch_no, dyelot_ref, shade_raw, colour_no, batch_type,
-            start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, run_time, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, run_time, sap_lot, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         inserts,
     )
@@ -398,6 +412,7 @@ def _blank_machine_item(machine_label: str, machine_code: str | None, master: Ma
 def get_cleaning_matrix(
     from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None,
     brand_programs: list[str] | None = None, fabric_types: list[str] | None = None,
+    sap_lot_prefixes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Danh sách machine hiển thị (2026-09-22, đổi thiết kế theo yêu cầu người dùng) giờ
     LUÔN xuất phát từ Machine Master (`machines`, domain='dyeing') — KHÔNG còn tự phát hiện
@@ -444,6 +459,8 @@ def get_cleaning_matrix(
     brand_program_filter = set(brand_programs) if brand_programs else None
     available_fabric_types = sorted({row["fabric_type"] for row in rows if row["fabric_type"]})
     fabric_type_filter = set(fabric_types) if fabric_types else None
+    # Bộ lọc SapLot 1*/3* (2026-09-24) — xem SAP_LOT_FILTER_PREFIXES, độc lập với is_rework.
+    sap_lot_filter = set(sap_lot_prefixes) if sap_lot_prefixes else None
 
     machines: dict[str, dict[str, Any]] = {}
     master_by_norm: dict[str, Mapping[str, Any]] = {}
@@ -475,6 +492,8 @@ def get_cleaning_matrix(
             if row_brand_program not in brand_program_filter:
                 continue
         if fabric_type_filter is not None and row["fabric_type"] not in fabric_type_filter:
+            continue
+        if sap_lot_filter is not None and not _sap_lot_matches_prefixes(row["sap_lot"], sap_lot_filter):
             continue
         raw_machine = (row["machine"] or "").strip()
         norm = _normalize_code(raw_machine)
@@ -772,7 +791,7 @@ def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]
     return [{"category": category, "values": values[category]} for category in SUMMARY_CATEGORIES]
 
 
-def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]:
+def get_batch_summary(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes: list[str] | None = None) -> dict[str, Any]:
     """Bảng Summary: Group Machine x Tank Type x Category (9 dòng cố định) x 12 tháng của
     `year`.
 
@@ -826,9 +845,10 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]
     from_date = f"{year:04d}-01-01"
     to_date = f"{year:04d}-12-31"
     rows = execute_query(
-        "SELECT production_date, machine, badge, is_rework, batch_type, dyelot_ref, run_time FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
+        "SELECT production_date, machine, badge, is_rework, batch_type, dyelot_ref, run_time, sap_lot FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
         [from_date, to_date],
     )
+    sap_lot_filter = set(sap_lot_prefixes) if sap_lot_prefixes else None
     master_rows = execute_query("SELECT machine_id, machine_code, group_mc, tank_type FROM machines WHERE domain = 'dyeing'", [])
     machine_meta_by_norm: dict[str, dict[str, str | None]] = {}
     for master in master_rows:
@@ -852,6 +872,8 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]
         except ValueError:
             continue
         if not (1 <= month <= 12):
+            continue
+        if sap_lot_filter is not None and not _sap_lot_matches_prefixes(row["sap_lot"], sap_lot_filter):
             continue
         norm = _normalize_code(row["machine"])
         meta = machine_meta_by_norm.get(norm)
@@ -917,7 +939,7 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False) -> dict[str, Any]
     }
 
 
-def export_batch_summary_excel(year: int, ignore_sap_lot: bool = False) -> bytes:
+def export_batch_summary_excel(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes: list[str] | None = None) -> bytes:
     """Xuất tab "Summary" ra file `.xlsx` — 1 sheet, cấu trúc y hệt bảng trên UI (cột Group
     Machine merge theo khối gồm mọi Tank con, cột Tank merge theo khối 9 dòng Category, 12
     cột tháng). Style header dùng CHUNG font/màu với `core/excel_importer.py::
@@ -926,7 +948,7 @@ def export_batch_summary_excel(year: int, ignore_sap_lot: bool = False) -> bytes
     ra PHẢI khớp đúng trạng thái nút "Ignore SapLot" đang bật/tắt trên UI lúc bấm Export, KHÔNG
     export riêng theo mặc định. Trả về bytes — route chỉ cần gói vào `send_file(io.BytesIO(...))`,
     cùng pattern `excel_import/routes.py::download_template()`."""
-    data = get_batch_summary(year, ignore_sap_lot=ignore_sap_lot)
+    data = get_batch_summary(year, ignore_sap_lot=ignore_sap_lot, sap_lot_prefixes=sap_lot_prefixes)
 
     workbook = Workbook()
     sheet = workbook.active

@@ -999,8 +999,29 @@
       migrate_cleaning_summary_run_time.sql` — CẦN chạy `flask
       rebuild-summaries` ngay sau đó để backfill lịch sử, CHƯA xác nhận đã
       chạy. Smoke test + full regression 8 bộ test PASS 100%.
+- [x] **Thêm bộ lọc SapLot 1*/3* cho CẢ 2 tab Detail/Summary — HOÀN THÀNH
+      2026-09-24**: sau khi tự đối chiếu raw data (bản ghi trước), người dùng
+      xác nhận công thức Normal/Rework hiện tại ĐÚNG, chỉ cần thêm bộ lọc thu
+      hẹp tập mẻ theo SapLot bắt đầu bằng "1" hoặc "3". 2 checkbox CỐ ĐỊNH
+      (không phải dropdown), ĐỘC LẬP với nút "Ignore SapLot" (không đổi công
+      thức is_rework, chỉ loại bớt mẻ trước khi cộng dồn — ảnh hưởng MỌI
+      Category kể cả "Plan PRD time"). Thêm cột `sap_lot` vào rollup
+      `cleaning_mc_daily_summary` (lazy ALTER SQLite + migration mới
+      `supabase/migrate_cleaning_summary_sap_lot.sql`, CẦN `flask
+      rebuild-summaries` sau khi chạy, CHƯA xác nhận đã chạy). Helper
+      `_sap_lot_matches_prefixes()` dùng chung cho cả 2 tab qua tham số
+      `sap_lot_prefixes` mới ở `get_cleaning_matrix()`/`get_batch_summary()`/
+      `export_batch_summary_excel()` + route param `sap_lot_prefix`. Smoke
+      test mới (Kịch bản 3 trong `test_batch_summary_formula.py` cho Summary,
+      script rời cho Detail) + full regression 8 bộ test PASS 100%.
 
 ## Backlog (Phase 2+)
+- [ ] **Chạy 2 migration Supabase còn nợ + `flask rebuild-summaries` trên
+      production**: `supabase/migrate_cleaning_summary_run_time.sql` (cột
+      `run_time`, 2026-09-24) VÀ `supabase/migrate_cleaning_summary_sap_lot.sql`
+      (cột `sap_lot`, 2026-09-24, mới) — cả 2 đều CHƯA xác nhận đã chạy trên
+      production, nên chạy cùng lúc rồi `flask rebuild-summaries` 1 lần để
+      backfill toàn bộ lịch sử.
 - [ ] **Chạy `flask rebuild-summaries` trên production SAU KHI deploy bản có
       đổi công thức Rework** (2026-09-22 khuya) — bắt buộc để `cleaning_mc_daily_summary`
       lịch sử phản ánh đúng luật Rework MỚI (dữ liệu cũ vẫn giữ badge tính theo

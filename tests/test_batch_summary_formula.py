@@ -14,6 +14,12 @@ khối "Subtotal"/"J tank"/"O tank"/"Unclassified"), KHÔNG còn `["rows"]` ph�
 "<300Kg"/"300 to 500 Kg"/"600kg or above"). Test này cập nhật cách ĐI TỚI đúng dòng dữ liệu
 (qua khối "Subtotal" của group, gộp mọi Tank).
 
+CẬP NHẬT 2026-09-24 (tiếp 2, cùng ngày) — bộ lọc SapLot 1*/3* (checkbox "SapLot = 1"/"SapLot
+= 3" trên UI, xem `get_batch_summary(sap_lot_prefixes=...)`): thu hẹp TẬP MẺ được tính theo
+SapLot bắt đầu bằng ký tự đã chọn, ĐỘC LẬP với is_rework/ignore_sap_lot (không đổi công thức
+phân loại, chỉ loại bớt mẻ trước khi cộng dồn). Test thêm cột `sap_lot` cho từng mẻ mẫu và 1
+kịch bản lọc riêng ở cuối file.
+
 CẬP NHẬT 2026-09-24 (tiếp, cùng ngày) — ĐỔI CÔNG THỨC "Normal": người dùng tự tải file Batch
 Detail thật (`batch_2026-08-01_to_2026-08-31.xlsx`) về pivot tay, đối chiếu với nút "Ignore
 SapLot" trên UI, phát hiện "No. of normal dyeing batch" tính RA THẤP HƠN THỰC TẾ đáng kể
@@ -77,7 +83,7 @@ def _init_schema(db_path: str) -> None:
         CREATE TABLE cleaning_mc_daily_summary (
             production_date TEXT NOT NULL, availability_log_id INTEGER NOT NULL,
             machine TEXT NOT NULL, batch_type TEXT, badge TEXT NOT NULL,
-            is_rework INTEGER NOT NULL DEFAULT 0, dyelot_ref TEXT,
+            is_rework INTEGER NOT NULL DEFAULT 0, dyelot_ref TEXT, sap_lot TEXT,
             PRIMARY KEY (production_date, availability_log_id)
         )
     """)
@@ -103,15 +109,16 @@ def main() -> int:
         # Tháng 01/2026, máy M1: 2 mẻ Normal, 1 mẻ Rework (batch_type Normal + is_rework=1),
         # 1 mẻ batch_type='R&D' KHÔNG rework (giờ tính CẢ Normal LẪN R&D, xem đổi công thức ở
         # đầu file), 1 mẻ CM.
+        # sap_lot: 2 mẻ bắt đầu "1", 1 mẻ bắt đầu "3", 2 mẻ bắt đầu "2" (không khớp bộ lọc 1*/3*).
         rows = [
-            ("2026-01-05", 1, "M1", "Normal", "D", 0),
-            ("2026-01-06", 2, "M1", "Normal", "M", 0),
-            ("2026-01-07", 3, "M1", "Normal", "DR", 1),
-            ("2026-01-08", 4, "M1", "R&D", "L", 0),
-            ("2026-01-09", 5, "M1", "", "CM", 0),
+            ("2026-01-05", 1, "M1", "Normal", "D", 0, "10011"),
+            ("2026-01-06", 2, "M1", "Normal", "M", 0, "20022"),
+            ("2026-01-07", 3, "M1", "Normal", "DR", 1, "10033"),
+            ("2026-01-08", 4, "M1", "R&D", "L", 0, "30044"),
+            ("2026-01-09", 5, "M1", "", "CM", 0, "20055"),
         ]
         conn.executemany(
-            "INSERT INTO cleaning_mc_daily_summary (production_date, availability_log_id, machine, batch_type, badge, is_rework) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO cleaning_mc_daily_summary (production_date, availability_log_id, machine, batch_type, badge, is_rework, sap_lot) VALUES (?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         conn.commit()
@@ -151,6 +158,21 @@ def main() -> int:
         _check("All Groups: No. of normal dyeing batch = 3", all_by_category["No. of normal dyeing batch"][jan], 3, failures)
         _check("All Groups: No. of R&D batch = 1", all_by_category["No. of R&D batch"][jan], 1, failures)
         _check("All Groups: Cleaning MC Ratio = 3.0", all_by_category["Cleaning MC Ratio"][jan], 3.0, failures)
+
+        print("\n=== Kịch bản 3: bộ lọc SapLot 1*/3* (checkbox 'SapLot = 1'/'SapLot = 3') ===")
+        app2 = _make_temp_app(db_path)
+        with app2.app_context():
+            filtered = get_batch_summary(2026, sap_lot_prefixes=["1", "3"])
+            close_db()
+        f_group = next(g for g in filtered["groups"] if g["group"] == ">=300 to <500Kg")
+        f_tanks = {t["tank"]: t for t in f_group["tanks"]}
+        f_by_category = {row["category"]: row["values"] for row in f_tanks["Subtotal"]["rows"]}
+        # Chỉ còn 3 mẻ khớp SapLot 1*/3*: (D, sap_lot=1*) Normal, (DR, sap_lot=1*) Rework,
+        # (L, sap_lot=3*) R&D KHÔNG rework -> Normal=2 (D + L), Rework=1, CM=0 (sap_lot="2*" bị loại).
+        _check("Lọc SapLot 1*/3*: No. of time Cleaning MC = 0 (mẻ CM có sap_lot='2*' bị loại)", f_by_category["No. of time Cleaning MC"][jan], 0, failures)
+        _check("Lọc SapLot 1*/3*: No. of normal dyeing batch = 2", f_by_category["No. of normal dyeing batch"][jan], 2, failures)
+        _check("Lọc SapLot 1*/3*: Rework batch = 1", f_by_category["Rework batch"][jan], 1, failures)
+        _check("Lọc SapLot 1*/3*: No. of R&D batch = 1", f_by_category["No. of R&D batch"][jan], 1, failures)
     finally:
         os.unlink(db_path)
 
