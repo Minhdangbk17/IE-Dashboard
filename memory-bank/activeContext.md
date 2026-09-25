@@ -1,6 +1,24 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-25 (tiếp, sửa nhỏ) — Người dùng phát hiện raw data đôi khi
+**Cập nhật lần cuối:** 2026-09-25 (tiếp 2, tính năng mới) — Thêm **Export Excel cho tab
+Detail** (báo cáo "Batch Per Day by Machine") — trước đó CHỈ tab Summary có nút Export.
+
+- `export_cleaning_matrix_excel()` (`modules/dyeing/engines/reports/cleaning_matrix.py`) —
+  nhận ĐÚNG các tham số filter như `get_cleaning_matrix()` (from_date/to_date/capacities/
+  brand_programs/fabric_types/require_redye_zero) để file xuất ra khớp đúng bộ lọc đang chọn
+  trên UI lúc bấm Export, cùng nguyên tắc với `export_batch_summary_excel()`.
+- File `.xlsx` có **2 sheet**: "Detail" (y hệt bảng chính — cột Machine Master + 5 cột KPI +
+  1 cột/ngày, mỗi ô ngày liệt kê các mã badge cách nhau bằng ", " dạng CHỮ THUẦN, KHÔNG tô màu
+  từng badge như UI — giữ đơn giản, không đáng làm style theo từng mã màu cho 1 file export) và
+  "Color Summary" (y hệt bảng "Normal Dyeing Batches by Colour" bên dưới UI, có dòng/cột Total).
+- Route mới `/api/cleaning-matrix/export`, nút "Export Excel" trên Detail tab dùng CHUNG 1 bộ
+  `URLSearchParams` với request tải dữ liệu chính trong `load()` (JS) — đảm bảo link Export
+  LUÔN khớp đúng filter/checkbox hiện tại, không cần đồng bộ tay 2 nơi.
+- Verify: smoke test rời (không lưu repo) dùng `openpyxl.load_workbook()` đọc lại file xuất ra,
+  xác nhận đúng header/dữ liệu badge từng ngày + tổng Color Summary khớp dữ liệu seed. Full
+  regression 8 bộ test PASS 100%.
+
+**Cập nhật lần cuối (bản ghi trước):** 2026-09-25 (tiếp, sửa nhỏ) — Người dùng phát hiện raw data đôi khi
 **THIẾU dấu "-"** trước hậu tố Dyelot (VD "...WA" trần thay vì "-WA", tương tự "DU"/"KN") —
 `classify_batch_badge()`/`_is_sample_batch()` đổi từ kiểm tra **substring** (`"-WA" in dyelot`)
 sang **`endswith`** (`dyelot.endswith("WA")`) cho CẢ 3 hậu tố CM ("WA")/Sample ("DU"/"KN") —

@@ -614,6 +614,90 @@ def get_cleaning_matrix(
     }
 
 
+def export_cleaning_matrix_excel(
+    from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None,
+    brand_programs: list[str] | None = None, fabric_types: list[str] | None = None,
+    require_redye_zero: bool = True,
+) -> bytes:
+    """Xuất tab "Detail" ra file `.xlsx` — 2 sheet: "Detail" (y hệt bảng chính trên UI: cột
+    Machine Master + 5 cột KPI + 1 cột/ngày trong khoảng lọc, mỗi ô ngày liệt kê các mã badge
+    của mẻ chạy hôm đó cách nhau bằng ", " — KHÔNG tô màu từng badge như UI, chỉ xuất dạng chữ
+    để giữ đơn giản) và "Color Summary" (y hệt bảng "Normal Dyeing Batches by Colour" bên dưới
+    UI). Nhận ĐÚNG các tham số filter như `get_cleaning_matrix()` — file xuất ra PHẢI khớp
+    đúng bộ lọc/checkbox đang chọn trên UI lúc bấm Export, KHÔNG export riêng theo mặc định.
+    Style header dùng CHUNG font/màu với `export_batch_summary_excel()` (nền tối `24292F`/chữ
+    trắng đậm) để nhất quán giao diện file export trong toàn ứng dụng."""
+    data = get_cleaning_matrix(from_date, to_date, capacities, brand_programs, fabric_types, require_redye_zero)
+
+    workbook = Workbook()
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="24292F", end_color="24292F", fill_type="solid")
+
+    detail_sheet = workbook.active
+    detail_sheet.title = "Detail"
+    fixed_headers = ["Machine", "Group MC", "MC brand", "Tank", "MC quantity", "Tube no", "Capacity (Kg)", "Status", "Production Status", "Orgatex", "No. of time Cleaning MC", "No. of normal dyeing batch", "Cleaning MC Ratio", "No. of R&D batch", "Rework batch"]
+    headers = [*fixed_headers, *data["time_labels"]]
+    for col_idx, header in enumerate(headers, start=1):
+        cell = detail_sheet.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+    for col_idx in range(1, len(fixed_headers) + 1):
+        detail_sheet.column_dimensions[detail_sheet.cell(row=1, column=col_idx).column_letter].width = 16
+    for col_idx in range(len(fixed_headers) + 1, len(headers) + 1):
+        detail_sheet.column_dimensions[detail_sheet.cell(row=1, column=col_idx).column_letter].width = 20
+
+    for row_idx, item in enumerate(data["matrix"], start=2):
+        machine_label = item["machine_code"] or item["machine"] or "-"
+        if item["is_unmapped"]:
+            machine_label += " (unmapped)"
+        fixed_values = [
+            machine_label, item["group_mc"], item["mc_brand"], item["tank_type"], item["mc_quantity"], item["tube_no"],
+            item["capacity"], item["status"], item["production_status"], "Yes" if item["orgatex"] else "No",
+            item["cleaning_count"], item["normal_batches"], item["cleaning_ratio"], item["rd_batches"], item["rework_batches"],
+        ]
+        for col_idx, value in enumerate(fixed_values, start=1):
+            detail_sheet.cell(row=row_idx, column=col_idx, value=value)
+        for col_offset, day in enumerate(data["time_labels"]):
+            day_badges = [batch["color_code_display"] for batch in item["batches"] if batch["production_date"] == day]
+            detail_sheet.cell(row=row_idx, column=len(fixed_headers) + 1 + col_offset, value=", ".join(day_badges) or None)
+    detail_sheet.freeze_panes = "B2"
+
+    color_sheet = workbook.create_sheet("Color Summary")
+    color_headers = ["Colour", *data["time_labels"], "Total"]
+    for col_idx, header in enumerate(color_headers, start=1):
+        cell = color_sheet.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+    color_sheet.column_dimensions["A"].width = 14
+    for col_idx in range(2, len(color_headers) + 1):
+        color_sheet.column_dimensions[color_sheet.cell(row=1, column=col_idx).column_letter].width = 14
+
+    day_totals = [0] * len(data["time_labels"])
+    grand_total = 0
+    for row_idx, label in enumerate(data["color_summary"]["labels"], start=2):
+        label_index = data["color_summary"]["labels"].index(label)
+        color_sheet.cell(row=row_idx, column=1, value=label)
+        row_total = 0
+        for col_offset, day in enumerate(data["time_labels"]):
+            count = (data["color_summary"]["by_day"].get(day) or [])[label_index] if data["color_summary"]["by_day"].get(day) else 0
+            color_sheet.cell(row=row_idx, column=2 + col_offset, value=count)
+            day_totals[col_offset] += count
+            row_total += count
+        color_sheet.cell(row=row_idx, column=len(color_headers), value=row_total)
+        grand_total += row_total
+    total_row = 2 + len(data["color_summary"]["labels"])
+    total_font = Font(bold=True)
+    color_sheet.cell(row=total_row, column=1, value="Total").font = total_font
+    for col_offset, day_total in enumerate(day_totals):
+        color_sheet.cell(row=total_row, column=2 + col_offset, value=day_total).font = total_font
+    color_sheet.cell(row=total_row, column=len(color_headers), value=grand_total).font = total_font
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Quản lý Machine Master (`machines`) — Group MC/MC brand/Tank/MC quantity/Tube no/
 # Capacity/Status/Production Status/Orgatex.

@@ -40,6 +40,7 @@
         <label class="mb-0" style="display:flex;align-items:center;gap:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="matrix-require-redye-zero" checked> ReDye = 0</label>
     </div>
     <button id="matrix-load" class="btn btn-primary">Load Matrix</button>
+    <a id="matrix-export-btn" class="btn btn-sm" href="#">Export Excel</a>
 </div></section>
 <div id="matrix-coverage-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
 <div id="unmapped-machine-warning" class="Box p-3 mb-3" style="display:none;border-color:var(--warning);background:var(--warning-bg);color:var(--warning)"></div>
@@ -82,6 +83,8 @@
 </script>
 <script>
 (function () { "use strict"; const endpoint = "{{ url_for('dyeing.reports.api_cleaning_matrix') }}";
+    const matrixExportEndpoint = "{{ url_for('dyeing.reports.api_cleaning_matrix_export') }}";
+    const matrixExportBtn = document.getElementById("matrix-export-btn");
     function escAttr(value) {
         return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
     }
@@ -281,6 +284,7 @@
         fabricTypeFilter.selected().forEach((value) => params.append("fabric_type", value));
         brandProgramFilter.selected().forEach((value) => params.append("brand_program", value));
         params.set("require_redye_zero", document.getElementById("matrix-require-redye-zero").checked ? "1" : "0");
+        matrixExportBtn.href = `${matrixExportEndpoint}?${params}`;
         fetch(`${endpoint}?${params}`).then((response) => response.json()).then((data) => {
             render(data);
             capacityFilter.setOptions((data.available_capacities || []).map(String));

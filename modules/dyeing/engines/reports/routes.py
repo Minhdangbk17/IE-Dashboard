@@ -8,7 +8,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request, sen
 from core.auth import get_current_user, permission_required
 from core.batch_importer import sync_batch_details
 from core.database import DatabaseError
-from .cleaning_matrix import export_batch_summary_excel, get_batch_summary, get_cleaning_matrix, list_machine_configs, upsert_machine_config
+from .cleaning_matrix import export_batch_summary_excel, export_cleaning_matrix_excel, get_batch_summary, get_cleaning_matrix, list_machine_configs, upsert_machine_config
 
 if TYPE_CHECKING:
     from core.engine_base import BaseEngine
@@ -43,6 +43,29 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None, fabric_types or None, require_redye_zero))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+
+    @bp.route("/api/cleaning-matrix/export")
+    @permission_required("dyeing", "reports", "view")
+    def api_cleaning_matrix_export() -> Any:
+        capacities: list[float] = []
+        for raw_value in request.args.getlist("capacity"):
+            try:
+                capacities.append(float(raw_value))
+            except ValueError:
+                continue
+        brand_programs = [value for value in request.args.getlist("brand_program") if value]
+        fabric_types = [value for value in request.args.getlist("fabric_type") if value]
+        require_redye_zero = request.args.get("require_redye_zero", "1") != "0"
+        from_date = request.args.get("from_date")
+        to_date = request.args.get("to_date")
+        content = export_cleaning_matrix_excel(from_date, to_date, capacities or None, brand_programs or None, fabric_types or None, require_redye_zero)
+        name_range = f"{from_date}_to_{to_date}" if from_date and to_date else datetime.now().strftime("%Y-%m-%d")
+        return send_file(
+            io.BytesIO(content),
+            as_attachment=True,
+            download_name=f"batch_detail_{name_range}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     @bp.route("/api/batch-summary")
     @permission_required("dyeing", "reports", "view")

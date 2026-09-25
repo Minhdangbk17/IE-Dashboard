@@ -1031,6 +1031,13 @@
       `tests/test_rework_classification.py`, cập nhật
       `tests/test_batch_summary_formula.py`, full regression 8 bộ test PASS
       100%.
+- [x] **Thêm Export Excel cho tab Detail — HOÀN THÀNH 2026-09-25**: trước đó
+      CHỈ tab Summary có nút Export. `export_cleaning_matrix_excel()` xuất
+      file 2 sheet ("Detail" y hệt bảng chính + "Color Summary" y hệt bảng
+      "Normal Dyeing Batches by Colour"), nhận đúng bộ filter/checkbox như
+      `get_cleaning_matrix()`. Route mới `/api/cleaning-matrix/export`. Smoke
+      test rời xác nhận đúng cấu trúc + dữ liệu, full regression 8 bộ test
+      PASS 100%.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên
