@@ -14,11 +14,15 @@ khối "Subtotal"/"J tank"/"O tank"/"Unclassified"), KHÔNG còn `["rows"]` ph�
 "<300Kg"/"300 to 500 Kg"/"600kg or above"). Test này cập nhật cách ĐI TỚI đúng dòng dữ liệu
 (qua khối "Subtotal" của group, gộp mọi Tank).
 
-CẬP NHẬT 2026-09-24 (tiếp 2, cùng ngày) — bộ lọc SapLot 1*/3* (checkbox "SapLot = 1"/"SapLot
-= 3" trên UI, xem `get_batch_summary(sap_lot_prefixes=...)`): thu hẹp TẬP MẺ được tính theo
-SapLot bắt đầu bằng ký tự đã chọn, ĐỘC LẬP với is_rework/ignore_sap_lot (không đổi công thức
-phân loại, chỉ loại bớt mẻ trước khi cộng dồn). Test thêm cột `sap_lot` cho từng mẻ mẫu và 1
-kịch bản lọc riêng ở cuối file.
+CẬP NHẬT 2026-09-25 (thay thế mục "bộ lọc SapLot 1*/3*" cũ — TÍNH NĂNG ĐÓ ĐÃ BỊ GỠ BỎ) —
+công thức CM/Normal/Rework đổi HOÀN TOÀN theo `classify_batch_badge()` waterfall 4 bước mới
+(xem `tests/test_rework_classification.py` cho chi tiết đơn vị): CM = Dyelot chứa "-WA" hoặc
+bắt đầu "CL"; Sample (badge "S") = Dyelot chứa "-DU"/"-KN" hoặc SapLot bắt đầu "4", loại HOÀN
+TOÀN khỏi mọi Category; Normal = Dyelot kết thúc "0" + SapLot bắt đầu "1"/"3" + (tuỳ chọn qua
+checkbox "ReDye = 0" trên UI, mặc định BẬT) ReDye = 0. Checkbox tắt -> `get_batch_summary(
+require_redye_zero=False)` tính lại ranh giới Normal/Rework NGAY TẠI READ TIME (không
+recompute lại) qua `_effective_badge_is_rework()`. Test thêm cột `sap_lot`/`redye` cho từng mẻ
+mẫu, 1 kịch bản riêng cho Sample + checkbox "ReDye = 0" ở cuối file.
 
 CẬP NHẬT 2026-09-24 (tiếp, cùng ngày) — ĐỔI CÔNG THỨC "Normal": người dùng tự tải file Batch
 Detail thật (`batch_2026-08-01_to_2026-08-31.xlsx`) về pivot tay, đối chiếu với nút "Ignore
@@ -84,6 +88,7 @@ def _init_schema(db_path: str) -> None:
             production_date TEXT NOT NULL, availability_log_id INTEGER NOT NULL,
             machine TEXT NOT NULL, batch_type TEXT, badge TEXT NOT NULL,
             is_rework INTEGER NOT NULL DEFAULT 0, dyelot_ref TEXT, sap_lot TEXT,
+            redye REAL NOT NULL DEFAULT 0,
             PRIMARY KEY (production_date, availability_log_id)
         )
     """)
@@ -159,20 +164,49 @@ def main() -> int:
         _check("All Groups: No. of R&D batch = 1", all_by_category["No. of R&D batch"][jan], 1, failures)
         _check("All Groups: Cleaning MC Ratio = 3.0", all_by_category["Cleaning MC Ratio"][jan], 3.0, failures)
 
-        print("\n=== Kịch bản 3: bộ lọc SapLot 1*/3* (checkbox 'SapLot = 1'/'SapLot = 3') ===")
+        print("\n=== Kịch bản 3: Sample (badge 'S') loại hoàn toàn + checkbox 'ReDye = 0' ===")
+        # Tháng 02/2026 (month index 1), máy M1, dữ liệu MỚI tách riêng khỏi Kịch bản 0-2 để
+        # không lẫn số liệu. G: Dyelot/SapLot hợp lệ Normal nhưng ReDye=3 (!=0) -> lưu sẵn
+        # "MR" (Rework, vì recompute_daily() LUÔN dùng require_redye_zero=True). H: Dyelot
+        # KHÔNG kết thúc '0' -> Rework THẬT SỰ (không đổi dù tắt checkbox). I: Sample (Dyelot
+        # chứa '-DU'). J: CM (Dyelot chứa '-WA').
+        conn2 = sqlite3.connect(db_path)
+        feb_rows = [
+            ("2026-02-05", 10, "M1", "Normal", "MR", 1, "C002000", "10077", 3),
+            ("2026-02-06", 11, "M1", "Normal", "LR", 1, "C002011", "10088", 0),
+            ("2026-02-07", 12, "M1", "Normal", "S", 0, "C002020-DU", "10099", 0),
+            ("2026-02-08", 13, "M1", "", "CM", 0, "C002030-WA", "", 0),
+        ]
+        conn2.executemany(
+            "INSERT INTO cleaning_mc_daily_summary (production_date, availability_log_id, machine, batch_type, badge, is_rework, dyelot_ref, sap_lot, redye) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            feb_rows,
+        )
+        conn2.commit()
+        conn2.close()
+        feb = 1  # index 1 = February
+
         app2 = _make_temp_app(db_path)
         with app2.app_context():
-            filtered = get_batch_summary(2026, sap_lot_prefixes=["1", "3"])
+            default_on = get_batch_summary(2026)
+            toggled_off = get_batch_summary(2026, require_redye_zero=False)
             close_db()
-        f_group = next(g for g in filtered["groups"] if g["group"] == ">=300 to <500Kg")
-        f_tanks = {t["tank"]: t for t in f_group["tanks"]}
-        f_by_category = {row["category"]: row["values"] for row in f_tanks["Subtotal"]["rows"]}
-        # Chỉ còn 3 mẻ khớp SapLot 1*/3*: (D, sap_lot=1*) Normal, (DR, sap_lot=1*) Rework,
-        # (L, sap_lot=3*) R&D KHÔNG rework -> Normal=2 (D + L), Rework=1, CM=0 (sap_lot="2*" bị loại).
-        _check("Lọc SapLot 1*/3*: No. of time Cleaning MC = 0 (mẻ CM có sap_lot='2*' bị loại)", f_by_category["No. of time Cleaning MC"][jan], 0, failures)
-        _check("Lọc SapLot 1*/3*: No. of normal dyeing batch = 2", f_by_category["No. of normal dyeing batch"][jan], 2, failures)
-        _check("Lọc SapLot 1*/3*: Rework batch = 1", f_by_category["Rework batch"][jan], 1, failures)
-        _check("Lọc SapLot 1*/3*: No. of R&D batch = 1", f_by_category["No. of R&D batch"][jan], 1, failures)
+
+        def _feb_by_category(data):
+            group = next(g for g in data["groups"] if g["group"] == ">=300 to <500Kg")
+            tanks = {t["tank"]: t for t in group["tanks"]}
+            return {row["category"]: row["values"] for row in tanks["Subtotal"]["rows"]}
+
+        on_cat = _feb_by_category(default_on)
+        off_cat = _feb_by_category(toggled_off)
+
+        _check("Mặc định BẬT: No. of time Cleaning MC = 1 (Sample 'S' KHÔNG tính vào đây)", on_cat["No. of time Cleaning MC"][feb], 1, failures)
+        _check("Mặc định BẬT: No. of normal dyeing batch = 0 (G bị chặn bởi ReDye!=0, Sample loại hẳn)", on_cat["No. of normal dyeing batch"][feb], 0, failures)
+        _check("Mặc định BẬT: Rework batch = 2 (G + H)", on_cat["Rework batch"][feb], 2, failures)
+
+        _check("Tắt checkbox: No. of normal dyeing batch = 1 (G hết bị ReDye chặn -> Normal)", off_cat["No. of normal dyeing batch"][feb], 1, failures)
+        _check("Tắt checkbox: Rework batch = 1 (chỉ còn H — Dyelot không kết thúc '0', KHÔNG liên quan ReDye)", off_cat["Rework batch"][feb], 1, failures)
+        _check("Tắt checkbox: No. of time Cleaning MC vẫn = 1 (không đổi)", off_cat["No. of time Cleaning MC"][feb], 1, failures)
+        _check("Sample 'S' không lọt vào 'No. Dyeing machine' (chỉ tính máy có mẻ thật khác)", off_cat["No. Dyeing machine"][feb], 1, failures)
     finally:
         os.unlink(db_path)
 

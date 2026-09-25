@@ -32,8 +32,9 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "sap_lot": ("SapLot", "sap_lot"),
 }
 
-# Toàn bộ 11 mã badge hợp lệ (dùng để log kiểm tra đầu ra).
-ALL_BADGE_CODES = ("CM", "B", "D", "M", "L", "W", "BR", "DR", "MR", "LR", "WR")
+# Toàn bộ 12 mã badge hợp lệ (dùng để log kiểm tra đầu ra). "S" (Sample, 2026-09-25) không có
+# hậu tố "R" — mẻ mẫu không thuộc Normal lẫn Rework.
+ALL_BADGE_CODES = ("CM", "S", "B", "D", "M", "L", "W", "BR", "DR", "MR", "LR", "WR")
 
 # Thứ tự cột hiển thị cho summary "Normal Dyeing Batches by Colour" (theo đúng thứ tự
 # người dùng yêu cầu) — chỉ tính mẻ Normal (không CM, không Rework), map trực tiếp từ
@@ -63,34 +64,91 @@ def _get_field(batch: Mapping[str, Any], name: str) -> str:
     return ""
 
 
-def _dyelot_indicates_rework(dyelot: str | None) -> bool:
-    """Điều kiện (a) của quy tắc Rework: chữ số CUỐI CÙNG của Dyelot là CHỮ SỐ khác '0'. Tách
-    riêng hàm này (không viết trực tiếp trong `classify_batch_badge()`) để dùng lại CHÍNH XÁC
-    ở `get_batch_summary()` khi người dùng bật nút "Ignore SapLot" trên tab Summary — tránh 2
-    nơi tự viết lại cùng 1 quy tắc rồi lệch nhau nếu sau này chỉ sửa 1 chỗ."""
-    dyelot = (dyelot or "").strip()
-    return bool(dyelot) and dyelot[-1].isdigit() and dyelot[-1] != "0"
+def _is_sample_batch(dyelot: str | None, sap_lot: str | None) -> bool:
+    """Mẻ MẪU (Sample, 2026-09-25, MỚI) — loại HOÀN TOÀN khỏi mọi thống kê Normal/Rework/
+    Cleaning Ratio/"No. Dyeing machine" (không tính vào đâu cả, xem `get_cleaning_matrix()`/
+    `get_batch_summary()` nhánh `code == "S"`). Dyelot KẾT THÚC bằng "DU" HOẶC "KN" (hậu tố mẻ
+    thử nghiệm — TRƯỚC ĐÂY 2 hậu tố này mặc định coi là Normal, người dùng xác nhận đổi thành
+    Sample riêng), HOẶC SapLot bắt đầu bằng "4" (mã lot dành riêng cho mẻ mẫu). Dùng `endswith`
+    (KHÔNG bắt buộc có dấu "-" trước) — 2026-09-25 (bản 2): người dùng phát hiện raw data đôi
+    khi THIẾU dấu "-" (chỉ còn "...DU"/"...KN" trần, không phải "-DU"/"-KN") — `endswith` vẫn
+    khớp ĐÚNG cả 2 dạng (có/không dấu gạch), an toàn hơn kiểm tra "chứa DU/KN ở bất kỳ đâu"
+    (tránh bắt nhầm Dyelot khác tình cờ chứa "DU"/"KN" ở giữa)."""
+    dyelot_upper = (dyelot or "").strip().upper()
+    sap_lot_norm = (sap_lot or "").strip()
+    return dyelot_upper.endswith("DU") or dyelot_upper.endswith("KN") or sap_lot_norm.startswith("4")
 
 
-# Bộ lọc "SapLot bắt đầu bằng X" (2026-09-24, mới) — cho cả 2 tab Detail/Summary của báo cáo
-# "Batch Per Day by Machine", theo yêu cầu người dùng sau khi tự đối chiếu số liệu tay (2
-# checkbox cố định "SapLot = 1"/"SapLot = 3", KHÔNG phải dropdown tuỳ ý — xem hỏi-đáp trong
-# hội thoại). ĐỘC LẬP với nút "Ignore SapLot" (đổi CÁCH PHÂN LOẠI Rework) — bộ lọc này chỉ
-# thu hẹp TẬP MẺ được tính, không đụng tới công thức is_rework.
-SAP_LOT_FILTER_PREFIXES = ("1", "3")
+def _is_normal_dyeing(dyelot: str | None, sap_lot: str | None, redye: Any, require_redye_zero: bool) -> bool:
+    """Normal dyeing batch (2026-09-25, THAY THẾ HOÀN TOÀN quy tắc Rework cũ dựa trên "chữ số
+    cuối Dyelot khác '0'"/"chữ số đầu SapLot >1" nối HOẶC) — giờ là 1 định nghĩa THUẦN DƯƠNG
+    (positive), Normal khi ĐỦ CẢ:
+      - Dyelot kết thúc bằng ký tự "0" (khác quy tắc cũ: dyelot kết thúc bằng CHỮ CÁI không
+        còn mặc định Normal nữa — phải ĐÚNG "0").
+      - SapLot bắt đầu bằng "1" HOẶC "3" (khác quy tắc cũ: SapLot bắt đầu "3" TRƯỚC ĐÂY tính
+        là Rework vì chữ số đầu >1 — nay đổi thành Normal theo yêu cầu người dùng).
+      - (nếu `require_redye_zero=True`) ReDye = 0 — cột số thô `batch_details.redye`, KHÔNG
+        phải `batch_type` (đã bỏ hẳn điều kiện lọc theo `batch_type` ở lần sửa 2026-09-24).
+    Thiếu bất kỳ điều kiện nào -> Rework (không còn là 1 quy tắc riêng, chỉ là phần bù của
+    Normal). Dùng lại được ở CẢ classify_batch_badge() (ghi, `require_redye_zero=True` cố
+    định) LẪN read-time override khi checkbox "ReDye = 0" trên UI bị TẮT (xem
+    `_effective_badge_is_rework()`)."""
+    dyelot_norm = (dyelot or "").strip()
+    sap_lot_norm = (sap_lot or "").strip()
+    dyelot_ok = bool(dyelot_norm) and dyelot_norm[-1] == "0"
+    sap_lot_ok = bool(sap_lot_norm) and sap_lot_norm[0] in ("1", "3")
+    if not require_redye_zero:
+        return dyelot_ok and sap_lot_ok
+    try:
+        redye_ok = float(redye or 0) == 0
+    except (TypeError, ValueError):
+        redye_ok = True
+    return dyelot_ok and sap_lot_ok and redye_ok
 
 
-def _sap_lot_matches_prefixes(sap_lot: str | None, prefixes: set[str]) -> bool:
-    normalized = (sap_lot or "").strip()
-    return any(normalized.startswith(prefix) for prefix in prefixes)
+def _effective_badge_is_rework(stored_badge: str, dyelot_ref: str | None, sap_lot: str | None, redye: Any, require_redye_zero: bool) -> tuple[str, bool]:
+    """Áp lại checkbox "ReDye = 0" NGAY TẠI READ TIME (2026-09-25) — KHÔNG chạy lại
+    `recompute_daily()` (tốn kém, dễ vượt giới hạn thời gian serverless, xem bài học route
+    `/admin/data-tools` 2026-09-24). `cleaning_mc_daily_summary.badge`/`is_rework` LUÔN được
+    LƯU với `require_redye_zero=True` (khớp checkbox mặc định BẬT trên UI) — nếu tham số
+    `require_redye_zero` truyền vào ĐÚNG bằng giá trị đã lưu (True), trả lại y hệt dữ liệu đã
+    lưu, KHÔNG tính toán lại gì (đường nhanh cho trường hợp phổ biến). CHỈ khi người dùng TẮT
+    checkbox (`require_redye_zero=False`) mới tính lại ranh giới Normal/Rework từ 3 cột thô đã
+    lưu sẵn (`dyelot_ref`/`sap_lot`/`redye`). KHÔNG đụng badge "CM"/"S" (ReDye không liên quan
+    gì tới 2 loại này). Dùng CHUNG cho CẢ 2 tab Detail/Summary để không lệch số."""
+    if stored_badge in ("CM", "S"):
+        return stored_badge, False
+    if require_redye_zero:
+        return stored_badge, stored_badge.endswith("R")
+    base = stored_badge[0]
+    is_normal = _is_normal_dyeing(dyelot_ref, sap_lot, redye, require_redye_zero=False)
+    return (base if is_normal else f"{base}R"), not is_normal
 
 
-def classify_batch_badge(batch: Mapping[str, Any]) -> str:
-    """Phân loại Batch Badge theo thuật toán 5 bước (CM -> Rework -> Base color -> ghép mã)."""
-    # Bước 1: Mẻ rửa máy — Dyelot chứa '-WA' -> dừng kiểm tra, trả về CM ngay.
+def classify_batch_badge(batch: Mapping[str, Any], require_redye_zero: bool = True) -> str:
+    """Phân loại Batch Badge theo waterfall 4 bước (2026-09-25 — THAY THẾ HOÀN TOÀN bộ quy
+    tắc CM/Rework trước đó, theo yêu cầu người dùng sau nhiều vòng tự đối chiếu raw data):
+      1. Cleaning MC (CM): Dyelot KẾT THÚC bằng "WA" (khớp cả "-WA" lẫn "WA" thiếu dấu gạch)
+         HOẶC Dyelot BẮT ĐẦU bằng "CL".
+      2. Mẻ mẫu (Sample, badge "S"): xem `_is_sample_batch()`.
+      3. Tông màu cơ bản B/D/M/L/W — GIỮ NGUYÊN logic cũ (không đổi).
+      4. Normal (base) vs Rework (base + "R"): xem `_is_normal_dyeing()`.
+
+    `require_redye_zero` mặc định True — GIÁ TRỊ CỐ ĐỊNH dùng khi GHI (`recompute_daily()`
+    luôn gọi hàm này KHÔNG truyền tham số, tức luôn True — badge/is_rework LƯU vào DB phản
+    ánh đúng trạng thái checkbox "ReDye = 0" mặc định BẬT trên UI). Khi người dùng TẮT checkbox,
+    KHÔNG gọi lại hàm này/`recompute_daily()` — dùng `_effective_badge_is_rework()` ở READ TIME
+    thay thế (xem hàm đó)."""
+    # Bước 1: Cleaning MC — Dyelot KẾT THÚC bằng 'WA' (khớp cả "-WA" lẫn "WA" thiếu dấu gạch —
+    # 2026-09-25 bản 2, raw data đôi khi thiếu dấu "-") HOẶC bắt đầu bằng 'CL' -> trả CM ngay.
     dyelot = _get_field(batch, "dyelot").upper()
-    if "-WA" in dyelot:
+    if dyelot.endswith("WA") or dyelot.startswith("CL"):
         return "CM"
+
+    # Bước 2: Mẻ mẫu (Sample) — dừng kiểm tra, trả "S" (không có màu, không phải Normal/Rework).
+    sap_lot = _get_field(batch, "sap_lot")
+    if _is_sample_batch(dyelot, sap_lot):
+        return "S"
 
     # Bước 3: Xác định tông màu cơ bản (B/W/D/M/L) từ ColourNo + RecipeNo + CustomerColor.
     colour_no = _get_field(batch, "colour_no")
@@ -117,28 +175,10 @@ def classify_batch_badge(batch: Mapping[str, Any]) -> str:
         # Fallback mặc định khi hoàn toàn không có thông tin -> 'M', TUYỆT ĐỐI không phải 'D'.
         base = "M"
 
-    # Bước 2: Xác định trạng thái Rework — 2 điều kiện dựa trên MÃ (Dyelot/SapLot), THAY THẾ
-    # hoàn toàn cách cũ (batch_type='Rework' HOẶC log_rework_minutes>0) theo yêu cầu người dùng
-    # (2026-09-22 bản 3):
-    #   (a) CHỈ xét khi chữ số CUỐI CÙNG của Dyelot là CHỮ SỐ: khác '0' -> Rework, bằng '0' ->
-    #       Normal. Dyelot kết thúc bằng CHỮ CÁI (hậu tố như "-WA"/"-KN"/"-DU" — mẻ rửa máy/mẻ
-    #       thử nghiệm "experiment" hay bị loại khỏi tính toán khác) KHÔNG tính là tín hiệu
-    #       Rework từ điều kiện này (mặc định Normal, kể cả hậu tố lạ chưa từng gặp — người
-    #       dùng xác nhận rõ, "-WA" vẫn trả "CM" riêng ở Bước 1, không bao giờ chạm tới đây).
-    #   (b) Chữ số ĐẦU TIÊN của SapLot > 1 -> Rework, = 1 -> Normal. SapLot rỗng/không bắt đầu
-    #       bằng chữ số -> KHÔNG tính là tín hiệu Rework từ điều kiện này (an toàn, không bịa).
-    # 2 điều kiện nối bằng HOẶC — chỉ cần 1 trong 2 báo Rework là đủ.
-    dyelot_rework = _dyelot_indicates_rework(dyelot)
-
-    sap_lot = _get_field(batch, "sap_lot")
-    sap_lot_rework = False
-    if sap_lot and sap_lot[0].isdigit():
-        sap_lot_rework = int(sap_lot[0]) > 1
-
-    is_rework = dyelot_rework or sap_lot_rework
-
-    # Bước 4: Ghép mã badge cuối cùng.
-    return f"{base}R" if is_rework else base
+    # Bước 4: Normal vs Rework — xem docstring `_is_normal_dyeing()`.
+    redye = _get_field(batch, "redye")
+    is_normal = _is_normal_dyeing(dyelot, sap_lot, redye, require_redye_zero)
+    return base if is_normal else f"{base}R"
 
 
 # ---------------------------------------------------------------------------
@@ -230,12 +270,13 @@ def _ensure_summary_table(conn: Any) -> None:
                 is_rework INTEGER NOT NULL DEFAULT 0,
                 run_time REAL NOT NULL DEFAULT 0,
                 sap_lot TEXT,
+                redye REAL NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (production_date, availability_log_id)
             )
         """)
         existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(cleaning_mc_daily_summary)")}
-        for column, definition in (("brand_program", "TEXT"), ("brand", "TEXT"), ("fabric_type", "TEXT"), ("run_time", "REAL NOT NULL DEFAULT 0"), ("sap_lot", "TEXT")):
+        for column, definition in (("brand_program", "TEXT"), ("brand", "TEXT"), ("fabric_type", "TEXT"), ("run_time", "REAL NOT NULL DEFAULT 0"), ("sap_lot", "TEXT"), ("redye", "REAL NOT NULL DEFAULT 0")):
             if column not in existing_cols:
                 conn.execute(f"ALTER TABLE cleaning_mc_daily_summary ADD COLUMN {column} {definition}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cleaning_mc_daily_summary_date ON cleaning_mc_daily_summary (production_date)")
@@ -344,7 +385,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, row["availability_log_id"], row["machine"], float(row["capacity_kg"] or 0), row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["sequence_order"], batch_no, row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), row["sap_lot"], now_str,
+            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), row["sap_lot"], float(row["redye"] or 0), now_str,
         ))
 
     # `availability_log_id` âm (-1, -2, ...) đánh dấu mẻ "mồ côi" (không có availability_logs.id
@@ -369,7 +410,7 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             day_str, -index, row["machine"], capacity_value, row["configured_capacity_kg"],
             row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
             row["start_time"], row["dyelot_ref"], row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), row["sap_lot"], now_str,
+            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), row["sap_lot"], float(row["redye"] or 0), now_str,
         ))
 
     conn.executemany(
@@ -378,8 +419,8 @@ def recompute_daily(production_date: date, conn: Any) -> None:
             production_date, availability_log_id, machine, capacity_kg, configured_capacity_kg,
             machine_code, mc_brand, tank_type, mc_quantity, tube_no,
             sequence_order, batch_no, dyelot_ref, shade_raw, colour_no, batch_type,
-            start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, run_time, sap_lot, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, run_time, sap_lot, redye, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         inserts,
     )
@@ -412,7 +453,7 @@ def _blank_machine_item(machine_label: str, machine_code: str | None, master: Ma
 def get_cleaning_matrix(
     from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None,
     brand_programs: list[str] | None = None, fabric_types: list[str] | None = None,
-    sap_lot_prefixes: list[str] | None = None,
+    require_redye_zero: bool = True,
 ) -> dict[str, Any]:
     """Danh sách machine hiển thị (2026-09-22, đổi thiết kế theo yêu cầu người dùng) giờ
     LUÔN xuất phát từ Machine Master (`machines`, domain='dyeing') — KHÔNG còn tự phát hiện
@@ -459,8 +500,6 @@ def get_cleaning_matrix(
     brand_program_filter = set(brand_programs) if brand_programs else None
     available_fabric_types = sorted({row["fabric_type"] for row in rows if row["fabric_type"]})
     fabric_type_filter = set(fabric_types) if fabric_types else None
-    # Bộ lọc SapLot 1*/3* (2026-09-24) — xem SAP_LOT_FILTER_PREFIXES, độc lập với is_rework.
-    sap_lot_filter = set(sap_lot_prefixes) if sap_lot_prefixes else None
 
     machines: dict[str, dict[str, Any]] = {}
     master_by_norm: dict[str, Mapping[str, Any]] = {}
@@ -493,8 +532,6 @@ def get_cleaning_matrix(
                 continue
         if fabric_type_filter is not None and row["fabric_type"] not in fabric_type_filter:
             continue
-        if sap_lot_filter is not None and not _sap_lot_matches_prefixes(row["sap_lot"], sap_lot_filter):
-            continue
         raw_machine = (row["machine"] or "").strip()
         norm = _normalize_code(raw_machine)
         item = machines.get(norm)
@@ -512,8 +549,7 @@ def get_cleaning_matrix(
             color_source_present += 1
         else:
             color_source_missing += 1
-        code = row["badge"]
-        is_rework_badge = bool(row["is_rework"])
+        code, is_rework_badge = _effective_badge_is_rework(row["badge"], row["dyelot_ref"], row["sap_lot"], row["redye"], require_redye_zero)
         badge_counter[code] += 1
         day = row["production_date"] or "Unknown"
         item["days"].setdefault(day, []).append(code)
@@ -521,16 +557,16 @@ def get_cleaning_matrix(
         if code == "CM":
             item["cleaning_count"] += 1
             cleaning_count += 1
+        elif code == "S":
+            # Mẻ mẫu (Sample, 2026-09-25) — loại HOÀN TOÀN khỏi Normal/Rework/R&D/Cleaning
+            # Ratio (không rơi vào nhánh nào bên dưới, kể cả rd_batches/rework_batches).
+            pass
         elif not is_rework_badge:
-            # "Normal" = KHÔNG phải CM, KHÔNG phải Rework theo quy tắc Dyelot/SapLot
-            # (`classify_batch_badge()`) — KHÔNG còn lọc thêm theo cột `batch_type` gốc
-            # (2026-09-24, người dùng xác nhận qua đối chiếu số liệu thật: pivot tay của họ
-            # tính Normal THUẦN theo Dyelot/SapLot, không loại batch_type='Rework'/'ReDye'
-            # như bản cũ — bản cũ khiến "No. of normal dyeing batch" thấp hơn thực tế, VD lệch
-            # 1717 so với 1811 khi đối chiếu file "batch_2026-08-01_to_2026-08-31.xlsx" thật).
-            # Hệ quả: 1 mẻ batch_type='R&D' nhưng KHÔNG rework giờ tính vào CẢ "Normal" LẪN
-            # "R&D" (2 cờ độc lập, không loại trừ nhau — cùng nguyên tắc "Rework"+"R&D" có thể
-            # cùng xảy ra trên 1 mẻ đã áp dụng trước đó).
+            # "Normal" = KHÔNG phải CM, KHÔNG phải Sample, KHÔNG phải Rework theo định nghĩa
+            # positive MỚI ở `_is_normal_dyeing()` (2026-09-25: Dyelot kết thúc "0" + SapLot
+            # bắt đầu "1"/"3" + tuỳ chọn ReDye=0) — KHÔNG lọc thêm theo cột `batch_type` gốc
+            # (giữ nguyên quyết định 2026-09-24). Hệ quả: 1 mẻ batch_type='R&D' nhưng KHÔNG
+            # rework vẫn tính vào CẢ "Normal" LẪN "R&D" (2 cờ độc lập, không loại trừ nhau).
             item["normal_batches"] += 1
             normal += 1
             color_label = BADGE_TO_COLOR_LABEL.get(code)
@@ -791,19 +827,15 @@ def _build_summary_category_rows(year: int, month_data: dict[int, dict[str, Any]
     return [{"category": category, "values": values[category]} for category in SUMMARY_CATEGORIES]
 
 
-def get_batch_summary(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes: list[str] | None = None) -> dict[str, Any]:
+def get_batch_summary(year: int, require_redye_zero: bool = True) -> dict[str, Any]:
     """Bảng Summary: Group Machine x Tank Type x Category (9 dòng cố định) x 12 tháng của
     `year`.
 
-    `ignore_sap_lot=True` (nút "Ignore SapLot" trên tab Summary, 2026-09-24): chỉ xét ĐIỀU
-    KIỆN (a) của quy tắc Rework (chữ số cuối Dyelot khác '0', xem `_dyelot_indicates_rework()`
-    — dùng LẠI CHÍNH XÁC hàm `classify_batch_badge()` đang gọi, không viết lại rule lần 2),
-    BỎ QUA điều kiện (b) dựa trên SapLot — tính lại `is_rework` NGAY TẠI ĐÂY từ `dyelot_ref`
-    đã có sẵn trong `cleaning_mc_daily_summary` (KHÔNG cần lưu thêm cột `sap_lot` vào bảng
-    rollup, vì điều kiện (a) không cần SapLot). Mặc định (`False`) giữ NGUYÊN `is_rework` đã
-    tính sẵn ở `recompute_daily()` (gộp CẢ 2 điều kiện, hành vi cũ không đổi). CHỈ ảnh hưởng
-    tab Summary — tab "Detail" (`get_cleaning_matrix()`) KHÔNG có nút này, đúng phạm vi người
-    dùng yêu cầu ("trong báo cáo summary").
+    `require_redye_zero` = trạng thái checkbox "ReDye = 0" trên UI (mặc định BẬT/True, khớp
+    ĐÚNG giá trị đã dùng khi GHI `badge`/`is_rework` ở `recompute_daily()`) — xem
+    `_effective_badge_is_rework()` cho cách tính lại NGAY TẠI READ TIME khi checkbox TẮT,
+    KHÔNG chạy lại recompute_daily() (tốn kém/dễ timeout serverless). Áp dụng CHO CẢ 2 tab
+    Detail/Summary (2026-09-25, thay thế nút "Ignore SapLot" cũ vốn CHỈ áp dụng tab Summary).
 
     Nguồn dữ liệu: TÁI DÙNG `cleaning_mc_daily_summary` đã có (grain 1 mẻ/ngày, đã có
     badge/is_rework/batch_type/machine từ Daily Rollup) — LEFT JOIN `machines` lấy
@@ -815,12 +847,12 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes:
     (`get_cleaning_matrix()`, xem đoạn phân loại `normal`/`rd_batches`/`is_rework_badge` ở đó)
     — Summary CHỈ cộng dồn theo tháng, KHÔNG tự định nghĩa lại tiêu chí "Normal"/"R&D" riêng
     (người dùng yêu cầu rõ 2026-09-23, tránh 2 số "Normal"/"Cleaning MC Ratio" lệch nhau giữa
-    2 tab). "Normal" = badge != CM VÀ KHÔNG phải Rework theo quy tắc Dyelot/SapLot — KHÔNG
-    còn lọc thêm theo cột `batch_type` gốc (ĐỔI 2026-09-24, xem comment chi tiết + số liệu đối
-    chiếu thật ở `get_cleaning_matrix()`, người dùng xác nhận qua đối chiếu file Batch Detail
-    thật rằng bản cũ lọc batch_type='Rework'/'ReDye' khiến số "Normal" thấp hơn thực tế đáng
-    kể). "R&D" = batch_type thuộc {r&d, rd, research, development} — CỜ RIÊNG, không loại trừ
-    lẫn "Normal" hay "Rework" (1 mẻ có thể vừa Normal vừa R&D, hoặc vừa Rework vừa R&D).
+    2 tab). "Normal" = định nghĩa positive MỚI ở `_is_normal_dyeing()` (2026-09-25: Dyelot kết
+    thúc "0" + SapLot bắt đầu "1"/"3" + tuỳ chọn ReDye=0) — KHÔNG lọc thêm theo cột `batch_type`
+    gốc (giữ nguyên quyết định 2026-09-24). "Mẻ mẫu" (badge "S", xem `_is_sample_batch()`) bị
+    loại HOÀN TOÀN khỏi CM/Normal/Rework/R&D/"No. Dyeing machine". "R&D" = batch_type thuộc
+    {r&d, rd, research, development} — CỜ RIÊNG, không loại trừ lẫn "Normal" hay "Rework" (1
+    mẻ có thể vừa Normal vừa R&D, hoặc vừa Rework vừa R&D).
 
     "No. Dyeing machine" đếm SỐ MÁY DISTINCT có >=1 mẻ NHUỘM THẬT (Normal/Rework/R&D, loại
     CM) trong tháng — máy chỉ chạy CM tháng đó KHÔNG được tính (đã xác nhận với người dùng,
@@ -845,10 +877,9 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes:
     from_date = f"{year:04d}-01-01"
     to_date = f"{year:04d}-12-31"
     rows = execute_query(
-        "SELECT production_date, machine, badge, is_rework, batch_type, dyelot_ref, run_time, sap_lot FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
+        "SELECT production_date, machine, badge, is_rework, batch_type, dyelot_ref, run_time, sap_lot, redye FROM cleaning_mc_daily_summary WHERE production_date >= ? AND production_date <= ?",
         [from_date, to_date],
     )
-    sap_lot_filter = set(sap_lot_prefixes) if sap_lot_prefixes else None
     master_rows = execute_query("SELECT machine_id, machine_code, group_mc, tank_type FROM machines WHERE domain = 'dyeing'", [])
     machine_meta_by_norm: dict[str, dict[str, str | None]] = {}
     for master in master_rows:
@@ -873,8 +904,6 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes:
             continue
         if not (1 <= month <= 12):
             continue
-        if sap_lot_filter is not None and not _sap_lot_matches_prefixes(row["sap_lot"], sap_lot_filter):
-            continue
         norm = _normalize_code(row["machine"])
         meta = machine_meta_by_norm.get(norm)
         group_label = (meta["group"] if meta else None) or UNCLASSIFIED_GROUP_LABEL
@@ -882,18 +911,19 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes:
         distinct_groups.add(group_label)
         bucket = accumulators[group_label][tank_label].setdefault(month, _empty_summary_bucket())
         normalized_batch_type = str(row["batch_type"] or "").strip().lower() or "normal"
-        is_rework_badge = _dyelot_indicates_rework(row["dyelot_ref"]) if ignore_sap_lot else bool(row["is_rework"])
-        # "Plan PRD time" cộng RunTime của TẤT CẢ mẻ (CM/wash + Normal + Rework), KHÔNG loại
-        # mẻ nào — cộng dồn TRƯỚC nhánh CM/else bên dưới để không bỏ sót mẻ CM.
+        code, is_rework_badge = _effective_badge_is_rework(row["badge"], row["dyelot_ref"], row["sap_lot"], row["redye"], require_redye_zero)
+        # "Plan PRD time" cộng RunTime của TẤT CẢ mẻ (CM/wash + Sample + Normal + Rework),
+        # KHÔNG loại mẻ nào — cộng dồn TRƯỚC nhánh CM/Sample/else bên dưới.
         bucket["run_time_sec"] += float(row["run_time"] or 0)
-        if row["badge"] == "CM":
+        if code == "CM":
             bucket["cm"] += 1
+        elif code == "S":
+            # Mẻ mẫu (Sample, 2026-09-25) — loại HOÀN TOÀN khỏi Normal/Rework/R&D/"No. Dyeing
+            # machine" (không add vào bucket["machines"], khớp get_cleaning_matrix()).
+            pass
         else:
             bucket["machines"].add(norm)
             if not is_rework_badge:
-                # "Normal" thuần theo Dyelot/SapLot, KHÔNG lọc thêm batch_type gốc — ĐÚNG
-                # NGUYÊN thay đổi vừa áp dụng cho get_cleaning_matrix() (xem comment ở đó),
-                # giữ 2 tab Detail/Summary khớp số nhau (2026-09-24).
                 bucket["normal"] += 1
             if normalized_batch_type in {"r&d", "rd", "research", "development"}:
                 bucket["rd"] += 1
@@ -939,16 +969,16 @@ def get_batch_summary(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes:
     }
 
 
-def export_batch_summary_excel(year: int, ignore_sap_lot: bool = False, sap_lot_prefixes: list[str] | None = None) -> bytes:
+def export_batch_summary_excel(year: int, require_redye_zero: bool = True) -> bytes:
     """Xuất tab "Summary" ra file `.xlsx` — 1 sheet, cấu trúc y hệt bảng trên UI (cột Group
     Machine merge theo khối gồm mọi Tank con, cột Tank merge theo khối 9 dòng Category, 12
     cột tháng). Style header dùng CHUNG font/màu với `core/excel_importer.py::
     export_template()` (nền tối `24292F`/chữ trắng đậm) để nhất quán giao diện file export
-    trong toàn ứng dụng. `ignore_sap_lot` chuyển thẳng cho `get_batch_summary()` — file xuất
-    ra PHẢI khớp đúng trạng thái nút "Ignore SapLot" đang bật/tắt trên UI lúc bấm Export, KHÔNG
-    export riêng theo mặc định. Trả về bytes — route chỉ cần gói vào `send_file(io.BytesIO(...))`,
-    cùng pattern `excel_import/routes.py::download_template()`."""
-    data = get_batch_summary(year, ignore_sap_lot=ignore_sap_lot, sap_lot_prefixes=sap_lot_prefixes)
+    trong toàn ứng dụng. `require_redye_zero` chuyển thẳng cho `get_batch_summary()` — file
+    xuất ra PHẢI khớp đúng trạng thái checkbox "ReDye = 0" đang bật/tắt trên UI lúc bấm Export.
+    Trả về bytes — route chỉ cần gói vào `send_file(io.BytesIO(...))`, cùng pattern
+    `excel_import/routes.py::download_template()`."""
+    data = get_batch_summary(year, require_redye_zero=require_redye_zero)
 
     workbook = Workbook()
     sheet = workbook.active

@@ -1,6 +1,76 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-24 (tiếp 3, tính năng mới) — Thêm **bộ lọc SapLot 1*/3*** cho
+**Cập nhật lần cuối:** 2026-09-25 (tiếp, sửa nhỏ) — Người dùng phát hiện raw data đôi khi
+**THIẾU dấu "-"** trước hậu tố Dyelot (VD "...WA" trần thay vì "-WA", tương tự "DU"/"KN") —
+`classify_batch_badge()`/`_is_sample_batch()` đổi từ kiểm tra **substring** (`"-WA" in dyelot`)
+sang **`endswith`** (`dyelot.endswith("WA")`) cho CẢ 3 hậu tố CM ("WA")/Sample ("DU"/"KN") —
+khớp được CẢ 2 dạng có/không dấu gạch, đồng thời AN TOÀN HƠN "chứa ở bất kỳ đâu" (chỉ khớp khi
+hậu tố nằm ở CUỐI chuỗi, tránh bắt nhầm Dyelot khác tình cờ chứa "WA"/"DU"/"KN" ở giữa — xác
+nhận qua AskUserQuestion). "CL*" (điều kiện CM còn lại) không đổi (`startswith`, không cần sửa).
+Cập nhật `tests/test_rework_classification.py` thêm 6 case mới (có dấu/thiếu dấu/ở giữa cho cả
+3 hậu tố) + sửa 1 case cũ dùng chuỗi ghép "-WA-DU" không còn hợp lệ với `endswith`. Full
+regression 8 bộ test PASS 100%.
+
+**Cập nhật lần cuối (bản ghi trước):** 2026-09-25 — **THAY THẾ HOÀN TOÀN công thức phân loại CM/Normal/Rework**
+của báo cáo "Batch Per Day by Machine" (cả 2 tab Detail/Summary), GỠ BỎ tính năng "bộ lọc
+SapLot 1*/3*" + nút "Ignore SapLot" vừa thêm hôm trước (bản ghi cũ ngay bên dưới) — người dùng
+tự thống nhất lại toàn bộ quy tắc sau khi tiếp tục đối chiếu raw data:
+
+> "Cleaning MC là các Dyelot có -WA và CL*; Normal dyeing batch là những mẻ có dyelot = *0 và
+> Saplot = 1* và =3*, những mẻ có Dyelot có -DU và -KN là mẻ sample, mẻ có saplot 4* là mẻ
+> sample. Khôi phục lại redye =0 mới được count là normal dyeing batch nhưng thêm checkbox để
+> người dùng chọn." (đã xác nhận qua AskUserQuestion: "-WH" trong tin nhắn gốc là gõ nhầm,
+> đúng ra là "-WA" — giữ nguyên điều kiện CM cũ, chỉ CỘNG THÊM "CL*")
+
+**`classify_batch_badge()` đổi từ 5 bước (CM → Rework OR-2-điều-kiện → màu → ghép mã) thành
+waterfall 4 bước MỚI** (`modules/dyeing/engines/reports/cleaning_matrix.py`):
+1. **CM**: Dyelot chứa `"-WA"` HOẶC Dyelot **bắt đầu bằng** `"CL"` (thêm mới).
+2. **Sample** (badge mới `"S"`, KHÔNG có màu/hậu tố "R"): Dyelot chứa `"-DU"` HOẶC `"-KN"`
+   (TRƯỚC ĐÂY 2 hậu tố này mặc định là Normal — nay tách riêng), HOẶC SapLot bắt đầu `"4"`.
+   Loại **HOÀN TOÀN** khỏi Normal/Rework/R&D/"No. Dyeing machine" (không rơi vào category nào).
+3. Màu cơ bản B/D/M/L/W — **không đổi**.
+4. **Normal** (positive definition, THAY THẾ HẲN rule OR-2-điều-kiện cũ dựa trên "chữ số cuối
+   Dyelot khác 0" HOẶC "chữ số đầu SapLot >1"): Dyelot kết thúc bằng `"0"` **VÀ** SapLot bắt
+   đầu bằng `"1"` **HOẶC** `"3"` (ĐỔI: trước đây SapLot đầu "3" bị tính Rework vì >1, giờ là
+   Normal) **VÀ** (nếu checkbox "ReDye = 0" BẬT — mặc định) `batch_details.redye = 0`. Thiếu 1
+   trong 3 → Rework. **Hệ quả cần lưu ý**: Dyelot kết thúc bằng CHỮ CÁI LẠ (không phải
+   -WA/-DU/-KN) giờ **KHÔNG còn mặc định Normal** như rule cũ — sẽ rơi vào Rework vì thiếu điều
+   kiện "kết thúc bằng 0".
+
+**Checkbox "ReDye = 0" (thay thế nút "Ignore SapLot" cũ)** — mặc định **BẬT** trên UI, áp dụng
+**CẢ 2 tab** Detail/Summary (khác "Ignore SapLot" cũ CHỈ áp dụng Summary). Kiến trúc: **KHÔNG**
+chạy lại `recompute_daily()` khi toggle (tốn kém/dễ timeout serverless — bài học trực tiếp từ
+sự cố `/admin/data-tools` hôm trước) — `badge`/`is_rework` LƯU SẴN trong
+`cleaning_mc_daily_summary` LUÔN tính với `require_redye_zero=True` cố định (khớp mặc định
+BẬT); khi checkbox TẮT, `_effective_badge_is_rework()` tính lại ranh giới Normal/Rework NGAY
+TẠI READ TIME từ 3 cột thô đã lưu sẵn (`dyelot_ref`/`sap_lot`/`redye` — cột `redye` MỚI THÊM
+vào rollup, xem migration bên dưới). Badge "CM"/"S" không bị đụng bởi checkbox này.
+
+**Cột DB mới**: `cleaning_mc_daily_summary.redye` (REAL/double precision, mặc định 0) — lazy
+ALTER SQLite trong `_ensure_summary_table()` + migration Postgres mới
+`supabase/migrate_cleaning_summary_redye.sql` (**CHƯA CHẠY trên production** — cùng với 2
+migration `run_time`/`sap_lot` còn nợ từ trước, xem Backlog). Sau khi ALTER, **BẮT BUỘC**
+`flask rebuild-summaries` (hoặc trang `/admin/data-tools`) để backfill lịch sử.
+
+**GỠ BỎ hoàn toàn** (dọn dẹp code chết, KHÔNG giữ lại tương thích ngược): `_dyelot_indicates_rework()`,
+`_sap_lot_matches_prefixes()`, hằng `SAP_LOT_FILTER_PREFIXES`, tham số `ignore_sap_lot`/
+`sap_lot_prefixes` ở `get_cleaning_matrix()`/`get_batch_summary()`/`export_batch_summary_excel()`,
+2 checkbox "SapLot = 1"/"SapLot = 3" + nút "Ignore SapLot" trên UI, route param `sap_lot_prefix`/
+`ignore_sap_lot` — TẤT CẢ thay bằng 1 tham số duy nhất `require_redye_zero` (route param cùng
+tên, mặc định "1" nếu thiếu).
+
+**Verify đã làm**: viết lại HOÀN TOÀN `tests/test_rework_classification.py` (đơn vị
+`classify_batch_badge()` 15 case + `_effective_badge_is_rework()` 5 case + tích hợp
+`recompute_daily()`), cập nhật Kịch bản 3 của `tests/test_batch_summary_formula.py` (Sample +
+toggle ReDye, thay thế kịch bản SapLot filter cũ đã gỡ), thêm smoke test rời (không lưu vào
+repo) xác nhận `get_cleaning_matrix()` (Detail) cũng nhất quán. Full regression 8 bộ test PASS
+100%.
+
+**Chưa làm/cần xác nhận thêm**: KHÔNG có dòng Category "Sample batch" riêng trên UI Summary
+(mẻ Sample chỉ ÂM THẦM bị loại khỏi mọi con số, không hiển thị đếm riêng) — nếu người dùng
+muốn xem số lượng Sample theo tháng, cần thêm dòng Category mới (chưa yêu cầu, chưa làm).
+
+**Cập nhật lần cuối (bản ghi cũ):** 2026-09-24 (tiếp 3, tính năng mới) — Thêm **bộ lọc SapLot 1*/3*** cho
 CẢ 2 tab Detail và Summary của báo cáo "Batch Per Day by Machine". Sau vòng đối chiếu raw data
 dài (xem bản ghi cũ bên dưới, mục "BUG THẬT"), người dùng tự kết luận: **"Công thức đã đúng
 trong báo cáo batch per day by machine, chỉ cần filter thêm saplot 1* và 3*"** — không còn

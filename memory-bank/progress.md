@@ -1014,14 +1014,38 @@
       `export_batch_summary_excel()` + route param `sap_lot_prefix`. Smoke
       test mới (Kịch bản 3 trong `test_batch_summary_formula.py` cho Summary,
       script rời cho Detail) + full regression 8 bộ test PASS 100%.
+      **SUPERSEDED 2026-09-25** — checkbox "SapLot = 1"/"SapLot = 3" + nút
+      "Ignore SapLot" đã bị GỠ BỎ hoàn toàn (xem bullet ngay dưới), thay bằng
+      công thức Normal/Rework MỚI luôn bắt buộc SapLot 1*/3*. Cột `sap_lot`
+      trong rollup VẪN CẦN GIỮ (không phải dead code) — giờ là điều kiện CỐT
+      LÕI của `classify_batch_badge()`, không còn là filter tuỳ chọn nữa.
+- [x] **Viết lại HOÀN TOÀN công thức CM/Normal/Rework + thêm badge "Sample"
+      — HOÀN THÀNH 2026-09-25**: người dùng tự thống nhất lại toàn bộ quy tắc
+      phân loại sau nhiều vòng đối chiếu raw data — xem `activeContext.md` để
+      biết chi tiết đầy đủ (waterfall 4 bước MỚI của `classify_batch_badge()`,
+      badge "S" mới cho mẻ mẫu, checkbox "ReDye = 0" thay thế "Ignore SapLot"
+      áp dụng CẢ 2 tab qua cơ chế read-time override `_effective_badge_is_rework()`
+      — không chạy lại recompute_daily() khi toggle). Thêm cột `redye` vào
+      rollup + migration mới `supabase/migrate_cleaning_summary_redye.sql`
+      (CHƯA chạy trên production). Viết lại hoàn toàn
+      `tests/test_rework_classification.py`, cập nhật
+      `tests/test_batch_summary_formula.py`, full regression 8 bộ test PASS
+      100%.
 
 ## Backlog (Phase 2+)
-- [ ] **Chạy 2 migration Supabase còn nợ + `flask rebuild-summaries` trên
+- [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên
       production**: `supabase/migrate_cleaning_summary_run_time.sql` (cột
-      `run_time`, 2026-09-24) VÀ `supabase/migrate_cleaning_summary_sap_lot.sql`
-      (cột `sap_lot`, 2026-09-24, mới) — cả 2 đều CHƯA xác nhận đã chạy trên
+      `run_time`, 2026-09-24), `supabase/migrate_cleaning_summary_sap_lot.sql`
+      (cột `sap_lot`, 2026-09-24) VÀ `supabase/migrate_cleaning_summary_redye.sql`
+      (cột `redye`, 2026-09-25, MỚI) — cả 3 đều CHƯA xác nhận đã chạy trên
       production, nên chạy cùng lúc rồi `flask rebuild-summaries` 1 lần để
-      backfill toàn bộ lịch sử.
+      backfill toàn bộ lịch sử (hoặc dùng trang `/admin/data-tools` nếu máy
+      không kết nối thẳng được DB — giới hạn From/To Date nếu dữ liệu lớn để
+      tránh timeout serverless, xem sự cố ngày 2026-09-24).
+- [ ] **Cân nhắc thêm dòng Category "Sample batch" trên UI Summary** — hiện
+      tại mẻ Sample bị loại ÂM THẦM khỏi mọi con số, không có dòng đếm riêng
+      để người dùng kiểm tra (chưa được yêu cầu, chỉ là gợi ý nếu cần đối
+      chiếu số lượng Sample sau này).
 - [ ] **Chạy `flask rebuild-summaries` trên production SAU KHI deploy bản có
       đổi công thức Rework** (2026-09-22 khuya) — bắt buộc để `cleaning_mc_daily_summary`
       lịch sử phản ánh đúng luật Rework MỚI (dữ liệu cũ vẫn giữ badge tính theo

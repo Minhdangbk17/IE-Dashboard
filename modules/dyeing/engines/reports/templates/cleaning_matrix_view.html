@@ -17,7 +17,7 @@
 </nav>
 
 <section class="report-page" id="page-detail" data-page="detail">
-<section class="Box p-3 mb-3"><h3 class="mt-0">Color Legend</h3><div class="legend-row">{% for code, label in [("CM", "Cleaning machine"), ("B", "Black colour"), ("D", "Dark colour"), ("M", "Middle colour"), ("L", "Light colour"), ("W", "White colour"), ("BR", "Black rework"), ("DR", "Dark rework"), ("MR", "Middle rework"), ("LR", "Light rework"), ("WR", "White rework")] %}<span class="legend-item"><span class="badge-code code-{{ code }}">{{ code }}</span>{{ label }}</span>{% endfor %}</div></section>
+<section class="Box p-3 mb-3"><h3 class="mt-0">Color Legend</h3><div class="legend-row">{% for code, label in [("CM", "Cleaning machine"), ("S", "Sample batch"), ("B", "Black colour"), ("D", "Dark colour"), ("M", "Middle colour"), ("L", "Light colour"), ("W", "White colour"), ("BR", "Black rework"), ("DR", "Dark rework"), ("MR", "Middle rework"), ("LR", "Light rework"), ("WR", "White rework")] %}<span class="legend-item"><span class="badge-code code-{{ code }}">{{ code }}</span>{{ label }}</span>{% endfor %}</div></section>
 <section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px">
     <div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div>
     <div class="form-group mb-0"><label for="matrix-to">To Date</label><input id="matrix-to" class="form-control" type="date"></div>
@@ -37,8 +37,7 @@
         <div id="brand-program-menu" class="capacity-menu" hidden></div>
     </div>
     <div class="form-group mb-0" style="display:flex;align-items:center;gap:10px;padding-bottom:6px">
-        <label class="mb-0" style="display:flex;align-items:center;gap:6px" title="Chỉ tính mẻ có SapLot bắt đầu bằng &quot;1&quot;"><input type="checkbox" class="matrix-sap-lot-prefix" value="1"> SapLot = 1</label>
-        <label class="mb-0" style="display:flex;align-items:center;gap:6px" title="Chỉ tính mẻ có SapLot bắt đầu bằng &quot;3&quot;"><input type="checkbox" class="matrix-sap-lot-prefix" value="3"> SapLot = 3</label>
+        <label class="mb-0" style="display:flex;align-items:center;gap:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="matrix-require-redye-zero" checked> ReDye = 0</label>
     </div>
     <button id="matrix-load" class="btn btn-primary">Load Matrix</button>
 </div></section>
@@ -63,9 +62,7 @@
 <section class="Box p-3 mb-3"><div class="d-flex flex-justify-between flex-items-end flex-wrap" style="gap:12px">
     <div class="d-flex flex-items-end flex-wrap" style="gap:12px">
         <div class="form-group mb-0"><label for="summary-year">Year</label><select id="summary-year" class="form-select"></select></div>
-        <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Chỉ xét chữ số cuối Dyelot khi phân loại Rework — bỏ qua điều kiện dựa trên SapLot"><input type="checkbox" id="summary-ignore-saplot"> Ignore SapLot</label>
-        <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Chỉ tính mẻ có SapLot bắt đầu bằng &quot;1&quot;"><input type="checkbox" class="summary-sap-lot-prefix" value="1"> SapLot = 1</label>
-        <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Chỉ tính mẻ có SapLot bắt đầu bằng &quot;3&quot;"><input type="checkbox" class="summary-sap-lot-prefix" value="3"> SapLot = 3</label>
+        <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="summary-require-redye-zero" checked> ReDye = 0</label>
     </div>
     <a id="summary-export-btn" class="btn btn-sm" href="#">Export Excel</a>
 </div></section>
@@ -78,7 +75,7 @@
 </div>
 </section>
 
-<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}.report-page[hidden]{display:none}.summary-group-cell{font-weight:600;vertical-align:middle;background:var(--bg-surface-raised, rgba(110,118,129,.06))}.summary-total-group td{font-weight:600}.summary-subtotal-row td{font-style:italic}</style>
+<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-S{background:#8250DF;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}.report-page[hidden]{display:none}.summary-group-cell{font-weight:600;vertical-align:middle;background:var(--bg-surface-raised, rgba(110,118,129,.06))}.summary-total-group td{font-weight:600}.summary-subtotal-row td{font-style:italic}</style>
 <script>
     window.REPORTS_CAN_EDIT_MACHINES = {{ "true" if current_user_can('dyeing', 'reports', 'edit') else "false" }};
     window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE = "{{ url_for('dyeing.reports.api_update_machine', machine_code='__MACHINE__') }}";
@@ -283,7 +280,7 @@
         capacityFilter.selected().forEach((value) => params.append("capacity", value));
         fabricTypeFilter.selected().forEach((value) => params.append("fabric_type", value));
         brandProgramFilter.selected().forEach((value) => params.append("brand_program", value));
-        document.querySelectorAll(".matrix-sap-lot-prefix:checked").forEach((el) => params.append("sap_lot_prefix", el.value));
+        params.set("require_redye_zero", document.getElementById("matrix-require-redye-zero").checked ? "1" : "0");
         fetch(`${endpoint}?${params}`).then((response) => response.json()).then((data) => {
             render(data);
             capacityFilter.setOptions((data.available_capacities || []).map(String));
@@ -355,7 +352,7 @@
     document.getElementById("matrix-from").value = formatDate(new Date(today.getFullYear(), today.getMonth(), 1));
     document.getElementById("matrix-to").value = formatDate(today);
     document.getElementById("matrix-load").addEventListener("click", load);
-    document.querySelectorAll(".matrix-sap-lot-prefix").forEach((el) => el.addEventListener("change", () => load()));
+    document.getElementById("matrix-require-redye-zero").addEventListener("change", () => load());
     load();
 
     // "+ Add Machine": khai báo máy MỚI vào Machine Master TRƯỚC KHI có dữ liệu batch nào —
@@ -435,7 +432,7 @@
     const summaryExportEndpoint = "{{ url_for('dyeing.reports.api_batch_summary_export') }}";
     const summaryYearSelect = document.getElementById("summary-year");
     const summaryExportBtn = document.getElementById("summary-export-btn");
-    const summaryIgnoreSapLot = document.getElementById("summary-ignore-saplot");
+    const summaryRequireRedyeZero = document.getElementById("summary-require-redye-zero");
     const RATIO_CATEGORIES = new Set(["Cleaning MC Ratio", "Rework ratio", "Daily batch/day", "Plan PRD time", "Batch/day (Plan PRD)"]);
     const formatSummaryValue = (category, value) => {
         if (value === null || value === undefined) return "-";
@@ -470,28 +467,24 @@
     function loadSummary() {
         const params = new URLSearchParams();
         if (summaryYearSelect.value) params.set("year", summaryYearSelect.value);
-        if (summaryIgnoreSapLot.checked) params.set("ignore_sap_lot", "1");
-        const summarySapLotPrefixes = Array.from(document.querySelectorAll(".summary-sap-lot-prefix:checked")).map((el) => el.value);
-        summarySapLotPrefixes.forEach((value) => params.append("sap_lot_prefix", value));
+        params.set("require_redye_zero", summaryRequireRedyeZero.checked ? "1" : "0");
         fetch(`${summaryEndpoint}?${params}`).then((response) => response.json()).then((data) => {
             if (!summaryYearSelect.options.length) {
                 summaryYearSelect.innerHTML = (data.available_years || [data.year]).map((y) => `<option value="${y}" ${y === data.year ? "selected" : ""}>${y}</option>`).join("");
             }
             renderSummary(data);
-            const exportParams = new URLSearchParams({ year: data.year });
-            if (summaryIgnoreSapLot.checked) exportParams.set("ignore_sap_lot", "1");
-            summarySapLotPrefixes.forEach((value) => exportParams.append("sap_lot_prefix", value));
+            const exportParams = new URLSearchParams({ year: data.year, require_redye_zero: summaryRequireRedyeZero.checked ? "1" : "0" });
             summaryExportBtn.href = `${summaryExportEndpoint}?${exportParams}`;
         });
     }
     summaryYearSelect.addEventListener("change", loadSummary);
-    document.querySelectorAll(".summary-sap-lot-prefix").forEach((el) => el.addEventListener("change", loadSummary));
-    // "Ignore SapLot" (2026-09-24): bỏ qua điều kiện (b) của quy tắc Rework (SapLot), chỉ xét
-    // điều kiện (a) (chữ số cuối Dyelot) — ẢNH HƯỞNG TRỰC TIẾP "Rework batch"/"Rework ratio"/
-    // "No. of normal dyeing batch" (và mọi dòng suy ra từ đó) vì đổi số mẻ được tính là
-    // Rework. CHỈ áp dụng tab Summary (xem get_batch_summary(ignore_sap_lot=...)), tab
-    // "Detail" không có nút này. Bật/tắt tự load lại dữ liệu ngay, không cần bấm nút riêng.
-    summaryIgnoreSapLot.addEventListener("change", loadSummary);
+    // "ReDye = 0" (2026-09-25, thay THẾ nút "Ignore SapLot" cũ) — checkbox mặc định BẬT khớp
+    // ĐÚNG giá trị đã lưu sẵn trong DB (`recompute_daily()` luôn dùng require_redye_zero=True).
+    // Tắt đi sẽ tính lại ranh giới Normal/Rework NGAY TẠI READ TIME, ẢNH HƯỞNG "No. of normal
+    // dyeing batch"/"Rework batch"/"Rework ratio"/"Cleaning MC Ratio" — áp dụng CẢ 2 tab
+    // Detail/Summary (khác "Ignore SapLot" cũ chỉ áp dụng tab Summary). Bật/tắt tự load lại
+    // ngay, không cần bấm nút riêng.
+    summaryRequireRedyeZero.addEventListener("change", loadSummary);
 }());
 </script>
 {% endblock %}

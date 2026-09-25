@@ -18,7 +18,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 
 from core.auth import hash_password, role_required
 from core.database import execute_one, execute_query, execute_write, get_db
@@ -159,7 +159,17 @@ def data_tools() -> Any:
             return redirect(url_for("admin.data_tools"))
 
         started = time.monotonic()
-        count = rebuild_summaries_range(from_date, to_date)
+        try:
+            count = rebuild_summaries_range(from_date, to_date)
+        except Exception as exc:
+            # Không có try/except quanh call này trước đây (2026-09-24) — lỗi backend (VD
+            # cột DB thiếu, timeout serverless...) rơi thẳng thành trang lỗi chung của Vercel,
+            # KHÔNG hiện gì trên UI khiến người dùng tưởng nút không chạy. Bắt lỗi + flash rõ
+            # thông điệp + log traceback đầy đủ (xem được qua Vercel function logs) để chẩn
+            # đoán được nguyên nhân thật thay vì đoán mò.
+            current_app.logger.exception("Rebuild summaries failed (from_date=%s, to_date=%s)", from_date, to_date)
+            flash(f"Rebuild summaries failed: {exc}", "danger")
+            return redirect(url_for("admin.data_tools"))
         elapsed = time.monotonic() - started
         flash(f"Rebuilt summaries for {count} production date(s) in {elapsed:.1f}s.", "success")
         return redirect(url_for("admin.data_tools"))
