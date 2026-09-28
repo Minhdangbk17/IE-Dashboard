@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import Any, Mapping
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Border, Font, PatternFill, Side
 
 from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
@@ -41,6 +41,24 @@ ALL_BADGE_CODES = ("CM", "S", "B", "D", "M", "L", "W", "BR", "DR", "MR", "LR", "
 # base badge code (B/D/M/L/W) đã phân loại sẵn ở `classify_batch_badge()`.
 COLOR_LABEL_ORDER = ("Dark", "Light", "Medium", "Black", "White")
 BADGE_TO_COLOR_LABEL: dict[str, str] = {"D": "Dark", "L": "Light", "M": "Medium", "B": "Black", "W": "White"}
+
+# Màu nền/chữ cho từng badge (2026-09-25) — COPY NGUYÊN VĂN từ `.code-XXX` trong
+# `cleaning_matrix_view.html` (không có "#") để Excel export (`export_cleaning_matrix_excel()`)
+# tô màu ô GIỐNG HỆT badge trên UI web — 1 nguồn màu DUY NHẤT, nếu sau này đổi màu UI phải
+# đồng bộ tay lại đây.
+BADGE_FILL_COLORS: dict[str, tuple[str, str]] = {
+    "CM": ("4B7931", "FFFFFF"), "S": ("8250DF", "FFFFFF"),
+    "B": ("000000", "FFFFFF"), "BR": ("000000", "FFFFFF"),
+    "D": ("5A738E", "FFFFFF"), "DR": ("5A738E", "FFFFFF"),
+    "M": ("F6A97A", "000000"), "MR": ("F6A97A", "000000"),
+    "L": ("FFF5CD", "000000"), "LR": ("FFF5CD", "000000"),
+    "W": ("FFFFFF", "000000"), "WR": ("FFFFFF", "000000"),
+}
+# Badge Rework (hậu tố "R") có viền đỏ 2px trên UI (`.code-BR,.code-DR,...{border:2px solid
+# #FF0000}`) — badge "W" (không rework) có viền xám nhạt (`.code-W{border-color:#CCC}`) để vẫn
+# thấy được ô trên nền trắng.
+REWORK_BORDER_COLOR = "FF0000"
+WHITE_BADGE_BORDER_COLOR = "CCCCCC"
 
 # Từ khoá tông màu Đậm/Nhạt được đúc kết từ ColourNo thực tế trong hệ thống
 # (VD: "115-23-11-MARINE BLUE" -> Đậm, "096-70-05-MORDEN MINT" -> Nhạt).
@@ -621,10 +639,13 @@ def export_cleaning_matrix_excel(
 ) -> bytes:
     """Xuất tab "Detail" ra file `.xlsx` — 2 sheet: "Detail" (y hệt bảng chính trên UI: cột
     Machine Master + 5 cột KPI + 1 cột/ngày trong khoảng lọc, mỗi ô ngày liệt kê các mã badge
-    của mẻ chạy hôm đó cách nhau bằng ", " — KHÔNG tô màu từng badge như UI, chỉ xuất dạng chữ
-    để giữ đơn giản) và "Color Summary" (y hệt bảng "Normal Dyeing Batches by Colour" bên dưới
-    UI). Nhận ĐÚNG các tham số filter như `get_cleaning_matrix()` — file xuất ra PHẢI khớp
-    đúng bộ lọc/checkbox đang chọn trên UI lúc bấm Export, KHÔNG export riêng theo mặc định.
+    của mẻ chạy hôm đó cách nhau bằng ", " VÀ tô màu nền/chữ/viền ô theo ĐÚNG bảng màu
+    `BADGE_FILL_COLORS` (copy y hệt `.code-XXX` trên UI web) — 2026-09-25, theo mã badge ĐẦU
+    TIÊN trong ngày nếu máy chạy NHIỀU mẻ cùng ngày (Excel không tô nền riêng từng phần trong
+    1 ô, các mã sau vẫn đủ trong text nhưng không có màu riêng) và "Color Summary" (y hệt bảng
+    "Normal Dyeing Batches by Colour" bên dưới UI). Nhận ĐÚNG các tham số filter như
+    `get_cleaning_matrix()` — file xuất ra PHẢI khớp đúng bộ lọc/checkbox đang chọn trên UI lúc
+    bấm Export, KHÔNG export riêng theo mặc định.
     Style header dùng CHUNG font/màu với `export_batch_summary_excel()` (nền tối `24292F`/chữ
     trắng đậm) để nhất quán giao diện file export trong toàn ứng dụng."""
     data = get_cleaning_matrix(from_date, to_date, capacities, brand_programs, fabric_types, require_redye_zero)
@@ -659,7 +680,23 @@ def export_cleaning_matrix_excel(
             detail_sheet.cell(row=row_idx, column=col_idx, value=value)
         for col_offset, day in enumerate(data["time_labels"]):
             day_badges = [batch["color_code_display"] for batch in item["batches"] if batch["production_date"] == day]
-            detail_sheet.cell(row=row_idx, column=len(fixed_headers) + 1 + col_offset, value=", ".join(day_badges) or None)
+            cell = detail_sheet.cell(row=row_idx, column=len(fixed_headers) + 1 + col_offset, value=", ".join(day_badges) or None)
+            if not day_badges:
+                continue
+            # Tô màu ô theo mã badge ĐẦU TIÊN trong ngày (nếu 1 máy chạy NHIỀU mẻ cùng ngày,
+            # các mã sau vẫn hiện đủ trong text nhưng KHÔNG có màu riêng — Excel không tô được
+            # nền riêng từng phần trong 1 ô, chỉ tô được cả ô, xem hỏi-đáp 2026-09-25).
+            first_code = day_badges[0]
+            bg_color, fg_color = BADGE_FILL_COLORS.get(first_code, (None, None))
+            if bg_color:
+                cell.fill = PatternFill(start_color=bg_color, end_color=bg_color, fill_type="solid")
+                cell.font = Font(color=fg_color)
+                if first_code.endswith("R"):
+                    side = Side(style="medium", color=REWORK_BORDER_COLOR)
+                    cell.border = Border(left=side, right=side, top=side, bottom=side)
+                elif first_code == "W":
+                    side = Side(style="thin", color=WHITE_BADGE_BORDER_COLOR)
+                    cell.border = Border(left=side, right=side, top=side, bottom=side)
     detail_sheet.freeze_panes = "B2"
 
     color_sheet = workbook.create_sheet("Color Summary")

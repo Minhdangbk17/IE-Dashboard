@@ -1,6 +1,15 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-25 (tiếp 2, tính năng mới) — Thêm **Export Excel cho tab
+**Cập nhật lần cuối:** 2026-09-25 (tiếp 3, sửa nhỏ) — Người dùng hỏi xin VBA để tô màu ô Excel
+giống badge màu trên UI web; hỏi lại thì xác nhận: (1) ô có NHIỀU mã/ngày chỉ cần tô theo mã
+ĐẦU TIÊN (không cần tách ô/tô riêng từng mã), (2) làm THẲNG trong Python lúc export — KHÔNG
+cần VBA. Thêm `BADGE_FILL_COLORS` (copy y hệt `.code-XXX` trong `cleaning_matrix_view.html`)
+vào `export_cleaning_matrix_excel()` — mỗi ô ngày giờ tô nền/màu chữ theo mã badge đầu tiên,
+viền đỏ 2px cho Rework (hậu tố "R"), viền xám nhạt cho "W" (không rework, để thấy được trên
+nền trắng). Verify bằng smoke test đọc lại file `.xlsx` qua `openpyxl`, xác nhận đúng
+fill/font/border cho cả 4 loại (D/LR/S/CM). Full regression 8 bộ test PASS 100%.
+
+**Cập nhật lần cuối (bản ghi trước):** 2026-09-25 (tiếp 2, tính năng mới) — Thêm **Export Excel cho tab
 Detail** (báo cáo "Batch Per Day by Machine") — trước đó CHỈ tab Summary có nút Export.
 
 - `export_cleaning_matrix_excel()` (`modules/dyeing/engines/reports/cleaning_matrix.py`) —

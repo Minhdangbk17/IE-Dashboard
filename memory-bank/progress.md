@@ -1037,7 +1037,10 @@
       "Normal Dyeing Batches by Colour"), nhận đúng bộ filter/checkbox như
       `get_cleaning_matrix()`. Route mới `/api/cleaning-matrix/export`. Smoke
       test rời xác nhận đúng cấu trúc + dữ liệu, full regression 8 bộ test
-      PASS 100%.
+      PASS 100%. **BỔ SUNG cùng ngày**: mỗi ô ngày trong sheet "Detail" giờ
+      TÔ MÀU nền/chữ/viền theo `BADGE_FILL_COLORS` (copy y hệt màu badge trên
+      UI web) — theo mã badge ĐẦU TIÊN nếu 1 máy chạy nhiều mẻ/ngày (Excel
+      không tô riêng từng phần 1 ô).
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên
