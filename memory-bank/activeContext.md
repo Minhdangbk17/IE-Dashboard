@@ -1,6 +1,21 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-25 (tiếp 3, sửa nhỏ) — Người dùng hỏi xin VBA để tô màu ô Excel
+**Cập nhật lần cuối:** 2026-09-28 — Đổi ngược quyết định "tô màu theo mã đầu tiên" (bản ghi
+ngay dưới, 2026-09-25) vì người dùng giờ muốn XEM RÕ TỪNG mẻ: `export_cleaning_matrix_excel()`
+đổi từ 1 CỘT/ngày (dồn text "LR, CM" vào 1 ô) sang **1 KHỐI CỘT/ngày** — mỗi mẻ trong ngày là 1
+Ô RIÊNG (tô màu/viền ĐÚNG cho TỪNG mã, không chỉ mã đầu), số cột trong khối = số mẻ NHIỀU NHẤT
+mà 1 máy BẤT KỲ chạy trong ngày đó (bảng phải hình chữ nhật — máy ít mẻ hơn ngày đó để trống ô
+thừa). Header dòng 1 của khối MERGE lại thành 1 ô ghi tên ngày nếu khối có >1 cột
+(`sheet.merge_cells`), khối chỉ có 1 mẻ thì không merge gì cả (giữ y hệt bản cũ).
+
+Verify bằng 2 smoke test rời (không lưu repo): 1 test lại y hệt kịch bản cũ (mọi ngày chỉ 1
+mẻ/máy, xác nhận KHÔNG có gì đổi khi không cần split), 1 test MỚI dựng 2 máy — máy 1 có 2 mẻ
+trong 1 ngày (xác nhận tách đúng 2 ô "LR"/"CM" tô màu riêng + header merge "P1:Q1"), máy 2 chỉ
+1 mẻ ngày đó (xác nhận ô thừa để trống `None`, không lỗi) + verify ngày khác chỉ cần 1 cột dù
+ngày trước cần 2 (xác nhận số cột tính ĐỘC LẬP theo từng ngày, không lấy max toàn bảng). Full
+regression 8 bộ test PASS 100%.
+
+**Cập nhật lần cuối (bản ghi trước):** 2026-09-25 (tiếp 3, sửa nhỏ) — Người dùng hỏi xin VBA để tô màu ô Excel
 giống badge màu trên UI web; hỏi lại thì xác nhận: (1) ô có NHIỀU mã/ngày chỉ cần tô theo mã
 ĐẦU TIÊN (không cần tách ô/tô riêng từng mã), (2) làm THẲNG trong Python lúc export — KHÔNG
 cần VBA. Thêm `BADGE_FILL_COLORS` (copy y hệt `.code-XXX` trong `cleaning_matrix_view.html`)

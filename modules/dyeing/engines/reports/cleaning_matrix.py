@@ -638,14 +638,18 @@ def export_cleaning_matrix_excel(
     require_redye_zero: bool = True,
 ) -> bytes:
     """Xuất tab "Detail" ra file `.xlsx` — 2 sheet: "Detail" (y hệt bảng chính trên UI: cột
-    Machine Master + 5 cột KPI + 1 cột/ngày trong khoảng lọc, mỗi ô ngày liệt kê các mã badge
-    của mẻ chạy hôm đó cách nhau bằng ", " VÀ tô màu nền/chữ/viền ô theo ĐÚNG bảng màu
-    `BADGE_FILL_COLORS` (copy y hệt `.code-XXX` trên UI web) — 2026-09-25, theo mã badge ĐẦU
-    TIÊN trong ngày nếu máy chạy NHIỀU mẻ cùng ngày (Excel không tô nền riêng từng phần trong
-    1 ô, các mã sau vẫn đủ trong text nhưng không có màu riêng) và "Color Summary" (y hệt bảng
+    Machine Master + 5 cột KPI + N cột/ngày trong khoảng lọc) và "Color Summary" (y hệt bảng
     "Normal Dyeing Batches by Colour" bên dưới UI). Nhận ĐÚNG các tham số filter như
     `get_cleaning_matrix()` — file xuất ra PHẢI khớp đúng bộ lọc/checkbox đang chọn trên UI lúc
     bấm Export, KHÔNG export riêng theo mặc định.
+
+    Mỗi NGÀY chiếm 1 KHỐI cột riêng (2026-09-28, đổi từ 1 cột/ngày dồn text "LR, CM" — người
+    dùng yêu cầu mỗi mã badge là 1 Ô RIÊNG để tô màu ĐÚNG cho từng mã, không chỉ mã đầu tiên):
+    số cột trong khối = số mẻ NHIỀU NHẤT mà 1 máy chạy trong ngày đó (tính trên toàn bộ dữ liệu
+    đang xuất) — máy nào ít mẻ hơn ngày đó thì các ô thừa để trống. Header dòng 1 của khối MERGE
+    lại thành 1 ô ghi tên ngày (`sheet.merge_cells`) nếu khối có >1 cột. Mỗi ô mẻ tô màu
+    nền/chữ/viền riêng theo ĐÚNG bảng màu `BADGE_FILL_COLORS` (copy y hệt `.code-XXX` trên UI
+    web, viền đỏ cho Rework/viền xám cho "W").
     Style header dùng CHUNG font/màu với `export_batch_summary_excel()` (nền tối `24292F`/chữ
     trắng đậm) để nhất quán giao diện file export trong toàn ứng dụng."""
     data = get_cleaning_matrix(from_date, to_date, capacities, brand_programs, fabric_types, require_redye_zero)
@@ -657,15 +661,34 @@ def export_cleaning_matrix_excel(
     detail_sheet = workbook.active
     detail_sheet.title = "Detail"
     fixed_headers = ["Machine", "Group MC", "MC brand", "Tank", "MC quantity", "Tube no", "Capacity (Kg)", "Status", "Production Status", "Orgatex", "No. of time Cleaning MC", "No. of normal dyeing batch", "Cleaning MC Ratio", "No. of R&D batch", "Rework batch"]
-    headers = [*fixed_headers, *data["time_labels"]]
-    for col_idx, header in enumerate(headers, start=1):
+    for col_idx, header in enumerate(fixed_headers, start=1):
         cell = detail_sheet.cell(row=1, column=col_idx, value=header)
         cell.font = header_font
         cell.fill = header_fill
-    for col_idx in range(1, len(fixed_headers) + 1):
-        detail_sheet.column_dimensions[detail_sheet.cell(row=1, column=col_idx).column_letter].width = 16
-    for col_idx in range(len(fixed_headers) + 1, len(headers) + 1):
-        detail_sheet.column_dimensions[detail_sheet.cell(row=1, column=col_idx).column_letter].width = 20
+        detail_sheet.column_dimensions[cell.column_letter].width = 16
+
+    # Số cột (slot) mỗi ngày cần = số mẻ NHIỀU NHẤT trong ngày đó của 1 máy BẤT KỲ — bảng phải
+    # hình chữ nhật (mọi dòng cùng số cột) nên lấy MAX trên toàn bộ machine, không phải riêng
+    # từng dòng.
+    day_slot_counts: dict[str, int] = {
+        day: max((sum(1 for batch in item["batches"] if batch["production_date"] == day) for item in data["matrix"]), default=1) or 1
+        for day in data["time_labels"]
+    }
+    day_start_col: dict[str, int] = {}
+    col_idx = len(fixed_headers) + 1
+    for day in data["time_labels"]:
+        day_start_col[day] = col_idx
+        slot_count = day_slot_counts[day]
+        header_cell = detail_sheet.cell(row=1, column=col_idx, value=day)
+        header_cell.font = header_font
+        header_cell.fill = header_fill
+        for offset in range(slot_count):
+            detail_sheet.column_dimensions[detail_sheet.cell(row=1, column=col_idx + offset).column_letter].width = 7
+            if offset > 0:
+                detail_sheet.cell(row=1, column=col_idx + offset).fill = header_fill
+        if slot_count > 1:
+            detail_sheet.merge_cells(start_row=1, start_column=col_idx, end_row=1, end_column=col_idx + slot_count - 1)
+        col_idx += slot_count
 
     for row_idx, item in enumerate(data["matrix"], start=2):
         machine_label = item["machine_code"] or item["machine"] or "-"
@@ -676,27 +699,23 @@ def export_cleaning_matrix_excel(
             item["capacity"], item["status"], item["production_status"], "Yes" if item["orgatex"] else "No",
             item["cleaning_count"], item["normal_batches"], item["cleaning_ratio"], item["rd_batches"], item["rework_batches"],
         ]
-        for col_idx, value in enumerate(fixed_values, start=1):
-            detail_sheet.cell(row=row_idx, column=col_idx, value=value)
-        for col_offset, day in enumerate(data["time_labels"]):
-            day_badges = [batch["color_code_display"] for batch in item["batches"] if batch["production_date"] == day]
-            cell = detail_sheet.cell(row=row_idx, column=len(fixed_headers) + 1 + col_offset, value=", ".join(day_badges) or None)
-            if not day_badges:
-                continue
-            # Tô màu ô theo mã badge ĐẦU TIÊN trong ngày (nếu 1 máy chạy NHIỀU mẻ cùng ngày,
-            # các mã sau vẫn hiện đủ trong text nhưng KHÔNG có màu riêng — Excel không tô được
-            # nền riêng từng phần trong 1 ô, chỉ tô được cả ô, xem hỏi-đáp 2026-09-25).
-            first_code = day_badges[0]
-            bg_color, fg_color = BADGE_FILL_COLORS.get(first_code, (None, None))
-            if bg_color:
-                cell.fill = PatternFill(start_color=bg_color, end_color=bg_color, fill_type="solid")
-                cell.font = Font(color=fg_color)
-                if first_code.endswith("R"):
-                    side = Side(style="medium", color=REWORK_BORDER_COLOR)
-                    cell.border = Border(left=side, right=side, top=side, bottom=side)
-                elif first_code == "W":
-                    side = Side(style="thin", color=WHITE_BADGE_BORDER_COLOR)
-                    cell.border = Border(left=side, right=side, top=side, bottom=side)
+        for fixed_col_idx, value in enumerate(fixed_values, start=1):
+            detail_sheet.cell(row=row_idx, column=fixed_col_idx, value=value)
+        for day in data["time_labels"]:
+            day_batches = [batch for batch in item["batches"] if batch["production_date"] == day]
+            for slot, batch in enumerate(day_batches):
+                code = batch["color_code_display"]
+                cell = detail_sheet.cell(row=row_idx, column=day_start_col[day] + slot, value=code)
+                bg_color, fg_color = BADGE_FILL_COLORS.get(code, (None, None))
+                if bg_color:
+                    cell.fill = PatternFill(start_color=bg_color, end_color=bg_color, fill_type="solid")
+                    cell.font = Font(color=fg_color)
+                    if code.endswith("R"):
+                        side = Side(style="medium", color=REWORK_BORDER_COLOR)
+                        cell.border = Border(left=side, right=side, top=side, bottom=side)
+                    elif code == "W":
+                        side = Side(style="thin", color=WHITE_BADGE_BORDER_COLOR)
+                        cell.border = Border(left=side, right=side, top=side, bottom=side)
     detail_sheet.freeze_panes = "B2"
 
     color_sheet = workbook.create_sheet("Color Summary")
