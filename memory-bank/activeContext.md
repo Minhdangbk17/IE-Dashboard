@@ -1,6 +1,42 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-28 — Đổi ngược quyết định "tô màu theo mã đầu tiên" (bản ghi
+**Cập nhật lần cuối:** 2026-09-29 — **VIẾT LẠI HOÀN TOÀN công thức Batch/Day Trend**
+(`modules/dyeing/engines/batch_matrix/batch_day_trend.py`) theo đoạn Power Query người dùng gửi
++ 5 câu xác nhận:
+- Nguồn **CHỈ `batch_details`** — BỎ HẲN `availability_logs` (cả `planned_prd_time_hour` lẫn
+  `rework_hour`). Capacity lấy từ `machines.capacity_kg`.
+- Machine trống -> Machine dòng phía trên (theo `id` = thứ tự import).
+- FabricType trống/"Unknown" -> FabricType của mẻ KẾ TIẾP cùng máy (theo StartTime); mẻ cuối
+  không có mẻ sau -> "Unknown" (loại khỏi báo cáo). Dòng này VẪN là 1 mẻ riêng (giờ + được
+  đếm nếu Normal) — **BỎ thuật toán carry-forward giờ** cũ.
+- Mẫu số = **Occupied Hours** (End - Start, KHÔNG dùng RunTime) của TẤT CẢ mẻ (kể cả
+  CM/Sample/Rework), tách theo khung Production Date 07:00->07:00, bỏ đoạn 0h.
+- Tử số = mẻ Normal theo `classify_batch_badge()` của Batch Per Day by Machine (Dyelot *0,
+  SapLot 1*/3*, ReDye = 0 cố định — CHƯA có checkbox ReDye trên tab Trend), đếm 1 lần vào
+  NGÀY KẾT THÚC (= đoạn cuối có giờ > 0).
+- Grain summary giờ = 1 dòng/1 ĐOẠN (mẻ x ngày); `is_valid` = số mẻ đếm ở đoạn đó. Schema KHÔNG
+  đổi (không cần migration Postgres) nhưng **BẮT BUỘC `flask rebuild-summaries`** sau deploy.
+- `recompute_all()` đọc toàn bộ `batch_details` 1 lần; `recompute_daily(D)` = `recompute_all([D])`.
+- `EngineMetadata`: thêm `depends_on "reports"` (dùng lại classifier), data_sources thêm
+  `machines`/`brand_program_mapping`.
+- Verify: viết lại `tests/test_batch_day_trend_recompute_all.py`; import file thật tháng 8 qua
+  `sync_batch_details()` (lưu ý file có "Sheet1" 5 dòng đứng trước sheet "Batch" — importer đọc
+  sheet đầu tiên, phải bỏ Sheet1 mới import đủ 3418 dòng) — 98/98 ô ngày x vải khớp bản tính
+  độc lập mô phỏng Power Query. Tháng 8: Cotton 1.67, CVC 1.01, Polyester 1.12. 13/13 test PASS.
+- **Bộ lọc Tank Type (cùng ngày, tiếp)**: dropdown multi-select "Tank Type" trên tab Trend
+  (param `tank_types`, phân tách dấu phẩy). Tra `machines.tank_type` NGAY TẠI READ TIME
+  (`_machine_tank_labels()`, KHÔNG lưu vào summary -> không migration/rebuild), chuẩn hoá bằng
+  `reports/cleaning_matrix.py::_normalize_tank_label()` — "J tank"/"O tank"/"Unclassified"
+  (khớp tab Summary Batch Per Day by Machine). JSON thêm `available_tank_types`.
+- **Checkbox "ReDye = 0" (cùng ngày, tiếp)** trên tab Trend, mặc định BẬT, param
+  `require_redye_zero` (mặc định "1"). Cột MỚI `batch_day_trend_daily_summary.
+  is_valid_any_redye` (Normal KHÔNG xét ReDye) tính sẵn lúc rollup; reader chọn `is_valid` hoặc
+  `is_valid_any_redye` — không recompute khi toggle. SQLite: thiếu cột -> DROP + tạo lại bảng
+  (tái tạo được 100%). **Postgres: CHƯA chạy `supabase/migrate_batch_day_trend_redye.sql`** —
+  chạy rồi `flask rebuild-summaries`. File thật tháng 8: BẬT 1877 mẻ/1.30, TẮT 2094 mẻ/1.45
+  (giờ không đổi 34 650h).
+
+**Bản ghi trước:** 2026-09-28 — Đổi ngược quyết định "tô màu theo mã đầu tiên" (bản ghi
 ngay dưới, 2026-09-25) vì người dùng giờ muốn XEM RÕ TỪNG mẻ: `export_cleaning_matrix_excel()`
 đổi từ 1 CỘT/ngày (dồn text "LR, CM" vào 1 ô) sang **1 KHỐI CỘT/ngày** — mỗi mẻ trong ngày là 1
 Ô RIÊNG (tô màu/viền ĐÚNG cho TỪNG mã, không chỉ mã đầu), số cột trong khối = số mẻ NHIỀU NHẤT

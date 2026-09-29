@@ -29,11 +29,12 @@ class BatchMatrixEngine(BaseEngine):
             description=(
                 "Batch/Day: Fabric Type x Color Group matrix (value = SUM(batches)/SUM(operating "
                 "hours for that cell's machines)/24), plus a Batch/Day Trend tab "
-                "(valid batches * 24 / total planned production hours)."
+                "(normal dyeing batches * 24 / total occupied hours, from batch_details only)."
             ),
-            data_sources=["availability_logs", "batch_details"],
+            data_sources=["availability_logs", "batch_details", "machines", "brand_program_mapping"],
             data_sinks=["batch_matrix_targets", "batch_matrix_daily_summary", "batch_day_trend_daily_summary"],
-            depends_on=["excel_import"],
+            # "reports": Trend dùng lại `classify_batch_badge()` (quy tắc Normal dyeing).
+            depends_on=["excel_import", "reports"],
         )
 
     def create_blueprint(self) -> Blueprint:
@@ -46,7 +47,8 @@ class BatchMatrixEngine(BaseEngine):
     def recompute_all(self, dates: Iterable[date], conn: Any) -> None:
         """Override bản mặc định (lặp `recompute_daily()` từng ngày) vì
         `batch_day_trend.recompute_all()` có đường tính HÀNG LOẠT hiệu quả hơn nhiều cho
-        thuật toán carry-forward (xem docstring `batch_day_trend.recompute_all()`) —
+        Trend (đọc toàn bộ `batch_details` 1 lần để fill Machine/FabricType theo thứ tự — xem
+        docstring đầu file `batch_day_trend.py`) —
         `service.recompute_daily()` (Fabric/Color Matrix) vẫn lặp theo ngày vì mỗi ngày độc
         lập, không có chi phí lặp lại tốn kém."""
         dates = list(dates)

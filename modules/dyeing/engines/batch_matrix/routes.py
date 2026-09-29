@@ -12,7 +12,7 @@ Blueprint & Route (API + View) của Engine "batch_matrix".
 - `POST /dyeing/batch_matrix/api/targets`   -> Set/update 1 Target (fabric_type, color_group).
 - `GET  /dyeing/batch_matrix/api/day-batches?date=&fabric_type=&color_group=&capacity=...`
   -> API JSON danh sách mẻ THẬT của 1 ô ma trận (drill-down double-check, bấm vào ô ngày trên UI).
-- `GET  /dyeing/batch_matrix/api/batch-day-trend?capacities=&brand_programs=&from_date=&to_date=&group_by=`
+- `GET  /dyeing/batch_matrix/api/batch-day-trend?capacities=&brand_programs=&tank_types=&require_redye_zero=1&from_date=&to_date=&group_by=`
   -> API JSON tab "Batch/Day Trend" (LUÔN 3 dòng Cotton/CVC/Polyester cố định — xem
   `batch_day_trend.py` cho công thức đầy đủ).
 - `POST /dyeing/batch_matrix/api/batch-day-trend/targets/<fabric_type>` -> Set/update
@@ -70,9 +70,11 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         data = get_batch_day_trend(
             capacities=request.args.get("capacities") or None,
             brand_programs=request.args.get("brand_programs") or None,
+            tank_types=request.args.get("tank_types") or None,
             from_date=request.args.get("from_date") or None,
             to_date=request.args.get("to_date") or None,
             group_by=request.args.get("group_by", "date"),
+            require_redye_zero=request.args.get("require_redye_zero", "1") != "0",
         )
         return jsonify(data)
 

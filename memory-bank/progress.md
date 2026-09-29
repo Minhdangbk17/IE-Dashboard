@@ -1044,6 +1044,18 @@
       ngày) — mỗi mẻ trong ngày là 1 Ô RIÊNG tô màu ĐÚNG cho TỪNG mã (không
       chỉ mã đầu), số cột/khối = số mẻ nhiều nhất của 1 máy bất kỳ trong ngày
       đó, header dòng 1 MERGE lại thành 1 ô tên ngày nếu khối >1 cột.
+- [x] **Batch/Day Trend viết lại theo Power Query người dùng (2026-09-29)** —
+      nguồn CHỈ `batch_details` (bỏ `availability_logs`), fill-down Machine,
+      fill-up FabricType từ mẻ kế tiếp cùng máy (dòng đó VẪN là 1 mẻ riêng,
+      bỏ carry-forward giờ), Occupied Hours = End-Start tách theo 07:00->07:00,
+      tử số = mẻ Normal (quy tắc Dyelot/SapLot/ReDye của Batch Per Day by
+      Machine) đếm 1 lần ở ngày kết thúc. Schema summary KHÔNG đổi. Verify
+      trên file thật tháng 8: 98/98 ô (ngày x vải) khớp bản tính độc lập.
+      **CẦN chạy `flask rebuild-summaries` trên production sau deploy.**
+      Thêm bộ lọc **Tank Type** (J tank/O tank/Unclassified, tra Machine
+      Master tại read time — không cần rebuild). Thêm checkbox **ReDye = 0**
+      (cột mới `is_valid_any_redye`, migration
+      `supabase/migrate_batch_day_trend_redye.sql` CHƯA chạy production).
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên

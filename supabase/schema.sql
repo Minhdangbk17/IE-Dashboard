@@ -397,10 +397,10 @@ create table if not exists batch_matrix_targets (
     primary key (fabric_type, color_group)
 );
 
--- Batch/Day Trend tab (batch_matrix engine). Grain = 1 row per REAL batch already
--- resolved (fabric type valid, carry-forward from preceding Unknown-fabric rows on the
--- same machine already folded in) — see batch_day_trend.py module docstring for why this
--- cannot be rolled up as a simple per-day count like batch_matrix_daily_summary.
+-- Batch/Day Trend tab (batch_matrix engine). Grain = 1 row per batch x production-day
+-- segment (07:00->07:00 split, source batch_details only). is_valid = normal batches counted
+-- on this segment (end day) with ReDye = 0; is_valid_any_redye = same without the ReDye
+-- condition — see batch_day_trend.py module docstring.
 create table if not exists batch_day_trend_daily_summary (
     production_date text not null,
     machine text not null,
@@ -410,6 +410,7 @@ create table if not exists batch_day_trend_daily_summary (
     brand_program text not null default '',
     hours double precision not null default 0,
     is_valid integer not null default 0,
+    is_valid_any_redye integer not null default 0,
     updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
     primary key (production_date, machine, start_time)
 );

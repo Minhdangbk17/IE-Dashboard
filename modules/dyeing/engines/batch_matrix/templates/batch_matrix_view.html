@@ -61,14 +61,20 @@
                 <button id="trend-brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
                 <div id="trend-brand-program-menu" class="capacity-menu" hidden></div>
             </div>
+            <div class="form-group mb-0 capacity-dropdown">
+                <label for="trend-tank-toggle">Tank Type</label>
+                <button id="trend-tank-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All tanks</button>
+                <div id="trend-tank-menu" class="capacity-menu" hidden></div>
+            </div>
             <div class="form-group mb-0"><label for="trend-group-by">Group By</label><select id="trend-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
+            <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="trend-require-redye-zero" checked> ReDye = 0</label>
         </div>
     </section>
 
     <div class="trend-kpis mb-4">
-        <div class="widget-card"><span class="f6 color-fg-muted">BATCH/DAY</span><strong class="kpi-batch-per-day">--</strong><span class="f6 color-fg-muted">Valid batches * 24 / total planned hours</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">VALID BATCHES (REWORK = 0)</span><strong class="kpi-valid-batches">--</strong><span class="f6 color-fg-muted">in filtered range</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLANNED HOURS</span><strong class="kpi-total-hours">--</strong><span class="f6 color-fg-muted">Planned PRD time, all batches</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">BATCH/DAY</span><strong class="kpi-batch-per-day">--</strong><span class="f6 color-fg-muted">Normal batches * 24 / total occupied hours</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">NORMAL DYEING BATCHES</span><strong class="kpi-valid-batches">--</strong><span class="f6 color-fg-muted">Dyelot *0, SapLot 1*/3* (+ ReDye = 0 if ticked); counted on end day</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL OCCUPIED HOURS</span><strong class="kpi-total-hours">--</strong><span class="f6 color-fg-muted">End − Start, split 07:00→07:00, all batches</span></div>
     </div>
 
     <div class="Box p-3 mb-4">
@@ -94,7 +100,7 @@
             <thead><tr id="trend-head"><th>Fabric Type</th><th>Target</th><th>Total</th></tr></thead>
             <tbody></tbody>
         </table>
-        <p class="f6 color-fg-muted mt-2 mb-0">Fabric Type "Unknown"/blank batches are not counted separately — their time is carried forward into the next real batch on the same machine. Only Cotton/CVC/Polyester are shown; other fabric types are excluded from this report.</p>
+        <p class="f6 color-fg-muted mt-2 mb-0">Source: Batch Detail only. Blank/"Unknown" Fabric Type takes the Fabric Type of the next batch on the same machine. Batches spanning several production days (07:00→07:00) split their hours by day and are counted once, on the end day. Only Cotton/CVC/Polyester are shown; other fabric types are excluded from this report.</p>
     </div>
 </section>
 
@@ -509,6 +515,7 @@
 
     const trendCapacityFilter = makeMultiSelectDropdown("trend-capacity-toggle", "trend-capacity-menu", "All capacities", loadTrend);
     const trendBrandProgramFilter = makeMultiSelectDropdown("trend-brand-program-toggle", "trend-brand-program-menu", "All brand programs", loadTrend);
+    const trendTankFilter = makeMultiSelectDropdown("trend-tank-toggle", "trend-tank-menu", "All tanks", loadTrend);
 
     // Mặc định lọc Capacity >= 500Kg khi vào trang lần đầu (chưa ai chỉnh filter) — dropdown
     // này data-driven (option lấy từ `available_capacities` thật trong DB, KHÔNG phải danh
@@ -524,10 +531,13 @@
             group_by: document.getElementById("trend-group-by").value,
             capacities: trendCapacityFilter.selected().join(","),
             brand_programs: trendBrandProgramFilter.selected().join(","),
+            tank_types: trendTankFilter.selected().join(","),
+            require_redye_zero: document.getElementById("trend-require-redye-zero").checked ? "1" : "0",
         });
         fetch(`${trendUrl}?${params}`).then((response) => response.json()).then((data) => {
             trendCapacityFilter.setOptions((data.available_capacities || []).map(String));
             trendBrandProgramFilter.setOptions(data.available_brand_programs || []);
+            trendTankFilter.setOptions(data.available_tank_types || []);
             if (!trendCapacityDefaultApplied) {
                 trendCapacityDefaultApplied = true;
                 const defaultCapacities = (data.available_capacities || []).filter((value) => Number(value) >= 500).map(String);
@@ -549,6 +559,7 @@
     document.getElementById("trend-group-by").addEventListener("change", loadTrend);
     document.getElementById("trend-from").addEventListener("change", loadTrend);
     document.getElementById("trend-to").addEventListener("change", loadTrend);
+    document.getElementById("trend-require-redye-zero").addEventListener("change", loadTrend);
     document.addEventListener("colormodechange", loadTrend);
 
     // -----------------------------------------------------------------

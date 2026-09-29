@@ -1,52 +1,58 @@
 """Batch/Day Trend — tab thứ 2 của Engine `batch_matrix` (theo yêu cầu người dùng).
 
-CÔNG THỨC (mỗi kỳ Day/Week/Month):
-    Batch/Day = [Đếm số mẻ có Rework = 0] * 24 / [Tổng thời gian TẤT CẢ mẻ trong kỳ đó]
+CÔNG THỨC (mỗi kỳ Day/Week/Month, tính riêng từng loại vải Cotton/CVC/Polyester):
+    Batch/Day = [Số mẻ Normal dyeing] * 24 / [Tổng Occupied Hours của TẤT CẢ mẻ trong kỳ]
 
-Nguồn dữ liệu CHÍNH: `availability_logs` — đếm theo `rework_hour = 0`, thời gian lấy từ
-`planned_prd_time_hour` ("Planned PRD time (hour)").
+2026-09-29 — VIẾT LẠI HOÀN TOÀN theo Power Query người dùng cung cấp (thay thế bản cũ dùng
+`availability_logs.planned_prd_time_hour` + carry-forward giờ của mẻ FabricType rỗng):
 
-Mẻ KHÔNG có trong `availability_logs` (dyelot không khớp bất kỳ `batch`/`batch_ref_no`
-nào — CÙNG định nghĩa "mồ côi" đã dùng ở `reports/cleaning_matrix.py::_orphan_batch_rows()`,
-VD line máy chỉ có dữ liệu Batch Detail) lấy từ `batch_details`: đếm theo `is_rework = 0`,
-thời gian = `run_time` (giây, cột RunTime) / 3600.
+1. **Nguồn dữ liệu DUY NHẤT: `batch_details`** (sheet "Batch") — BỎ HẲN `availability_logs`.
+2. **Machine trống** -> lấy Machine của dòng NGAY PHÍA TRÊN (fill-down theo thứ tự `id`,
+   tức thứ tự dòng lúc import — khớp `Table.FillDown` trên sheet gốc).
+3. **FabricType trống/"Unknown"** -> lấy FabricType của mẻ KẾ TIẾP trên CÙNG máy (sắp theo
+   StartTime, khớp `Table.FillUp`); mẻ cuối cùng của máy không có mẻ sau -> giữ "Unknown"
+   (bị loại khỏi báo cáo vì không thuộc 3 loại vải chính). Dòng được điền này VẪN là 1 mẻ
+   riêng (giờ + đếm của CHÍNH nó), KHÔNG còn cộng dồn giờ sang mẻ sau như bản cũ.
+4. **Occupied Hours**: mỗi mẻ được TÁCH theo khung Production Date 07:00 -> 07:00 (không giới
+   hạn số ngày); giờ mỗi đoạn = thời gian THỰC (EndTime - StartTime) nằm trong khung đó, KHÔNG
+   dùng cột RunTime. Đoạn 0h (EndTime đúng 07:00:00) bị bỏ. Mẻ thiếu/ngược Start-End bị bỏ.
+5. **Đếm mẻ (tử số)**: mẻ Normal dyeing theo ĐÚNG quy tắc Dyelot/SapLot/ReDye của báo cáo
+   "Batch Per Day by Machine" (`reports/cleaning_matrix.py::classify_batch_badge()`; điều kiện
+   ReDye = 0 bật/tắt qua checkbox "ReDye = 0" trên UI, mặc định BẬT) — KHÔNG phải CM ("WA"/"CL*"),
+   KHÔNG phải Sample ("DU"/"KN"/SapLot 4*), KHÔNG phải Rework. Mẻ chạy qua nhiều ngày CHỈ đếm
+   1 lần vào NGÀY KẾT THÚC (= Production Date của đoạn cuối cùng có giờ > 0).
+6. **Mẫu số**: Occupied Hours của TẤT CẢ mẻ (kể cả CM/Sample/Rework) cộng theo từng đoạn ngày.
 
-QUY TẮC FabricType KHÔNG HỢP LỆ (rỗng/"Unknow(n)"): KHÔNG được tính là 1 mẻ riêng —
-thời gian của dòng đó CỘNG DỒN (carry-forward) sang mẻ THẬT kế tiếp CÙNG MÁY (theo thời
-gian thực tế) — đúng nghiệp vụ "khoảng trống/vệ sinh máy giữa 2 mẻ tính vào mẻ chạy sau
-nó". Đây là điểm KHÁC biệt quan trọng so với các Daily Rollup khác trong dự án
-(downtime/batch_matrix): công thức phụ thuộc THỨ TỰ THỜI GIAN xuyên suốt lịch sử của
-từng máy, không tách rời được theo từng production_date một cách độc lập.
+DAILY ROLLUP PATTERN (`batch_day_trend_daily_summary`, grain = 1 dòng/1 ĐOẠN của 1 mẻ trong 1
+production_date): `hours` = Occupied Hours của đoạn đó, `is_valid` = số mẻ Normal được ĐẾM
+tại đoạn đó (1 ở đoạn ngày kết thúc của mẻ Normal, 0 ở mọi đoạn khác), `is_valid_any_redye` =
+như `is_valid` nhưng BỎ điều kiện ReDye = 0 (checkbox TẮT). Cột `is_valid_any_redye` cần
+migration Postgres `supabase/migrate_batch_day_trend_redye.sql`; sau khi deploy PHẢI chạy
+`flask rebuild-summaries` để tính lại toàn bộ lịch sử.
 
-DAILY ROLLUP PATTERN (`batch_day_trend_daily_summary`, grain = 1 dòng/1 mẻ THẬT đã
-resolve, giống `cleaning_mc_daily_summary`):
-- `recompute_daily(D, conn)` KHÔNG thể chỉ nhìn dữ liệu của riêng ngày D (một mẻ Unknown
-  kết thúc ngày D-1 có thể "đẩy" giờ của nó vào mẻ THẬT đầu tiên chạy sang ngày D) — giải
-  quyết bằng cách: (1) tìm tập MÁY có ít nhất 1 mẻ THẬT (fabric hợp lệ) resolve đúng ngày D
-  (`_find_candidate_machines()`), (2) với MỖI máy đó, lấy TOÀN BỘ lịch sử của riêng máy đó
-  (`_machine_records()`, quét theo index cột `machine` — rẻ vì chỉ chạy cho vài chục máy
-  liên quan, KHÔNG phải quét toàn bảng), chạy lại đúng thuật toán carry-forward, rồi CHỈ
-  lưu các mẻ resolve đúng ngày D. Carry-forward của 1 máy chỉ phụ thuộc chính lịch sử máy
-  đó nên kết quả giống hệt tính trực tiếp (live) cho đúng các mẻ thuộc ngày D.
-- Đọc báo cáo (`get_batch_day_trend()`) chỉ SELECT từ bảng summary + lọc theo
-  Capacity/FabricType/Date ở Python — không còn quét lại `availability_logs`/`batch_details`
-  mỗi lần đổi filter.
+Fill-down Machine/fill-up FabricType phụ thuộc THỨ TỰ xuyên suốt lịch sử (không tách rời theo
+từng ngày) nên `recompute_all()` đọc TOÀN BỘ `batch_details` 1 LẦN (1 round-trip, chỉ các cột
+cần dùng), chạy thuật toán ở Python rồi CHỈ lưu các đoạn thuộc tập ngày được yêu cầu.
+`recompute_daily(D)` = `recompute_all([D])`.
 
-Bộ lọc: Capacity (Kg) — Availability dùng `availability_logs.capacity_kg`, mẻ mồ côi
-dùng `machines.capacity_kg` đã cấu hình qua UI Batch Per Day by Machine (nếu CHƯA cấu
-hình, mẻ đó bị ẩn khi lọc Capacity cụ thể — giống hệt hạn chế đã ghi nhận ở
-`reports/cleaning_matrix.py`). Fabric Type — CHỈ áp dụng cho mẻ THẬT (Unknown không bao
-giờ được lưu thành 1 dòng riêng nên không thể lọc/hiện ra ở đây).
+Bộ lọc: Capacity (Kg) — `machines.capacity_kg` đã cấu hình qua UI Batch Per Day by Machine
+(máy CHƯA cấu hình bị ẩn khi lọc Capacity cụ thể). Brand - Program — suy từ `greige_code`.
+Tank Type (2026-09-29) — tra `machines.tank_type` tại read time (xem `_machine_tank_labels()`).
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
-from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect
-from core.production_time import get_production_date, production_date_sql_expr
+from core.production_time import PRODUCTION_SHIFT_START_HOUR, get_production_date
+from modules.dyeing.engines.reports.cleaning_matrix import (
+    CANONICAL_TANK_ORDER,
+    UNCLASSIFIED_TANK_LABEL,
+    _normalize_tank_label,
+    classify_batch_badge,
+)
 
 INVALID_FABRIC_TYPES = {"", "unknow", "unknown"}
 # Báo cáo "Batch/Day Trend" LUÔN thể hiện ĐÚNG 3 loại vải chính này (theo yêu cầu người
@@ -124,10 +130,10 @@ def _period(day: date, group_by: str) -> tuple[str, str]:
 def _ensure_summary_table(conn: Any) -> None:
     """CHỈ chạy CREATE TABLE ở SQLite — ở Postgres bảng đã có sẵn qua `supabase/schema.sql`
     (DB production đã có dữ liệu thì áp `supabase/migrate_batch_day_trend_brand_program.sql`
-    + chạy lại `flask rebuild-summaries`)."""
+    + `supabase/migrate_batch_day_trend_redye.sql` rồi chạy lại `flask rebuild-summaries`)."""
     if get_dialect() == "sqlite":
         existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(batch_day_trend_daily_summary)")}
-        if existing_columns and "brand_program" not in existing_columns:
+        if existing_columns and not {"brand_program", "is_valid_any_redye"} <= existing_columns:
             # An toàn xoá/tạo lại (giống `batch_matrix/service.py::_ensure_summary_table()`)
             # vì bảng luôn tái tạo được 100% từ raw data qua `recompute_daily()`.
             conn.execute("DROP TABLE batch_day_trend_daily_summary")
@@ -141,6 +147,7 @@ def _ensure_summary_table(conn: Any) -> None:
                 brand_program TEXT NOT NULL DEFAULT '',
                 hours REAL NOT NULL DEFAULT 0,
                 is_valid INTEGER NOT NULL DEFAULT 0,
+                is_valid_any_redye INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (production_date, machine, start_time)
             )
@@ -148,215 +155,164 @@ def _ensure_summary_table(conn: Any) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_day_trend_daily_summary_date ON batch_day_trend_daily_summary (production_date)")
 
 
-def _find_candidate_machines(conn: Any, day_str: str) -> set[str]:
-    """Tập MÁY có ít nhất 1 mẻ THẬT (FabricType hợp lệ) resolve đúng `day_str` — CHỈ những
-    máy này mới có thể phát sinh dòng summary cho ngày D (mẻ Unknown không bao giờ tự sinh
-    dòng summary, chỉ carry giờ sang mẻ THẬT kế tiếp — không cần xét riêng ở bước này)."""
-    shifted_avail = production_date_sql_expr("COALESCE(end_time, start_time)")
-    avail_rows = conn.execute(
+def _load_batch_rows(conn: Any) -> list[dict[str, Any]]:
+    """TOÀN BỘ `batch_details` (chỉ các cột cần dùng) theo thứ tự `id` = thứ tự dòng lúc
+    import — cần đúng thứ tự này cho bước fill-down Machine (xem docstring đầu file)."""
+    rows = conn.execute(
         f"""
-        SELECT DISTINCT machine FROM availability_logs
-        WHERE fabric_type IS NOT NULL AND lower(trim(fabric_type)) NOT IN ('', 'unknow', 'unknown')
-          AND {shifted_avail} = ?
-        """,
-        (day_str,),
-    ).fetchall()
-    shifted_batch = production_date_sql_expr("COALESCE(b.end_time, b.start_time)")
-    batch_rows = conn.execute(
-        f"""
-        SELECT DISTINCT b.machine FROM batch_details b
-        WHERE b.fabric_type IS NOT NULL AND lower(trim(b.fabric_type)) NOT IN ('', 'unknow', 'unknown')
-          AND NOT EXISTS (
-              SELECT 1 FROM availability_logs a2
-              WHERE lower(trim(a2.batch)) = lower(trim(b.dyelot)) OR lower(trim(a2.batch_ref_no)) = lower(trim(b.dyelot))
-          )
-          AND {shifted_batch} = ?
-        """,
-        (day_str,),
-    ).fetchall()
-    machines = {(row["machine"] or "").strip() for row in avail_rows}
-    machines.update((row["machine"] or "").strip() for row in batch_rows)
-    machines.discard("")
-    return machines
-
-
-def _machine_records(conn: Any, machine: str) -> list[dict[str, Any]]:
-    """TOÀN BỘ lịch sử (availability + mẻ mồ côi trong batch_details) của ĐÚNG 1 máy —
-    quét theo cột `machine` (rẻ, chỉ chạy cho các máy có mặt trong `_find_candidate_machines()`,
-    không phải toàn bảng)."""
-    avail_rows = conn.execute(
-        f"""
-        SELECT a.fabric_type, a.start_time, a.end_time, a.planned_prd_time_hour, a.rework_hour, a.capacity_kg,
+        SELECT b.id, b.dyelot, b.sap_lot, b.redye, b.machine, b.fabric_type, b.start_time, b.end_time,
                {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
-        FROM availability_logs a
-        {batch_details_join_sql("a.batch", "a.end_time", alias="bd")}
-        LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(bd.greige_code))
-        WHERE a.machine = ? AND a.start_time IS NOT NULL AND TRIM(a.start_time) != ''
-        """,
-        (machine,),
-    ).fetchall()
-    records: list[dict[str, Any]] = [
-        {
-            "fabric_type": (row["fabric_type"] or "").strip(),
-            "start_time": row["start_time"],
-            "end_time": row["end_time"],
-            "hours": float(row["planned_prd_time_hour"] or 0),
-            "is_valid": float(row["rework_hour"] or 0) == 0,
-            "capacity": row["capacity_kg"],
-            "brand_program": str(row["brand_program"] or "").strip(),
-        }
-        for row in avail_rows
-    ]
-
-    orphan_rows = conn.execute(
-        f"""
-        SELECT b.fabric_type, b.start_time, b.end_time, b.run_time, COALESCE(b.is_rework, 0) AS is_rework,
-               m.capacity_kg AS configured_capacity_kg, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM batch_details b
-        LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(b.machine))
         LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(b.greige_code))
-        WHERE b.machine = ? AND b.start_time IS NOT NULL AND TRIM(b.start_time) != ''
-          AND NOT EXISTS (
-              SELECT 1 FROM availability_logs a2
-              WHERE lower(trim(a2.batch)) = lower(trim(b.dyelot)) OR lower(trim(a2.batch_ref_no)) = lower(trim(b.dyelot))
-          )
-        """,
-        (machine,),
+        ORDER BY b.id
+        """
     ).fetchall()
-    records.extend(
-        {
-            "fabric_type": (row["fabric_type"] or "").strip(),
-            "start_time": row["start_time"],
-            "end_time": row["end_time"],
-            "hours": float(row["run_time"] or 0) / 3600.0,
-            "is_valid": int(row["is_rework"] or 0) == 0,
-            "capacity": row["configured_capacity_kg"],
-            "brand_program": str(row["brand_program"] or "").strip(),
-        }
-        for row in orphan_rows
+    return [dict(row) for row in rows]
+
+
+def _machine_capacities(conn: Any) -> dict[str, float]:
+    """{mã máy (lower/trim): capacity_kg} — capacity cấu hình qua UI Batch Per Day by Machine."""
+    capacities: dict[str, float] = {}
+    for row in conn.execute("SELECT machine_code, machine_id, capacity_kg FROM machines").fetchall():
+        code = str(row["machine_code"] or row["machine_id"] or "").strip().lower()
+        if code and row["capacity_kg"] not in (None, "") and code not in capacities:
+            capacities[code] = round(float(row["capacity_kg"]), 2)
+    return capacities
+
+
+def _is_normal_batch(row: dict[str, Any], require_redye_zero: bool) -> bool:
+    """Normal dyeing = KHÔNG phải CM/Sample/Rework theo `classify_batch_badge()` của báo cáo
+    "Batch Per Day by Machine" — `require_redye_zero` khớp checkbox "ReDye = 0" trên UI."""
+    badge = classify_batch_badge(
+        {"dyelot": row["dyelot"], "sap_lot": row["sap_lot"], "redye": row["redye"]},
+        require_redye_zero=require_redye_zero,
     )
-    return records
+    return badge not in ("CM", "S") and not badge.endswith("R")
+
+
+def _split_production_days(start: datetime, end: datetime) -> list[tuple[date, float]]:
+    """Tách [start, end) theo khung Production Date 07:00 -> 07:00 hôm sau, trả
+    [(production_date, occupied_hours)] — bỏ đoạn 0h (khớp `List.Select(... > 0)` của Power Query)."""
+    segments: list[tuple[date, float]] = []
+    day = get_production_date(start)
+    last_day = get_production_date(end)
+    while day <= last_day:
+        window_start = datetime(day.year, day.month, day.day, PRODUCTION_SHIFT_START_HOUR)
+        window_end = window_start + timedelta(days=1)
+        hours = (min(end, window_end) - max(start, window_start)).total_seconds() / 3600.0
+        if hours > 0:
+            segments.append((day, hours))
+        day += timedelta(days=1)
+    return segments
+
+
+def _build_segments(conn: Any) -> list[dict[str, Any]]:
+    """Chạy đúng pipeline Power Query trên toàn bộ `batch_details`, trả danh sách đoạn
+    (1 đoạn = 1 mẻ x 1 production_date) CHƯA gộp — xem docstring đầu file bước 2-6."""
+    # Bước 2: Machine trống -> Machine của dòng phía trên (theo thứ tự import).
+    batches: list[dict[str, Any]] = []
+    last_machine = ""
+    for row in _load_batch_rows(conn):
+        machine = str(row["machine"] or "").strip() or last_machine
+        last_machine = machine
+        start_dt = _parse_datetime(row["start_time"])
+        if not machine or start_dt is None:
+            continue
+        fabric = str(row["fabric_type"] or "").strip()
+        batches.append({
+            **row,
+            "machine": machine,
+            "fabric_type": "" if fabric.lower() in INVALID_FABRIC_TYPES else fabric,
+            "_start_dt": start_dt,
+            "_end_dt": _parse_datetime(row["end_time"]),
+        })
+
+    # Bước 3: FabricType trống -> FabricType của mẻ kế tiếp CÙNG máy (theo StartTime);
+    # mẻ cuối không có mẻ sau -> "Unknown".
+    by_machine: dict[str, list[dict[str, Any]]] = {}
+    for batch in batches:
+        by_machine.setdefault(batch["machine"], []).append(batch)
+    for machine_batches in by_machine.values():
+        machine_batches.sort(key=lambda b: b["_start_dt"])
+        next_fabric = "Unknown"
+        for batch in reversed(machine_batches):
+            if batch["fabric_type"]:
+                next_fabric = batch["fabric_type"]
+            else:
+                batch["fabric_type"] = next_fabric
+
+    # Bước 4-6: tách đoạn theo Production Date, đếm mẻ Normal ở đoạn cuối (ngày kết thúc).
+    capacities = _machine_capacities(conn)
+    segments: list[dict[str, Any]] = []
+    for batch in batches:
+        if batch["_end_dt"] is None:
+            continue
+        parts = _split_production_days(batch["_start_dt"], batch["_end_dt"])
+        if not parts:
+            continue
+        is_normal = _is_normal_batch(batch, require_redye_zero=True)
+        is_normal_any_redye = _is_normal_batch(batch, require_redye_zero=False)
+        for index, (day, hours) in enumerate(parts):
+            is_end_day = index == len(parts) - 1
+            segments.append({
+                "production_date": day.isoformat(),
+                "machine": batch["machine"],
+                "start_time": str(batch["start_time"]),
+                "fabric_type": batch["fabric_type"],
+                "capacity_kg": capacities.get(batch["machine"].lower()),
+                "brand_program": str(batch["brand_program"] or "").strip(),
+                "hours": hours,
+                "is_valid": int(is_normal and is_end_day),
+                "is_valid_any_redye": int(is_normal_any_redye and is_end_day),
+            })
+    return segments
 
 
 def recompute_daily(production_date: date, conn: Any) -> None:
-    """Tính lại `batch_day_trend_daily_summary` cho ĐÚNG 1 production_date — idempotent
-    (DELETE dòng cũ của ngày này rồi INSERT lại). Xem docstring đầu file mục "Daily Rollup
-    Pattern" để biết lý do phải xử lý theo TỪNG MÁY thay vì chỉ lọc raw data theo ngày D."""
-    _ensure_summary_table(conn)
-    ensure_brand_program_table(conn)
-    day_str = production_date.isoformat()
-    conn.execute("DELETE FROM batch_day_trend_daily_summary WHERE production_date = ?", (day_str,))
-
-    machines = _find_candidate_machines(conn, day_str)
-    if not machines:
-        return
-
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    inserts: list[tuple[Any, ...]] = []
-    for machine in machines:
-        records = []
-        for record in _machine_records(conn, machine):
-            start_dt = _parse_datetime(record["start_time"])
-            if start_dt is None:
-                continue
-            records.append({**record, "_start_dt": start_dt})
-        records.sort(key=lambda r: r["_start_dt"])
-
-        carry_hours = 0.0
-        for record in records:
-            if record["fabric_type"].strip().lower() in INVALID_FABRIC_TYPES:
-                carry_hours += record["hours"]
-                continue
-            total_hours = record["hours"] + carry_hours
-            carry_hours = 0.0
-            record_time = _parse_datetime(record["end_time"]) or record["_start_dt"]
-            resolved_date = get_production_date(record_time)
-            if resolved_date.isoformat() != day_str:
-                continue
-            capacity = record["capacity"]
-            capacity_value = round(float(capacity), 2) if capacity not in (None, "") else None
-            inserts.append((
-                day_str, machine, record["start_time"], record["fabric_type"], capacity_value,
-                record["brand_program"], total_hours, int(record["is_valid"]), now_str,
-            ))
-
-    if inserts:
-        conn.executemany(
-            """
-            INSERT INTO batch_day_trend_daily_summary
-                (production_date, machine, start_time, fabric_type, capacity_kg, brand_program, hours, is_valid, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            inserts,
-        )
+    """Tính lại `batch_day_trend_daily_summary` cho ĐÚNG 1 production_date — idempotent."""
+    recompute_all([production_date], conn)
 
 
 def recompute_all(dates: Iterable[date], conn: Any) -> None:
-    """Biến thể HÀNG LOẠT của `recompute_daily()` (xem `core/engine_base.py::
-    BaseEngine.recompute_all()`), cho kết quả GIỐNG HỆT gọi `recompute_daily()` lần lượt
-    cho từng ngày trong `dates` — chỉ khác ở hiệu năng: fetch + sort lịch sử của MỖI máy
-    liên quan ĐÚNG 1 LẦN (không phải N lần, N = số ngày trong `dates`).
-
-    **BUG THẬT đã phát hiện + sửa bằng hàm này (2026-09-18)**: thuật toán carry-forward
-    BẮT BUỘC quét TOÀN BỘ lịch sử của 1 máy để gán đúng giờ carry từ mẻ FabricType không
-    hợp lệ đứng trước — `recompute_daily()` gọi riêng lẻ cho HÀNG TRĂM ngày (VD
-    `flask rebuild-summaries` trên dữ liệu nhiều tháng) sẽ fetch+sort lại NGUYÊN VẸN lịch
-    sử đó hàng trăm lần (mỗi lần fetch = 2 round-trip mạng khi DB là Postgres remote) — đủ
-    chậm để người dùng coi tiến trình là "treo"/ngắt giữa chừng, chỉ backfill được vài
-    ngày ĐẦU TIÊN theo thứ tự xử lý (`sorted(affected_dates)` — ngày cũ nhất trước). Triệu
-    chứng thật đã xác nhận: DB production có dữ liệu Batch/Day Trend CHỈ cho 6 ngày đầu
-    06/2026 dù `availability_logs` có dữ liệu tới ngày hiện tại (khớp chính xác kịch bản
-    "dừng giữa chừng khi xử lý theo thứ tự ngày tăng dần")."""
+    """Tính lại `batch_day_trend_daily_summary` cho tập `dates` — idempotent (DELETE rồi
+    INSERT lại đúng các ngày này). Đọc `batch_details` ĐÚNG 1 LẦN cho cả tập ngày (tránh bug
+    2026-09-18: gọi lặp từng ngày trên Postgres remote chậm tới mức bị coi là "treo")."""
     _ensure_summary_table(conn)
     ensure_brand_program_table(conn)
     date_strs = {d.isoformat() for d in dates}
     if not date_strs:
         return
 
-    machines: set[str] = set()
-    for day_str in date_strs:
-        machines |= _find_candidate_machines(conn, day_str)
+    # Gộp theo PRIMARY KEY (production_date, machine, start_time) phòng trường hợp 2 dòng
+    # batch_details trùng máy + StartTime (khác Dyelot) — cộng giờ/số mẻ, không lỗi trùng khoá.
+    merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for segment in _build_segments(conn):
+        if segment["production_date"] not in date_strs:
+            continue
+        key = (segment["production_date"], segment["machine"], segment["start_time"])
+        if key in merged:
+            merged[key]["hours"] += segment["hours"]
+            merged[key]["is_valid"] += segment["is_valid"]
+            merged[key]["is_valid_any_redye"] += segment["is_valid_any_redye"]
+        else:
+            merged[key] = segment
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    inserts: list[tuple[Any, ...]] = []
-    for machine in machines:
-        records = []
-        for record in _machine_records(conn, machine):
-            start_dt = _parse_datetime(record["start_time"])
-            if start_dt is None:
-                continue
-            records.append({**record, "_start_dt": start_dt})
-        records.sort(key=lambda r: r["_start_dt"])
-
-        carry_hours = 0.0
-        for record in records:
-            if record["fabric_type"].strip().lower() in INVALID_FABRIC_TYPES:
-                carry_hours += record["hours"]
-                continue
-            total_hours = record["hours"] + carry_hours
-            carry_hours = 0.0
-            record_time = _parse_datetime(record["end_time"]) or record["_start_dt"]
-            resolved_date = get_production_date(record_time)
-            day_str = resolved_date.isoformat()
-            if day_str not in date_strs:
-                continue
-            capacity = record["capacity"]
-            capacity_value = round(float(capacity), 2) if capacity not in (None, "") else None
-            inserts.append((
-                day_str, machine, record["start_time"], record["fabric_type"], capacity_value,
-                record["brand_program"], total_hours, int(record["is_valid"]), now_str,
-            ))
-
     for day_str in date_strs:
         conn.execute("DELETE FROM batch_day_trend_daily_summary WHERE production_date = ?", (day_str,))
-    if inserts:
+    if merged:
         conn.executemany(
             """
             INSERT INTO batch_day_trend_daily_summary
-                (production_date, machine, start_time, fabric_type, capacity_kg, brand_program, hours, is_valid, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (production_date, machine, start_time, fabric_type, capacity_kg, brand_program, hours,
+                 is_valid, is_valid_any_redye, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            inserts,
+            [
+                (s["production_date"], s["machine"], s["start_time"], s["fabric_type"], s["capacity_kg"],
+                 s["brand_program"], s["hours"], s["is_valid"], s["is_valid_any_redye"], now_str)
+                for s in merged.values()
+            ],
         )
 
 
@@ -415,29 +371,59 @@ def set_trend_target(fabric_type: str, target_value: float) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# Tank Type — tra `machines.tank_type` (Machine Master) NGAY TẠI READ TIME (không lưu vào
+# bảng summary: không cần migration/rebuild, đổi Tank Type trên Machine Master có hiệu lực
+# ngay). Chuẩn hoá giống tab Summary của Batch Per Day by Machine: "J tank"/"O tank", mọi giá
+# trị khác (rỗng/lạ/máy chưa khai báo) -> "Unclassified".
+_TANK_ORDER: tuple[str, ...] = (*CANONICAL_TANK_ORDER, UNCLASSIFIED_TANK_LABEL)
+
+
+def _machine_tank_labels(conn: Any) -> dict[str, str]:
+    """{mã máy (lower/trim): nhãn Tank đã chuẩn hoá}."""
+    labels: dict[str, str] = {}
+    for row in conn.execute("SELECT machine_code, machine_id, tank_type FROM machines").fetchall():
+        code = str(row["machine_code"] or row["machine_id"] or "").strip().lower()
+        if code and code not in labels:
+            labels[code] = _normalize_tank_label(row["tank_type"])
+    return labels
+
+
+def _row_tank(row: Any, tank_by_machine: dict[str, str]) -> str:
+    return tank_by_machine.get(str(row["machine"] or "").strip().lower(), UNCLASSIFIED_TANK_LABEL)
+
+
 def _empty_trend(group_by: str, targets: dict[str, float | None] | None = None) -> dict[str, Any]:
     targets = targets or {}
     return {
-        "filters": {"capacities": [], "brand_programs": [], "from_date": None, "to_date": None, "group_by": group_by},
+        "filters": {"capacities": [], "brand_programs": [], "tank_types": [], "from_date": None, "to_date": None, "group_by": group_by},
         "periods": [], "period_keys": [],
         "rows": [{"fabric_type": name, "target": targets.get(name), "values": [], "total": 0.0} for name in MAIN_FABRIC_TYPES],
         "chart": {"categories": [], "series": []},
         "kpis": {"batch_per_day": 0.0, "valid_batches": 0, "total_planned_hours": 0.0},
         "available_capacities": [],
         "available_brand_programs": [],
+        "available_tank_types": [],
     }
 
 
 def get_batch_day_trend(
     capacities: str | list[str] | None = None,
     brand_programs: str | list[str] | None = None,
+    tank_types: str | list[str] | None = None,
     from_date: str | None = None, to_date: str | None = None,
     group_by: str = "date",
+    require_redye_zero: bool = True,
 ) -> dict[str, Any]:
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
     trend_targets = get_trend_targets()
     conn = get_db()
-    sql = "SELECT production_date, machine, fabric_type, capacity_kg, brand_program, hours, is_valid FROM batch_day_trend_daily_summary WHERE 1=1"
+    # Checkbox "ReDye = 0": BẬT -> `is_valid` (Normal có ReDye = 0), TẮT -> `is_valid_any_redye`
+    # (bỏ điều kiện ReDye). Cả 2 cột đã tính sẵn lúc rollup — không cần recompute khi đổi.
+    count_column = "is_valid" if require_redye_zero else "is_valid_any_redye"
+    sql = (
+        f"SELECT production_date, machine, fabric_type, capacity_kg, brand_program, hours, {count_column} AS batch_count "
+        "FROM batch_day_trend_daily_summary WHERE 1=1"
+    )
     params: list[Any] = []
     if from_date:
         sql += " AND production_date >= ?"
@@ -456,16 +442,21 @@ def get_batch_day_trend(
     if not rows:
         return _empty_trend(group_by, trend_targets)
 
+    tank_by_machine = _machine_tank_labels(conn)
     available_capacities = sorted({round(float(row["capacity_kg"]), 2) for row in rows if row["capacity_kg"] not in (None, "")})
     available_brand_programs = sorted({row["brand_program"] for row in rows if row["brand_program"]})
+    present_tanks = {_row_tank(row, tank_by_machine) for row in rows}
+    available_tank_types = [label for label in _TANK_ORDER if label in present_tanks]
 
     selected_capacities = _parse_capacities(capacities)
     capacity_filter = {round(value, 2) for value in selected_capacities} if selected_capacities else None
     selected_brand_programs = _parse_brand_programs(brand_programs)
     brand_program_filter = set(selected_brand_programs) if selected_brand_programs else None
+    selected_tank_types = [value for value in _parse_brand_programs(tank_types) if value in _TANK_ORDER]
+    tank_filter = set(selected_tank_types) if selected_tank_types else None
 
     # Mỗi loại vải chính (Cotton/CVC/Polyester) có tử số/mẫu số RIÊNG — tính ĐỘC LẬP theo
-    # ĐÚNG công thức gốc (đếm mẻ Rework=0 * 24 / tổng giờ TẤT CẢ mẻ), không dùng chung mẫu
+    # ĐÚNG công thức gốc (đếm mẻ Normal * 24 / tổng Occupied Hours TẤT CẢ mẻ), không dùng chung mẫu
     # số như bản 1-đường-gộp cũ. Loại KHÁC 3 loại chính (`_normalize_main_fabric_type()`
     # trả None) bị loại bỏ hoàn toàn khỏi báo cáo Trend.
     period_counts: dict[str, dict[str, int]] = {name: {} for name in MAIN_FABRIC_TYPES}
@@ -481,17 +472,20 @@ def get_batch_day_trend(
                 continue
         if brand_program_filter is not None and (row["brand_program"] or "") not in brand_program_filter:
             continue
+        if tank_filter is not None and _row_tank(row, tank_by_machine) not in tank_filter:
+            continue
         day = datetime.strptime(row["production_date"], "%Y-%m-%d").date()
         key, label = _period(day, group_by)
         period_labels[key] = label
         period_hours[fabric_type][key] = period_hours[fabric_type].get(key, 0.0) + float(row["hours"] or 0)
-        if row["is_valid"]:
-            period_counts[fabric_type][key] = period_counts[fabric_type].get(key, 0) + 1
+        if row["batch_count"]:
+            period_counts[fabric_type][key] = period_counts[fabric_type].get(key, 0) + int(row["batch_count"])
 
     if not period_labels:
         result = _empty_trend(group_by, trend_targets)
         result["available_capacities"] = available_capacities
         result["available_brand_programs"] = available_brand_programs
+        result["available_tank_types"] = available_tank_types
         return result
 
     ordered_keys = sorted(period_labels.keys())
@@ -517,6 +511,8 @@ def get_batch_day_trend(
         "filters": {
             "capacities": selected_capacities or "all",
             "brand_programs": selected_brand_programs or "all",
+            "tank_types": selected_tank_types or "all",
+            "require_redye_zero": require_redye_zero,
             "from_date": from_date, "to_date": to_date, "group_by": group_by,
         },
         "periods": labels, "period_keys": ordered_keys,
@@ -529,4 +525,5 @@ def get_batch_day_trend(
         },
         "available_capacities": available_capacities,
         "available_brand_programs": available_brand_programs,
+        "available_tank_types": available_tank_types,
     }
