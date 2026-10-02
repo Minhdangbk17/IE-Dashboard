@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Iterable
 
 from flask import Blueprint
 
@@ -20,7 +20,9 @@ class ReportsEngine(BaseEngine):
             name=self.name,
             domain=self.domain,
             description="Dyeing schedule and machine cleaning ratio report.",
-            data_sources=["availability_logs", "batch_details", "brand_program_mapping", "machines"],
+            # 2026-10-02: Batch Per Day by Machine đọc DUY NHẤT batch_details (core/batch_source.py),
+            # không còn availability_logs.
+            data_sources=["batch_details", "brand_program_mapping", "machines"],
             data_sinks=["cleaning_mc_daily_summary", "machines"],
             depends_on=["excel_import"],
         )
@@ -30,6 +32,11 @@ class ReportsEngine(BaseEngine):
 
     def recompute_daily(self, production_date: date, conn: Any) -> None:
         cleaning_matrix.recompute_daily(production_date, conn)
+
+    def recompute_all(self, dates: Iterable[date], conn: Any) -> None:
+        """Đọc `batch_details` ĐÚNG 1 LẦN cho cả tập ngày (fill-down/fill-up phụ thuộc toàn bộ
+        lịch sử) — kết quả giống hệt gọi `recompute_daily()` từng ngày, chỉ nhanh hơn."""
+        cleaning_matrix.recompute_all(dates, conn)
 
 
 engine = ReportsEngine()

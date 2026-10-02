@@ -5,15 +5,14 @@ import io
 import logging
 from collections import Counter, defaultdict
 from datetime import date, datetime
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from openpyxl import Workbook
 from openpyxl.styles import Border, Font, PatternFill, Side
 
-from core.batch_details_match import batch_details_join_sql
+from core.batch_source import load_resolved_batches
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import execute_query, get_db, get_dialect
-from core.production_time import production_date_sql_expr
 
 # Bảng bí danh field: chấp nhận cả PascalCase (theo header Excel gốc) lẫn
 # snake_case (theo cột DB) để hàm phân loại badge không phụ thuộc nguồn dữ liệu.
@@ -204,11 +203,10 @@ def classify_batch_badge(batch: Mapping[str, Any], require_redye_zero: bool = Tr
 #
 # KHÁC với downtime/batch_matrix: Cleaning MC hiển thị CHI TIẾT TỪNG MẺ theo trình tự
 # (lịch máy dạng chuỗi badge, không phải số liệu đã gộp) — nên `cleaning_mc_daily_summary`
-# lưu ở GRAIN 1 DÒNG = 1 MẺ (đã JOIN + phân loại badge sẵn), KHÔNG phải số đếm. Phần tốn
-# kém (JOIN availability_logs x batch_details x machines VỚI điều kiện lower(trim(...))
-# không dùng được index — xem log baseline 28s/full scan — + phân loại badge 5 bước) chỉ
-# chạy 1 lần trong recompute_daily() cho đúng 1 production_date; đọc báo cáo chỉ SELECT
-# từ bảng đã tổng hợp sẵn, dựng lại cấu trúc machines/days/batches y hệt code cũ.
+# lưu ở GRAIN 1 DÒNG = 1 MẺ (đã chuẩn hoá + phân loại badge sẵn), KHÔNG phải số đếm. Nguồn
+# DUY NHẤT là `batch_details` qua `core/batch_source.py` (2026-10-02, dùng chung với Batch/Day
+# Trend); phần chuẩn hoá + phân loại badge chỉ chạy trong recompute_all(); đọc báo cáo chỉ
+# SELECT từ bảng đã tổng hợp sẵn, dựng lại cấu trúc machines/days/batches y hệt code cũ.
 # ---------------------------------------------------------------------------
 
 
@@ -249,8 +247,6 @@ def _ensure_batch_details_columns(conn: Any) -> None:
     # sau khi có index, ~145 lần). Không đổi kết quả truy vấn, chỉ đổi execution plan.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_details_dyelot_norm ON batch_details (LOWER(TRIM(dyelot)))")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_details_greige_code_norm ON batch_details (LOWER(TRIM(greige_code)))")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_availability_batch_norm ON availability_logs (LOWER(TRIM(batch)))")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_availability_batch_ref_norm ON availability_logs (LOWER(TRIM(batch_ref_no)))")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_machines_code_norm ON machines (LOWER(TRIM(COALESCE(machine_code, machine_id))))")
     conn.commit()
 
@@ -300,148 +296,92 @@ def _ensure_summary_table(conn: Any) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cleaning_mc_daily_summary_date ON cleaning_mc_daily_summary (production_date)")
 
 
-def _orphan_batch_rows(conn: Any, day_str: str, batch_columns: set[str]) -> list[Any]:
-    """Lấy các dòng `batch_details` KHÔNG khớp bất kỳ dòng nào trong `availability_logs`
-    (theo `batch`/`batch_ref_no`) và có production_date (tính từ EndTime/StartTime của
-    chính batch_details) đúng bằng `day_str` — đây là các mẻ chạy trên MÁY chỉ tồn tại
-    trong Batch Detail (VD line Polyester riêng dùng mã máy `0101`/`16xx`/`Hxxx`, xem
-    memory-bank/activeContext.md), chưa từng được import qua Availability nên trước đây
-    hoàn toàn KHÔNG xuất hiện trên báo cáo (vì hàm này trước đó chỉ FROM availability_logs).
-    KHÔNG hardcode danh sách mã máy — mọi mẻ "mồ côi" nào khớp điều kiện đều được gộp vào,
-    tự động phủ cả máy mới phát sinh sau này."""
-    shifted_date_batch = production_date_sql_expr("COALESCE(b.end_time, b.start_time)")
-    sql = f"""
-         SELECT b.dyelot AS dyelot_ref, b.machine, b.start_time, b.end_time,
-             COALESCE(b.batch_type, '') AS batch_type,
-             {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
-             COALESCE(b.shade, '') AS shade, COALESCE(b.colour_no, '') AS colour_no,
-             COALESCE(b.recipe_no, '') AS recipe_no, COALESCE(b.customer_color, '') AS customer_color,
-             COALESCE(b.sap_lot, '') AS sap_lot,
-             COALESCE(b.is_rework, 0) AS is_rework,
-             COALESCE(b.run_time, 0) AS run_time,
-             COALESCE(m.machine_code, b.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
-             m.capacity_kg AS configured_capacity_kg,
-             COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand,
-             {('COALESCE(b.fabric_type, \'\')' if 'fabric_type' in batch_columns else "''")} AS fabric_type
-        FROM batch_details b
-        LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(b.machine))
-        LEFT JOIN brand_program_mapping bp ON lower(trim(bp.greige_code)) = lower(trim(b.greige_code))
-        WHERE b.machine IS NOT NULL AND TRIM(b.machine) != ''
-          AND {shifted_date_batch} = ?
-          AND NOT EXISTS (
-              SELECT 1 FROM availability_logs a2
-              WHERE lower(trim(a2.batch)) = lower(trim(b.dyelot)) OR lower(trim(a2.batch_ref_no)) = lower(trim(b.dyelot))
-          )
-    """
-    return conn.execute(sql, (day_str,)).fetchall()
+def _machine_master_by_code(conn: Any) -> dict[str, Mapping[str, Any]]:
+    """{mã máy (lower/trim): dòng Machine Master} — cùng điều kiện khớp với JOIN cũ
+    `lower(trim(COALESCE(machine_code, machine_id)))`, dòng đầu tiên thắng nếu trùng mã."""
+    masters: dict[str, Mapping[str, Any]] = {}
+    for row in conn.execute(
+        "SELECT machine_id, machine_code, mc_brand, tank_type, mc_quantity, tube_no, capacity_kg FROM machines"
+    ).fetchall():
+        code = str(row["machine_code"] or row["machine_id"] or "").strip().lower()
+        if code and code not in masters:
+            masters[code] = row
+    return masters
 
 
 def recompute_daily(production_date: date, conn: Any) -> None:
-    """Tính lại `cleaning_mc_daily_summary` cho ĐÚNG 1 production_date — idempotent
-    (DELETE dòng cũ của ngày này rồi INSERT lại từ raw data). JOIN + phân loại badge
-    (`classify_batch_badge`) CHỈ chạy ở đây, không chạy lúc đọc báo cáo.
+    """Tính lại `cleaning_mc_daily_summary` cho ĐÚNG 1 production_date — idempotent."""
+    recompute_all([production_date], conn)
 
-    Gộp 2 nguồn: (1) mọi dòng `availability_logs` của ngày này (như trước), VÀ (2) các
-    dòng `batch_details` "mồ côi" — có Machine/Time riêng nhưng KHÔNG có bản ghi
-    `availability_logs` tương ứng (xem `_orphan_batch_rows()`) — để các máy chỉ tồn tại ở
-    nguồn Batch Detail vẫn hiện đúng trên báo cáo Batch Per Day by Machine, KHÔNG chỉ ẩn đi
-    vì thiếu Availability."""
+
+def recompute_all(dates: Iterable[date], conn: Any) -> None:
+    """Tính lại `cleaning_mc_daily_summary` cho tập `dates` — idempotent (DELETE rồi INSERT lại
+    đúng các ngày này). JOIN + phân loại badge (`classify_batch_badge`) CHỈ chạy ở đây.
+
+    2026-10-02 — NGUỒN SỰ THẬT DUY NHẤT là báo cáo Batch (`batch_details`), dùng CHUNG
+    `core/batch_source.py::load_resolved_batches()` với Batch/Day Trend (fill-down Machine,
+    fill-up FabricType, production_date = ngày kết thúc 07:00->07:00). KHÔNG còn đọc
+    `availability_logs` (trước đây là nguồn chính, batch_details chỉ bù mẻ "mồ côi") -> 2 báo
+    cáo luôn cùng 1 tập mẻ/máy/loại vải/ngày. Đọc batch_details ĐÚNG 1 LẦN cho cả tập ngày.
+
+    Ánh xạ cột GIỮ NGUYÊN schema bảng (không cần migration Postgres): `availability_log_id`
+    giờ chứa `batch_details.id` (duy nhất, dương); `capacity_kg` = capacity khai báo trong
+    Machine Master (0 nếu chưa khai báo); `sequence_order`/`batch_no` = StartTime/Dyelot;
+    `program` = NULL (Batch không có cột Program)."""
     _ensure_batch_details_columns(conn)
     _ensure_summary_table(conn)
     ensure_brand_program_table(conn)
-    day_str = production_date.isoformat()
-    conn.execute("DELETE FROM cleaning_mc_daily_summary WHERE production_date = ?", (day_str,))
-
-    availability_columns = {row["name"] for row in conn.execute("PRAGMA table_info(availability_logs)")}
-    batch_columns = {row["name"] for row in conn.execute("PRAGMA table_info(batch_details)")}
-    sequence_expression = 'a."sequence_order"' if "sequence_order" in availability_columns else 'a."start_time"'
-    shifted_date = production_date_sql_expr("COALESCE(a.end_time, a.start_time)")
-
-    sql = f"""
-         SELECT a.id AS availability_log_id, a.machine, a.capacity_kg, a.program, a.start_time, a.end_time,
-             a.rework_hour AS log_rework_minutes,
-             a.batch_ref_no, a.batch, {sequence_expression} AS sequence_order, COALESCE(b.shade, '') AS shade,
-             COALESCE(b.colour_no, '') AS colour_no, COALESCE(b.customer_color, '') AS customer_color, COALESCE(b.batch_type, '') AS batch_type,
-             COALESCE(b.recipe_no, '') AS recipe_no,
-             COALESCE(b.sap_lot, '') AS sap_lot,
-             {('COALESCE(b.redye, 0)' if 'redye' in batch_columns else '0')} AS redye,
-             COALESCE(b.is_rework, 0) AS is_rework, COALESCE(b.dyelot, '') AS dyelot_ref,
-             COALESCE(b.run_time, 0) AS run_time,
-             COALESCE(m.machine_code, a.machine) AS machine_code, m.mc_brand, m.tank_type, m.mc_quantity, m.tube_no,
-             COALESCE(m.capacity_kg, a.capacity_kg) AS configured_capacity_kg,
-             COALESCE(bp.brand_program, '') AS brand_program, COALESCE(bp.brand, '') AS brand,
-             COALESCE(a.fabric_type, '') AS fabric_type
-        FROM availability_logs a
-        {batch_details_join_sql(["a.batch_ref_no", "a.batch"], "a.end_time")}
-        LEFT JOIN machines m ON lower(trim(COALESCE(m.machine_code, m.machine_id))) = lower(trim(a.machine))
-        LEFT JOIN brand_program_mapping bp ON lower(trim(bp.greige_code)) = lower(trim(b.greige_code))
-        WHERE {shifted_date} = ?
-    """
-    rows = conn.execute(sql, (day_str,)).fetchall()
-    orphan_rows = _orphan_batch_rows(conn, day_str, batch_columns)
-    if not rows and not orphan_rows:
+    date_strs = {d.isoformat() for d in dates}
+    if not date_strs:
         return
 
-    inserts = []
+    masters = _machine_master_by_code(conn)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for row in rows:
-        batch_no = "|".join(value for value in (row["batch_ref_no"], row["batch"]) if value)
-        batch_record = {
-            "dyelot": row["dyelot_ref"] or batch_no,
-            "batch_type": row["batch_type"],
-            "redye": row["redye"],
-            "shade": row["shade"],
-            "colour_no": row["colour_no"],
-            "recipe_no": row["recipe_no"],
-            "customer_color": row["customer_color"],
-            "log_rework_minutes": row["log_rework_minutes"],
-            "sap_lot": row["sap_lot"],
-        }
-        badge = classify_batch_badge(batch_record)
-        is_rework = badge.endswith("R")
+    inserts = []
+    for batch in load_resolved_batches(conn):
+        day_str = batch["production_date"].isoformat()
+        if day_str not in date_strs:
+            continue
+        badge = classify_batch_badge({
+            "dyelot": batch["dyelot"],
+            "batch_type": batch["batch_type"],
+            "redye": batch["redye"],
+            "shade": batch["shade"],
+            "colour_no": batch["colour_no"],
+            "recipe_no": batch["recipe_no"],
+            "customer_color": batch["customer_color"],
+            "sap_lot": batch["sap_lot"],
+        })
+        master = masters.get(batch["machine"].lower())
+        configured_capacity = master["capacity_kg"] if master else None
+        start_time = str(batch["start_time"] or "") or None
+        end_time = str(batch["end_time"] or "") or None
         inserts.append((
-            day_str, row["availability_log_id"], row["machine"], float(row["capacity_kg"] or 0), row["configured_capacity_kg"],
-            row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
-            row["sequence_order"], batch_no, row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], row["program"], row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), row["sap_lot"], float(row["redye"] or 0), now_str,
+            day_str, batch["id"], batch["machine"], float(configured_capacity or 0), configured_capacity,
+            (master["machine_code"] if master else None) or batch["machine"],
+            master["mc_brand"] if master else None, master["tank_type"] if master else None,
+            master["mc_quantity"] if master else None, master["tube_no"] if master else None,
+            start_time, batch["dyelot"], batch["dyelot"], batch["shade"] or "", batch["colour_no"] or "",
+            batch["batch_type"] or "", start_time, end_time, None,
+            str(batch["brand_program"] or ""), str(batch["brand"] or ""), batch["fabric_type"],
+            badge, int(badge.endswith("R")), float(batch["run_time"] or 0), batch["sap_lot"] or "",
+            float(batch["redye"] or 0), now_str,
         ))
 
-    # `availability_log_id` âm (-1, -2, ...) đánh dấu mẻ "mồ côi" (không có availability_logs.id
-    # thật) — chỉ cần duy nhất TRONG PHẠM VI 1 production_date (khoá PK là cặp
-    # (production_date, availability_log_id)), KHÔNG bao giờ đụng độ với id thật (luôn dương).
-    for index, row in enumerate(orphan_rows, start=1):
-        batch_record = {
-            "dyelot": row["dyelot_ref"],
-            "batch_type": row["batch_type"],
-            "redye": row["redye"],
-            "shade": row["shade"],
-            "colour_no": row["colour_no"],
-            "recipe_no": row["recipe_no"],
-            "customer_color": row["customer_color"],
-            "log_rework_minutes": 0,
-            "sap_lot": row["sap_lot"],
-        }
-        badge = classify_batch_badge(batch_record)
-        is_rework = badge.endswith("R")
-        capacity_value = float(row["configured_capacity_kg"] or 0)
-        inserts.append((
-            day_str, -index, row["machine"], capacity_value, row["configured_capacity_kg"],
-            row["machine_code"], row["mc_brand"], row["tank_type"], row["mc_quantity"], row["tube_no"],
-            row["start_time"], row["dyelot_ref"], row["dyelot_ref"], row["shade"], row["colour_no"], row["batch_type"],
-            row["start_time"], row["end_time"], None, row["brand_program"], row["brand"], row["fabric_type"], badge, int(is_rework), float(row["run_time"] or 0), row["sap_lot"], float(row["redye"] or 0), now_str,
-        ))
-
-    conn.executemany(
-        """
-        INSERT INTO cleaning_mc_daily_summary (
-            production_date, availability_log_id, machine, capacity_kg, configured_capacity_kg,
-            machine_code, mc_brand, tank_type, mc_quantity, tube_no,
-            sequence_order, batch_no, dyelot_ref, shade_raw, colour_no, batch_type,
-            start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, run_time, sap_lot, redye, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        inserts,
-    )
+    for day_str in date_strs:
+        conn.execute("DELETE FROM cleaning_mc_daily_summary WHERE production_date = ?", (day_str,))
+    if inserts:
+        conn.executemany(
+            """
+            INSERT INTO cleaning_mc_daily_summary (
+                production_date, availability_log_id, machine, capacity_kg, configured_capacity_kg,
+                machine_code, mc_brand, tank_type, mc_quantity, tube_no,
+                sequence_order, batch_no, dyelot_ref, shade_raw, colour_no, batch_type,
+                start_time, end_time, program, brand_program, brand, fabric_type, badge, is_rework, run_time, sap_lot, redye, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            inserts,
+        )
 
 
 def _normalize_code(value: Any) -> str:

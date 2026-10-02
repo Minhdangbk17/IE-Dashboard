@@ -475,10 +475,10 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
     conn.commit()
 
     if imported_rows:
-        # Daily Rollup Pattern: import Batch Detail không tự có end_time riêng để suy ra
-        # production_date — Batch chỉ CẬP NHẬT Shade/ColourNo/BatchType cho các dyelot đã
-        # tồn tại trong availability_logs (nguồn production_date thật). Affected dates =
-        # production_date của đúng các dòng availability_logs mà dyelot vừa upsert khớp tới.
+        # Daily Rollup Pattern — affected dates gồm 2 phần:
+        # (1) production_date của các dòng availability_logs khớp dyelot vừa upsert (các báo
+        #     cáo VẪN lấy Availability làm nguồn chính, VD Batch Matrix/Downtime, dùng Batch để
+        #     bổ sung Shade/ColourNo/Brand...);
         shifted_date = production_date_sql_expr("a.end_time")
         affected_rows = conn.execute(
             f"""
@@ -489,10 +489,26 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
             """,
             (log_id,),
         ).fetchall()
+        # (2) production_date của CHÍNH các dòng batch_details vừa import — Batch/Day Trend và
+        #     Batch Per Day by Machine lấy batch_details làm NGUỒN SỰ THẬT DUY NHẤT
+        #     (`core/batch_source.py`), nên ngày chưa có availability_logs vẫn phải tính lại.
+        batch_date_expr = production_date_sql_expr("COALESCE(end_time, start_time)")
+        batch_date_rows = conn.execute(
+            f"""
+            SELECT DISTINCT {batch_date_expr} AS production_date
+            FROM batch_details
+            WHERE import_log_id = ? AND (end_time IS NOT NULL OR start_time IS NOT NULL)
+            """,
+            (log_id,),
+        ).fetchall()
         affected_dates = {
             datetime.strptime(normalize_production_date(row["production_date"]), "%Y-%m-%d").date()
-            for row in affected_rows if row["production_date"]
+            for row in [*affected_rows, *batch_date_rows] if row["production_date"]
         }
+        if affected_dates:
+            # FabricType trống của Trend lấy theo mẻ KẾ TIẾP cùng máy -> mẻ cuối ngay trước
+            # khoảng vừa import có thể đổi loại vải; tính lại thêm 1 ngày liền trước.
+            affected_dates.add(min(affected_dates) - timedelta(days=1))
         trigger_recompute(affected_dates)
 
     return {

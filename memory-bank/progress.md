@@ -1056,6 +1056,13 @@
       Master tại read time — không cần rebuild). Thêm checkbox **ReDye = 0**
       (cột mới `is_valid_any_redye`, migration
       `supabase/migrate_batch_day_trend_redye.sql` CHƯA chạy production).
+- [x] 2026-10-01 — Sửa `sync_batch_details()`: affected_dates hợp thêm ngày của
+      chính batch_details vừa import (+1 ngày trước) — trước đây ngày chưa có
+      availability_logs không được recompute -> Trend trống. Migration
+      `is_valid_any_redye` đã chạy trên Supabase (người dùng xác nhận).
+- [x] 2026-10-02 — Batch là nguồn sự thật duy nhất cho Batch/Day Trend + Batch
+      Per Day by Machine (`core/batch_source.py`). Không migration; CẦN
+      `flask rebuild-summaries` trên production sau deploy.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên

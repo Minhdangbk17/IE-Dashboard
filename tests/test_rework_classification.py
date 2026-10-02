@@ -133,7 +133,7 @@ def _init_schema(db_path: str) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             dyelot TEXT NOT NULL, sap_lot TEXT, shade TEXT, colour_no TEXT, customer_color TEXT,
             batch_type TEXT, recipe_no TEXT, redye REAL DEFAULT 0, is_rework INTEGER DEFAULT 0,
-            greige_code TEXT, machine TEXT, start_time TEXT, end_time TEXT
+            greige_code TEXT, machine TEXT, fabric_type TEXT, start_time TEXT, end_time TEXT
         )
     """)
     conn.execute("CREATE TABLE machines (machine_id TEXT, machine_code TEXT, mc_brand TEXT, tank_type TEXT, mc_quantity INTEGER, tube_no INTEGER, capacity_kg REAL, domain TEXT)")
@@ -143,8 +143,9 @@ def _init_schema(db_path: str) -> None:
 
 def _scenario_recompute_daily_integration(failures: list[str]) -> None:
     """Xác nhận `sap_lot`/`redye` được SELECT + truyền đúng vào `classify_batch_badge()` qua
-    đường thật `recompute_daily()` (không chỉ unit test cô lập)."""
-    print("\n=== Kịch bản 3: recompute_daily() end-to-end — sap_lot/redye đi đúng đường JOIN thật ===")
+    đường thật `recompute_daily()` (không chỉ unit test cô lập). 2026-10-02: mẻ lấy TRỰC TIẾP
+    từ `batch_details` (nguồn sự thật duy nhất), không cần dòng `availability_logs` nào."""
+    print("\n=== Kịch bản 3: recompute_daily() end-to-end — sap_lot/redye đi đúng đường thật ===")
     fd, db_path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     try:
@@ -153,12 +154,9 @@ def _scenario_recompute_daily_integration(failures: list[str]) -> None:
         conn.row_factory = sqlite3.Row
         day = date(2026, 9, 1)
         conn.execute(
-            "INSERT INTO availability_logs (batch, machine, capacity_kg, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-            ("C900001", "D700", 600, "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
-        )
-        conn.execute(
-            "INSERT INTO batch_details (dyelot, sap_lot, shade, batch_type, redye) VALUES (?, ?, ?, ?, ?)",
-            ("C900001", "1000011111", "Dark", "Normal", 2),
+            "INSERT INTO batch_details (dyelot, sap_lot, shade, batch_type, redye, machine, fabric_type, start_time, end_time) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("C900001", "1000011111", "Dark", "Normal", 2, "D700", "Cotton", "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
         )
         conn.commit()
         recompute_daily(day, conn)

@@ -7,6 +7,8 @@ CÔNG THỨC (mỗi kỳ Day/Week/Month, tính riêng từng loại vải Cotton
 `availability_logs.planned_prd_time_hour` + carry-forward giờ của mẻ FabricType rỗng):
 
 1. **Nguồn dữ liệu DUY NHẤT: `batch_details`** (sheet "Batch") — BỎ HẲN `availability_logs`.
+   Bước 2-3 + ngày kết thúc nằm ở `core/batch_source.py::load_resolved_batches()` (2026-10-02),
+   dùng CHUNG với "Batch Per Day by Machine" để 2 báo cáo luôn cùng 1 tập mẻ.
 2. **Machine trống** -> lấy Machine của dòng NGAY PHÍA TRÊN (fill-down theo thứ tự `id`,
    tức thứ tự dòng lúc import — khớp `Table.FillDown` trên sheet gốc).
 3. **FabricType trống/"Unknown"** -> lấy FabricType của mẻ KẾ TIẾP trên CÙNG máy (sắp theo
@@ -41,12 +43,12 @@ Tank Type (2026-09-29) — tra `machines.tank_type` tại read time (xem `_machi
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Iterable
 
+from core.batch_source import load_resolved_batches
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect
-from core.production_time import PRODUCTION_SHIFT_START_HOUR, get_production_date
 from modules.dyeing.engines.reports.cleaning_matrix import (
     CANONICAL_TANK_ORDER,
     UNCLASSIFIED_TANK_LABEL,
@@ -54,7 +56,6 @@ from modules.dyeing.engines.reports.cleaning_matrix import (
     classify_batch_badge,
 )
 
-INVALID_FABRIC_TYPES = {"", "unknow", "unknown"}
 # Báo cáo "Batch/Day Trend" LUÔN thể hiện ĐÚNG 3 loại vải chính này (theo yêu cầu người
 # dùng — 1 đường/1 dòng cố định mỗi loại, không phụ thuộc filter hay dữ liệu thực tế đang
 # có). Mọi `fabric_type` KHÁC 3 loại này (VD Nylon, Spandex...) bị loại khỏi báo cáo Trend
@@ -70,14 +71,6 @@ def _normalize_main_fabric_type(value: str | None) -> str | None:
     """Khớp `fabric_type` thô (bất kỳ hoa/thường) với ĐÚNG 1 trong `MAIN_FABRIC_TYPES` —
     trả `None` nếu không khớp loại nào (loại đó bị loại khỏi báo cáo Trend)."""
     return _MAIN_FABRIC_TYPE_BY_NORM.get(str(value or "").strip().lower())
-# Nhãn "Brand - Program" suy từ greige_code (batch_details) -> brand_program_mapping — cùng
-# cơ chế `downtime/service.py`/`batch_matrix/service.py`. AN TOÀN thêm thẳng vào grain của
-# bảng rollup này (khác `batch_matrix_daily_summary.operating_hours`): mỗi dòng summary ở
-# đây LÀ 1 mẻ cụ thể đã resolve (không phải machine-hours dùng chung nhiều mẻ), nên lọc/gộp
-# theo brand_program không có rủi ro cộng trùng giờ.
-_BRAND_PROGRAM_LABEL_SQL = "CASE WHEN COALESCE(bpm.brand, '') <> '' AND COALESCE(bpm.brand_program, '') <> '' THEN bpm.brand || ' - ' || bpm.brand_program ELSE '' END"
-
-
 def _parse_brand_programs(brand_programs: str | list[str] | None) -> list[str]:
     if not brand_programs:
         return []
@@ -101,16 +94,6 @@ def _parse_capacities(capacities: str | list[str] | None) -> list[float]:
         if number not in parsed:
             parsed.append(number)
     return parsed
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    text = str(value or "").strip()
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(text[:19], fmt)
-        except ValueError:
-            continue
-    return None
 
 
 def _period(day: date, group_by: str) -> tuple[str, str]:
@@ -155,21 +138,6 @@ def _ensure_summary_table(conn: Any) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_day_trend_daily_summary_date ON batch_day_trend_daily_summary (production_date)")
 
 
-def _load_batch_rows(conn: Any) -> list[dict[str, Any]]:
-    """TOÀN BỘ `batch_details` (chỉ các cột cần dùng) theo thứ tự `id` = thứ tự dòng lúc
-    import — cần đúng thứ tự này cho bước fill-down Machine (xem docstring đầu file)."""
-    rows = conn.execute(
-        f"""
-        SELECT b.id, b.dyelot, b.sap_lot, b.redye, b.machine, b.fabric_type, b.start_time, b.end_time,
-               {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
-        FROM batch_details b
-        LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(b.greige_code))
-        ORDER BY b.id
-        """
-    ).fetchall()
-    return [dict(row) for row in rows]
-
-
 def _machine_capacities(conn: Any) -> dict[str, float]:
     """{mã máy (lower/trim): capacity_kg} — capacity cấu hình qua UI Batch Per Day by Machine."""
     capacities: dict[str, float] = {}
@@ -190,64 +158,23 @@ def _is_normal_batch(row: dict[str, Any], require_redye_zero: bool) -> bool:
     return badge not in ("CM", "S") and not badge.endswith("R")
 
 
-def _split_production_days(start: datetime, end: datetime) -> list[tuple[date, float]]:
-    """Tách [start, end) theo khung Production Date 07:00 -> 07:00 hôm sau, trả
-    [(production_date, occupied_hours)] — bỏ đoạn 0h (khớp `List.Select(... > 0)` của Power Query)."""
-    segments: list[tuple[date, float]] = []
-    day = get_production_date(start)
-    last_day = get_production_date(end)
-    while day <= last_day:
-        window_start = datetime(day.year, day.month, day.day, PRODUCTION_SHIFT_START_HOUR)
-        window_end = window_start + timedelta(days=1)
-        hours = (min(end, window_end) - max(start, window_start)).total_seconds() / 3600.0
-        if hours > 0:
-            segments.append((day, hours))
-        day += timedelta(days=1)
-    return segments
+def _brand_program_label(batch: dict[str, Any]) -> str:
+    """Nhãn "Brand - Program" (VD "UQ - Ht Fleece") — rỗng nếu greige_code chưa map được.
+    AN TOÀN lưu thẳng vào grain summary: mỗi dòng LÀ 1 mẻ cụ thể, lọc/gộp không cộng trùng giờ."""
+    brand = str(batch["brand"] or "").strip()
+    program = str(batch["brand_program"] or "").strip()
+    return f"{brand} - {program}" if brand and program else ""
 
 
 def _build_segments(conn: Any) -> list[dict[str, Any]]:
-    """Chạy đúng pipeline Power Query trên toàn bộ `batch_details`, trả danh sách đoạn
-    (1 đoạn = 1 mẻ x 1 production_date) CHƯA gộp — xem docstring đầu file bước 2-6."""
-    # Bước 2: Machine trống -> Machine của dòng phía trên (theo thứ tự import).
-    batches: list[dict[str, Any]] = []
-    last_machine = ""
-    for row in _load_batch_rows(conn):
-        machine = str(row["machine"] or "").strip() or last_machine
-        last_machine = machine
-        start_dt = _parse_datetime(row["start_time"])
-        if not machine or start_dt is None:
-            continue
-        fabric = str(row["fabric_type"] or "").strip()
-        batches.append({
-            **row,
-            "machine": machine,
-            "fabric_type": "" if fabric.lower() in INVALID_FABRIC_TYPES else fabric,
-            "_start_dt": start_dt,
-            "_end_dt": _parse_datetime(row["end_time"]),
-        })
-
-    # Bước 3: FabricType trống -> FabricType của mẻ kế tiếp CÙNG máy (theo StartTime);
-    # mẻ cuối không có mẻ sau -> "Unknown".
-    by_machine: dict[str, list[dict[str, Any]]] = {}
-    for batch in batches:
-        by_machine.setdefault(batch["machine"], []).append(batch)
-    for machine_batches in by_machine.values():
-        machine_batches.sort(key=lambda b: b["_start_dt"])
-        next_fabric = "Unknown"
-        for batch in reversed(machine_batches):
-            if batch["fabric_type"]:
-                next_fabric = batch["fabric_type"]
-            else:
-                batch["fabric_type"] = next_fabric
-
-    # Bước 4-6: tách đoạn theo Production Date, đếm mẻ Normal ở đoạn cuối (ngày kết thúc).
+    """Tách từng mẻ ĐÃ CHUẨN HOÁ (`core/batch_source.py::load_resolved_batches()` — nguồn sự
+    thật chung với Batch Per Day by Machine: fill-down Machine, fill-up FabricType) thành các
+    đoạn theo Production Date, đếm mẻ Normal ở đoạn cuối (ngày kết thúc). Trả danh sách đoạn
+    (1 đoạn = 1 mẻ x 1 production_date) CHƯA gộp — xem docstring đầu file bước 4-6."""
     capacities = _machine_capacities(conn)
     segments: list[dict[str, Any]] = []
-    for batch in batches:
-        if batch["_end_dt"] is None:
-            continue
-        parts = _split_production_days(batch["_start_dt"], batch["_end_dt"])
+    for batch in load_resolved_batches(conn):
+        parts = batch["_segments"]
         if not parts:
             continue
         is_normal = _is_normal_batch(batch, require_redye_zero=True)
@@ -260,7 +187,7 @@ def _build_segments(conn: Any) -> list[dict[str, Any]]:
                 "start_time": str(batch["start_time"]),
                 "fabric_type": batch["fabric_type"],
                 "capacity_kg": capacities.get(batch["machine"].lower()),
-                "brand_program": str(batch["brand_program"] or "").strip(),
+                "brand_program": _brand_program_label(batch),
                 "hours": hours,
                 "is_valid": int(is_normal and is_end_day),
                 "is_valid_any_redye": int(is_normal_any_redye and is_end_day),

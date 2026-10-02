@@ -1,6 +1,32 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-29 — **VIẾT LẠI HOÀN TOÀN công thức Batch/Day Trend**
+**Cập nhật lần cuối:** 2026-10-02 — **Batch (`batch_details`) là NGUỒN SỰ THẬT DUY NHẤT cho
+Batch/Day Trend + Batch Per Day by Machine** (yêu cầu người dùng). Tách chuẩn hoá mẻ của Trend
+ra `core/batch_source.py::load_resolved_batches()`; `cleaning_matrix.recompute_daily()` viết lại
+thành `recompute_all()` đọc từ đó (BỎ JOIN `availability_logs` + `_orphan_batch_rows()`),
+`ReportsEngine` override `recompute_all()`, `EngineMetadata.data_sources` bỏ `availability_logs`.
+Không đổi schema (không migration Postgres) nhưng **BẮT BUỘC `flask rebuild-summaries` (hoặc
+`/admin/data-tools`) trên production sau deploy**. Verify: test mới
+`tests/test_batch_source_consistency.py`, sửa kịch bản 3 `tests/test_rework_classification.py`;
+14/14 test PASS; rebuild local 151 ngày -> 0 ô ngày x vải lệch giữa 2 báo cáo, tháng 9 cả 2 =
+1785 mẻ Normal. Số tháng 7-8 thấp hơn summary cũ vì summary cũ local chưa rebuild sau quy tắc
+25/09 (DU/KN còn tính Normal) + 78 Dyelot bị đếm đôi do trùng dòng Availability. Hệ quả: tooltip
+Detail không còn "Program" (Batch không có cột này); mẻ chỉ có trong Availability không hiện.
+
+**Bản ghi trước:** 2026-10-01 — **Sửa lỗi import Batch bỏ sót ngày khi tính lại summary.**
+Người dùng báo Batch/Day Trend lọc J tank không có Cotton dù tab Batch có mẻ Normal. Nguyên nhân
+ở local: `sync_batch_details()` (`core/batch_importer.py`) chỉ lấy `affected_dates` từ
+`availability_logs` khớp Dyelot vừa import -> ngày CHƯA có Availability (VD import Batch tháng 9
+trước Availability) không bao giờ được recompute, trong khi Trend + mẻ "mồ côi" của Batch Per Day
+by Machine đọc THẲNG `batch_details`. Sửa: hợp thêm production_date của chính các dòng
+batch_details vừa import (`COALESCE(end_time, start_time)`) + 1 ngày liền trước (FabricType
+fill-up từ mẻ kế tiếp). `tests/test_batch_importer.py` giờ thay `trigger_recompute` bằng recorder
++ thêm check ngày chưa có Availability vẫn được tính lại. Đã rebuild summary local 31/08->01/10.
+Xác nhận trên Supabase: migration `is_valid_any_redye` ĐÃ chạy, summary J tank Cotton tháng 9
+đúng (1203: 1 mẻ, H801: 2/3 mẻ) — production vẫn chờ người dùng gửi JSON API để kiểm tra tiếp.
+Lưu ý: DB local Machine Master chỉ có 1 máy, chưa có Tank Type (lọc J tank local không có máy).
+
+**Bản ghi trước:** 2026-09-29 — **VIẾT LẠI HOÀN TOÀN công thức Batch/Day Trend**
 (`modules/dyeing/engines/batch_matrix/batch_day_trend.py`) theo đoạn Power Query người dùng gửi
 + 5 câu xác nhận:
 - Nguồn **CHỈ `batch_details`** — BỎ HẲN `availability_logs` (cả `planned_prd_time_hour` lẫn

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from flask import Flask  # noqa: E402
 from openpyxl import Workbook  # noqa: E402
 
+import core.batch_importer as batch_importer  # noqa: E402
 from core.batch_importer import sync_batch_details  # noqa: E402
 from core.database import close_db  # noqa: E402
 
@@ -56,13 +57,17 @@ def _make_temp_app(db_path: str) -> Flask:
 def _init_availability_logs(db_path: str) -> None:
     """`sync_batch_details()` JOIN `availability_logs` (đếm 'synced' + tính affected_dates cho
     Daily Rollup) — bảng này KHÔNG được `sync_batch_details()` tự tạo (thuộc luồng import
-    Availability riêng), phải có sẵn trước khi gọi hàm trong DB tạm. Để RỖNG là đủ: `batch_details`
-    trong các kịch bản dưới đây không cần khớp `availability_logs` nào cả (affected_dates rỗng
-    -> `trigger_recompute()` return sớm, không đụng tới các bảng `*_daily_summary` khác)."""
+    Availability riêng), phải có sẵn trước khi gọi hàm trong DB tạm. Để RỖNG là đủ: các kịch
+    bản dưới đây không cần khớp `availability_logs` nào cả. `trigger_recompute()` được thay bằng
+    `_RECORDED_RECOMPUTE` (xem `main()`) để test không phải dựng schema của MỌI bảng summary."""
     conn = sqlite3.connect(db_path)
     conn.execute("CREATE TABLE availability_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, batch TEXT, end_time TEXT)")
     conn.commit()
     conn.close()
+
+
+# Ghi lại các tập `affected_dates` mà `sync_batch_details()` yêu cầu tính lại.
+_RECORDED_RECOMPUTE: list[set] = []
 
 
 def _check(label: str, actual, expected, failures: list[str]) -> None:
@@ -111,6 +116,11 @@ def _scenario_real_fixture_keeps_both_runs(failures: list[str]) -> None:
         conn.close()
 
         _check("status = completed", result["status"], "completed", failures)
+        # 2026-10-01: availability_logs RỖNG nhưng vẫn phải tính lại ngày của CHÍNH batch_details
+        # vừa import (Batch/Day Trend đọc thẳng batch_details) — trước đây bị bỏ sót hoàn toàn.
+        recomputed = _RECORDED_RECOMPUTE[-1] if _RECORDED_RECOMPUTE else set()
+        _check("Tính lại cả ngày CHƯA có availability_logs (chứa 2026-08-01)",
+               any(d.isoformat() == "2026-08-01" for d in recomputed), True, failures)
         _check("C260659920: đủ 2 dòng (mẻ gốc + redye)", len(rows), 2, failures)
         if len(rows) == 2:
             original, redye = rows[0], rows[1]
@@ -204,6 +214,7 @@ def _scenario_reimport_upserts_matching_run(failures: list[str]) -> None:
 
 def main() -> int:
     failures: list[str] = []
+    batch_importer.trigger_recompute = lambda dates: _RECORDED_RECOMPUTE.append(set(dates))
     _scenario_real_fixture_keeps_both_runs(failures)
     _scenario_true_duplicate_row_dedup(failures)
     _scenario_reimport_upserts_matching_run(failures)

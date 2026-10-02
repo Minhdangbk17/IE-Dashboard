@@ -451,6 +451,22 @@ từ bảng đã tổng hợp sẵn.
   không dùng pytest theo đúng chủ trương dependency tối giản) — assert mẻ qua
   đêm PHẢI lấy production_date theo EndTime.
 
+### 6.2.1 Batch là NGUỒN SỰ THẬT DUY NHẤT cho Batch/Day Trend + Batch Per Day by Machine (2026-10-02)
+
+- `core/batch_source.py::load_resolved_batches(conn)` đọc TOÀN BỘ `batch_details` 1 lần và
+  chuẩn hoá theo Power Query người dùng: Machine trống -> dòng trên (theo `id`); bỏ dòng thiếu
+  StartTime; FabricType trống/"Unknown" -> mẻ kế tiếp cùng máy (theo StartTime), mẻ cuối ->
+  "Unknown"; `production_date` = ngày của đoạn CUỐI có giờ > 0 theo khung 07:00->07:00
+  (`split_production_days()`), thiếu EndTime -> ngày của StartTime.
+- CẢ `batch_matrix/batch_day_trend.py::_build_segments()` LẪN
+  `reports/cleaning_matrix.py::recompute_all()` dùng hàm này -> 2 báo cáo luôn cùng tập
+  mẻ/máy/loại vải/ngày (test `tests/test_batch_source_consistency.py`; dữ liệu thật local: 0 ô
+  ngày x vải lệch số mẻ Normal trên 151 ngày).
+- `cleaning_mc_daily_summary` KHÔNG đổi schema: `availability_log_id` giờ chứa
+  `batch_details.id`; `capacity_kg` = capacity Machine Master; `program` = NULL.
+- `availability_logs` KHÔNG còn ảnh hưởng 2 báo cáo này (vẫn là nguồn chính của Batch Matrix,
+  Downtime, OEE...). Mẻ chỉ có trong Availability mà không có trong Batch -> không hiện.
+
 ### 6.3 Downtime "Total Valid Batches" vs Cleaning MC "Normal Dyeing" — KHÁC số theo THIẾT KẾ, không phải bug (2026-09-11)
 Người dùng phát hiện cùng filter (capacity 500/600/1200/2400, 1 khoảng ngày) ra 2 số khác
 nhau: Downtime 389 mẻ, Cleaning MC "Normal Dyeing" 308 mẻ, và ĐÃ xác nhận 389 đúng (dùng
