@@ -467,6 +467,18 @@ từ bảng đã tổng hợp sẵn.
 - `availability_logs` KHÔNG còn ảnh hưởng 2 báo cáo này (vẫn là nguồn chính của Batch Matrix,
   Downtime, OEE...). Mẻ chỉ có trong Availability mà không có trong Batch -> không hiện.
 
+### 6.2.2 Idle Time đọc lại rollup của Batch/Day — không có rollup riêng (2026-10-05)
+
+- Engine `modules/dyeing/engines/idle_time/` (menu "Idle Time") đọc `batch_day_trend_daily_summary`
+  (đoạn mẻ đã chia 07:00->07:00) -> giờ hoạt động luôn khớp Batch/Day; KHÔNG override
+  `recompute_daily()`, không cần rebuild. Khoảng của 1 đoạn = [max(StartTime, 07:00), + hours].
+- Mẫu số "giờ có dữ liệu" tính THEO TỪNG NGÀY trên TẤT CẢ máy (không theo filter): 07:00 nếu có
+  mẻ nối từ hôm trước, ngược lại đoạn sớm nhất; tương tự đầu cuối. Ngày không có đoạn nào bị bỏ
+  (khoảng hổng giữa 2 file import — VD local thiếu 01/09) -> KHÔNG dùng min/max cả kỳ.
+- Danh sách máy = máy có đoạn trong kỳ (không lấy Machine Master); Tank/Capacity tra Machine
+  Master tại read time. Note (`idle_time_notes`) khoá (machine, gap_start); import lại làm khoảng
+  dịch -> trả về `stale_notes`, không xoá. Target = `idle_time_settings.target_idle_pct`.
+
 ### 6.3 Downtime "Total Valid Batches" vs Cleaning MC "Normal Dyeing" — KHÁC số theo THIẾT KẾ, không phải bug (2026-09-11)
 Người dùng phát hiện cùng filter (capacity 500/600/1200/2400, 1 khoảng ngày) ra 2 số khác
 nhau: Downtime 389 mẻ, Cleaning MC "Normal Dyeing" 308 mẻ, và ĐÃ xác nhận 389 đúng (dùng

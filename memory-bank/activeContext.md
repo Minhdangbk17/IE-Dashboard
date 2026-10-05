@@ -1,6 +1,19 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-05 — **Filter Tank Type (J tank / O tank) cho Batch Per Day by
+**Cập nhật lần cuối:** 2026-10-05 — **Engine mới `idle_time` — báo cáo Idle Time** (yêu cầu người
+dùng: kiểm soát thời gian máy không chạy mẻ). Máy x ngày: giờ idle/giờ hoạt động (nút chuyển),
+% Idle, Target % Idle CHUNG (sửa trên UI, quyền `edit`), ô vượt Target tô đỏ; filter Tank +
+Capacity; bấm ô -> drawer liệt kê từng khoảng idle (mẻ trước/sau) + Reason (9 giá trị cố định
+`IDLE_REASONS`) + Detail tự do; Excel 2 sheet (Idle Time, Idle Gaps). Cách tính xem
+`systemPatterns.md` 6.2.2. Quyết định người dùng: loại máy = Tank; note theo TỪNG khoảng idle;
+mẫu số = giờ có dữ liệu thực; không loại máy theo status (máy có data mới hiện). Verify: dữ liệu
+thật 25 máy 02/09-29/09 khớp ĐÚNG Grand Total từng ngày với pivot Excel người dùng gửi (VD 03/09
+= 562h, 21/09 = 493h); 30/09 lệch vì local chỉ có dữ liệu tới 01/10 06:56. Test
+`tests/test_idle_time.py`, 17/17 file test PASS. **Deploy: chạy `supabase/migrate_idle_time.sql`;
+cấp quyền engine `idle_time` cho operator.** Khoảng idle < 5 phút (chuyển mẻ, ~18% số khoảng
+nhưng 0.2% số giờ) vẫn tính vào tổng, chỉ ẩn mặc định trong drawer.
+
+**Bản ghi trước:** 2026-10-05 — **Filter Tank Type (J tank / O tank) cho Batch Per Day by
 Machine** (yêu cầu người dùng). `get_cleaning_matrix()`/`export_cleaning_matrix_excel()` nhận
 `tank_types` (query `tank_type`, lặp được), trả `available_tank_types` (J tank -> O tank ->
 Unclassified). Lọc cấp MÁY theo `machines.tank_type` chuẩn hoá bằng `_normalize_tank_label()`

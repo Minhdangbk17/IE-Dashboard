@@ -494,6 +494,28 @@ create table if not exists import_log_rows (
 );
 create index if not exists idx_import_log_rows_log_id on import_log_rows (import_log_id);
 
+-- Idle Time (Engine `idle_time`, 2026-10-05): Reason/Detail per idle gap (key machine +
+-- gap_start) and key/value settings (`target_idle_pct`). Existing DB: supabase/migrate_idle_time.sql.
+create table if not exists idle_time_notes (
+    id               bigint generated always as identity primary key,
+    machine          text not null,
+    production_date  text not null,
+    gap_start        text not null,
+    gap_end          text not null,
+    reason           text,
+    detail           text,
+    updated_by       bigint not null references users (id),
+    updated_at       text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+    unique (machine, gap_start)
+);
+create index if not exists idx_idle_time_notes_date on idle_time_notes (production_date);
+
+create table if not exists idle_time_settings (
+    key         text primary key,
+    value       double precision not null,
+    updated_at  text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+
 -- =============================================================================
 -- Row Level Security — lock every table out of Supabase's public PostgREST API
 -- (the anon/authenticated roles used by the auto-generated REST API and any
@@ -542,3 +564,5 @@ alter table brand_program_mapping enable row level security;
 alter table import_log_rows enable row level security;
 alter table rft_dye_results enable row level security;
 alter table rft_targets enable row level security;
+alter table idle_time_notes enable row level security;
+alter table idle_time_settings enable row level security;

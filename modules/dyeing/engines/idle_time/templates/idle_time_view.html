@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}Idle Time{% endblock %}
+{% block extra_head %}<style>
+    .capacity-dropdown { position: relative; min-width: 170px; }
+    .capacity-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-xl); max-height: 260px; overflow-y: auto; }
+    .capacity-menu[hidden] { display: none; }
+    .capacity-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+    .capacity-option:hover { background: var(--bg-surface-raised); }
+    .idle-table td, .idle-table th { white-space: nowrap; vertical-align: middle; }
+    .idle-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .idle-table tr.idle-footer td, .idle-table tr.idle-footer th { font-weight: 600; }
+    .idle-note-mark { margin-left: 4px; font-size: 10px; color: var(--text-secondary); }
+    .ratio-warning { background: var(--danger-bg) !important; color: var(--danger) !important; }
+    .idle-gap-table select, .idle-gap-table input { width: 100%; min-width: 140px; }
+</style>{% endblock %}
+{% block content %}
+<div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Idle Time</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
+
+<section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px">
+    <div class="form-group mb-0"><label for="idle-from">From Date</label><input id="idle-from" class="form-control" type="date"></div>
+    <div class="form-group mb-0"><label for="idle-to">To Date</label><input id="idle-to" class="form-control" type="date"></div>
+    <div class="form-group mb-0 capacity-dropdown">
+        <label for="idle-tank-toggle">Tank Type</label>
+        <button id="idle-tank-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All tanks</button>
+        <div id="idle-tank-menu" class="capacity-menu" hidden></div>
+    </div>
+    <div class="form-group mb-0 capacity-dropdown">
+        <label for="idle-capacity-toggle">Capacity (Kg)</label>
+        <button id="idle-capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All capacities</button>
+        <div id="idle-capacity-menu" class="capacity-menu" hidden></div>
+    </div>
+    <div class="form-group mb-0"><label>Show</label><div class="BtnGroup" id="idle-mode">
+        <button type="button" class="btn btn-sm BtnGroup-item is-active" data-mode="idle">Idle hours</button>
+        <button type="button" class="btn btn-sm BtnGroup-item" data-mode="operating">Operating hours</button>
+    </div></div>
+    <div class="form-group mb-0" id="idle-target-group"><label for="idle-target">Target % Idle</label>
+        <div class="d-flex" style="gap:6px"><input id="idle-target" class="form-control" type="number" min="0" max="100" step="0.1" style="width:90px"><button id="idle-target-save" class="btn btn-sm" type="button">Save</button></div>
+    </div>
+    <button id="idle-load" class="btn btn-primary">Load</button>
+    <a id="idle-export-btn" class="btn btn-sm" href="#">Export Excel</a>
+</div></section>
+
+<div class="d-flex flex-wrap mb-3" style="gap:12px" id="idle-kpis"></div>
+
+<div class="Box p-3" style="overflow-x:auto">
+    <p class="f6 color-fg-muted mt-0">Idle = available hours − operating hours (batch End − Start, split 07:00→07:00, all batches). Days marked <strong>*</strong> are partial (data starts/ends mid-day) — only hours with data are counted. Red = % Idle above target. Click a cell to see idle gaps and record the reason.</p>
+    <table class="preview-table matrix-table idle-table" id="idle-table"><thead><tr id="idle-head"></tr></thead><tbody></tbody></table>
+    <p class="f6 color-fg-muted mb-0" id="idle-empty" style="display:none">No batch data in this range.</p>
+</div>
+
+<div id="idle-drawer" class="drawer-overlay" aria-hidden="true">
+    <div class="drawer-panel" role="dialog" aria-labelledby="idle-drawer-title">
+        <div class="drawer-header d-flex flex-justify-between flex-items-center">
+            <div><h3 class="Box-title mb-0" id="idle-drawer-title">Idle gaps</h3><p class="f6 color-fg-muted mb-0" id="idle-drawer-meta"></p></div>
+            <div class="d-flex flex-items-center" style="gap:12px">
+                <label class="f6 mb-0" style="display:flex;align-items:center;gap:6px" title="Short gaps (batch changeover) are still counted in idle totals"><input type="checkbox" id="idle-hide-short" checked> Hide gaps &lt; 5 min</label>
+                <button class="btn btn-sm" id="idle-drawer-close" type="button">Close</button>
+            </div>
+        </div>
+        <div class="drawer-body" id="idle-drawer-body"><div class="drawer-empty">Loading...</div></div>
+    </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+(function () {
+    "use strict";
+    const CAN_EDIT = {{ "true" if current_user_can('dyeing', 'idle_time', 'edit') else "false" }};
+    const matrixEndpoint = "{{ url_for('dyeing.idle_time.api_matrix') }}";
+    const gapsEndpoint = "{{ url_for('dyeing.idle_time.api_gaps') }}";
+    const notesEndpoint = "{{ url_for('dyeing.idle_time.api_upsert_note') }}";
+    const targetEndpoint = "{{ url_for('dyeing.idle_time.api_set_target') }}";
+    const exportEndpoint = "{{ url_for('dyeing.idle_time.api_export') }}";
+    let mode = "idle";
+    let lastData = null;
+
+    function escAttr(value) { return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+    function escHtml(value) { return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+    const fmtHours = (value) => value === null || value === undefined ? "-" : Number(value).toFixed(1);
+    const fmtPct = (value) => value === null || value === undefined ? "-" : `${Number(value).toFixed(1)}%`;
+    const overTarget = (pct) => lastData && lastData.target_idle_pct !== null && pct !== null && pct > lastData.target_idle_pct;
+
+    // Dropdown multi-select — cùng hành vi với Batch Per Day by Machine ("All" = không lọc).
+    function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, onChange) {
+        const toggle = document.getElementById(toggleId);
+        const menu = document.getElementById(menuId);
+        let selected = new Set();
+        let options = [];
+        function updateLabel() {
+            toggle.textContent = selected.size === 0 ? defaultLabel : selected.size === 1 ? [...selected][0] : `${selected.size} selected`;
+        }
+        function render() {
+            menu.innerHTML = options.length
+                ? `<label class="capacity-option"><input type="checkbox" class="ms-all-option" ${selected.size === 0 ? "checked" : ""}> All</label><div class="border-top my-1"></div>` +
+                  options.map((value) => `<label class="capacity-option"><input type="checkbox" class="ms-option" value="${escAttr(value)}" ${selected.has(value) ? "checked" : ""}> ${escHtml(value)}</label>`).join("")
+                : `<span class="f6 color-fg-muted">No options</span>`;
+            const allBox = menu.querySelector(".ms-all-option");
+            if (allBox) allBox.addEventListener("change", () => { selected.clear(); render(); updateLabel(); onChange(); });
+            menu.querySelectorAll(".ms-option").forEach((box) => box.addEventListener("change", () => {
+                if (box.checked) selected.add(box.value); else selected.delete(box.value);
+                render(); updateLabel(); onChange();
+            }));
+        }
+        toggle.addEventListener("click", (event) => { event.stopPropagation(); menu.hidden = !menu.hidden; toggle.setAttribute("aria-expanded", String(!menu.hidden)); });
+        document.addEventListener("click", (event) => { if (!toggle.parentElement.contains(event.target)) { menu.hidden = true; toggle.setAttribute("aria-expanded", "false"); } });
+        updateLabel();
+        return {
+            selected: () => [...selected],
+            setOptions(newOptions) { options = newOptions || []; selected = new Set([...selected].filter((v) => options.includes(v))); render(); updateLabel(); },
+        };
+    }
+    const tankFilter = makeMultiSelectDropdown("idle-tank-toggle", "idle-tank-menu", "All tanks", load);
+    const capacityFilter = makeMultiSelectDropdown("idle-capacity-toggle", "idle-capacity-menu", "All capacities", load);
+
+    function filterParams() {
+        const params = new URLSearchParams({ from_date: document.getElementById("idle-from").value, to_date: document.getElementById("idle-to").value });
+        tankFilter.selected().forEach((value) => params.append("tank_type", value));
+        capacityFilter.selected().forEach((value) => params.append("capacity", value));
+        return params;
+    }
+    function updateExportLink() {
+        const params = filterParams();
+        params.set("mode", mode);
+        document.getElementById("idle-export-btn").href = `${exportEndpoint}?${params}`;
+    }
+    function load() {
+        updateExportLink();
+        fetch(`${matrixEndpoint}?${filterParams()}`).then((r) => r.json()).then((data) => {
+            lastData = data;
+            tankFilter.setOptions(data.available_tank_types || []);
+            capacityFilter.setOptions((data.available_capacities || []).map(String));
+            const targetInput = document.getElementById("idle-target");
+            if (document.activeElement !== targetInput) targetInput.value = data.target_idle_pct ?? "";
+            render();
+        });
+    }
+
+    function render() {
+        const data = lastData;
+        const target = data.target_idle_pct;
+        const overCount = data.rows.reduce((sum, row) => sum + data.days.filter((day) => overTarget(row.cells[day].idle_pct)).length, 0);
+        document.getElementById("idle-kpis").innerHTML = [
+            ["Total Idle (h)", fmtHours(data.grand_total.idle)],
+            ["Total Operating (h)", fmtHours(data.grand_total.operating)],
+            ["% Idle", fmtPct(data.grand_total.idle_pct)],
+            ["Target % Idle", target === null ? "Not set" : fmtPct(target)],
+            ["Machine-days over target", target === null ? "-" : overCount],
+        ].map(([label, value]) => `<div class="Box p-3" style="min-width:170px"><span class="f6 color-fg-muted">${label}</span><strong class="h2 d-block">${value}</strong></div>`).join("");
+
+        const empty = !data.rows.length;
+        document.getElementById("idle-empty").style.display = empty ? "block" : "none";
+        document.getElementById("idle-table").style.display = empty ? "none" : "";
+        if (empty) return;
+        const partial = new Set(data.partial_days);
+        const dayLabel = (day) => `${day.slice(8, 10)}/${day.slice(5, 7)}${partial.has(day) ? "*" : ""}`;
+        document.getElementById("idle-head").innerHTML = "<th>Machine</th><th>Tank</th><th>Capacity (Kg)</th>" +
+            data.days.map((day) => `<th title="${day}${partial.has(day) ? ` — partial day, ${data.day_available_hours[day]} h with data` : ""}">${dayLabel(day)}</th>`).join("") +
+            `<th>Total (h)</th><th>% Idle</th><th>Target</th>`;
+
+        const valueKey = mode;
+        const rowsHtml = data.rows.map((row) => {
+            const cells = data.days.map((day) => {
+                const cell = row.cells[day];
+                const cls = ["num", "cell-clickable", overTarget(cell.idle_pct) ? "ratio-warning" : ""].filter(Boolean).join(" ");
+                const mark = cell.noted_count ? `<span class="idle-note-mark" title="${cell.noted_count}/${cell.gap_count} idle gaps have a reason">✎${cell.noted_count}</span>` : "";
+                return `<td class="${cls}" data-machine="${escAttr(row.machine)}" data-day="${day}" title="Idle ${fmtHours(cell.idle)} h (${fmtPct(cell.idle_pct)}) · Operating ${fmtHours(cell.operating)} h · Available ${fmtHours(cell.available)} h">${fmtHours(cell[valueKey])}${mark}</td>`;
+            }).join("");
+            return `<tr><td>${escHtml(row.machine)}</td><td>${escHtml(row.tank)}</td><td class="num">${row.capacity ?? "-"}</td>${cells}` +
+                `<td class="num"><strong>${fmtHours(row[valueKey])}</strong></td><td class="num ${overTarget(row.idle_pct) ? "ratio-warning" : ""}">${fmtPct(row.idle_pct)}</td><td class="num">${fmtPct(target)}</td></tr>`;
+        }).join("");
+        const footer = (label, getter, isPct) => `<tr class="idle-footer"><th colspan="3">${label}</th>` +
+            data.days.map((day) => { const v = getter(day); return `<td class="num ${isPct && overTarget(v) ? "ratio-warning" : ""}">${isPct ? fmtPct(v) : fmtHours(v)}</td>`; }).join("") +
+            (label === "% Idle" ? `<td></td><td class="num ${overTarget(data.grand_total.idle_pct) ? "ratio-warning" : ""}">${fmtPct(data.grand_total.idle_pct)}</td><td class="num">${fmtPct(target)}</td>`
+                : label === "Total" ? `<td class="num">${fmtHours(data.grand_total[valueKey])}</td><td></td><td></td>` : `<td></td><td></td><td></td>`) + "</tr>";
+        document.querySelector("#idle-table tbody").innerHTML = rowsHtml +
+            footer("Total", (day) => data.day_totals[day][valueKey], false) +
+            footer("% Idle", (day) => data.day_totals[day].idle_pct, true) +
+            footer("Available (h/machine)", (day) => data.day_available_hours[day], false);
+    }
+
+    // ---------------- Drawer: khoảng idle của 1 ô + Reason/Detail ----------------
+    const drawer = document.getElementById("idle-drawer");
+    let drawerCell = null;
+    function closeDrawer() { drawer.classList.remove("is-open"); drawer.setAttribute("aria-hidden", "true"); }
+    document.getElementById("idle-drawer-close").addEventListener("click", closeDrawer);
+    drawer.addEventListener("click", (event) => { if (event.target === drawer) closeDrawer(); });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeDrawer(); });
+    document.querySelector("#idle-table tbody").addEventListener("click", (event) => {
+        const cell = event.target.closest("td[data-machine]");
+        if (cell) openDrawer(cell.dataset.machine, cell.dataset.day);
+    });
+
+    function openDrawer(machine, day) {
+        drawerCell = { machine, day };
+        drawer.classList.add("is-open");
+        drawer.setAttribute("aria-hidden", "false");
+        document.getElementById("idle-drawer-title").textContent = `${machine} · ${day}`;
+        document.getElementById("idle-drawer-body").innerHTML = `<div class="drawer-empty">Loading...</div>`;
+        fetch(`${gapsEndpoint}?${new URLSearchParams({ machine, date: day })}`).then((r) => r.json()).then(renderDrawer);
+    }
+    function reasonSelect(reasons, current) {
+        const options = [`<option value="">— Select reason —</option>`, ...reasons.map((r) => `<option value="${escAttr(r)}" ${r === current ? "selected" : ""}>${escHtml(r)}</option>`)];
+        return `<select class="form-select idle-reason" ${CAN_EDIT ? "" : "disabled"}>${options.join("")}</select>`;
+    }
+    // Khoảng < 5 phút (chuyển mẻ) vẫn tính vào tổng idle, chỉ ẩn khỏi danh sách cho gọn —
+    // khoảng đã có note thì luôn hiện.
+    const SHORT_GAP_HOURS = 5 / 60;
+    let drawerData = null;
+    document.getElementById("idle-hide-short").addEventListener("change", () => { if (drawerData) renderDrawer(drawerData); });
+    function renderDrawer(data) {
+        drawerData = data;
+        const hideShort = document.getElementById("idle-hide-short").checked;
+        const shown = data.gaps.filter((gap) => !hideShort || gap.hours >= SHORT_GAP_HOURS || gap.note);
+        const hidden = data.gaps.length - shown.length;
+        document.getElementById("idle-drawer-meta").textContent =
+            `Data ${data.available_from || "-"} → ${data.available_to || "-"} · Operating ${fmtHours(data.operating)} h · Idle ${fmtHours(data.idle)} h · ${data.gaps.length} gap(s)` +
+            (hidden ? ` · ${hidden} short gap(s) hidden` : "");
+        const body = document.getElementById("idle-drawer-body");
+        if (!shown.length && !data.stale_notes.length) { body.innerHTML = `<div class="drawer-empty">${data.gaps.length ? "Only short gaps (< 5 min) on this day." : "No idle time on this day."}</div>`; return; }
+        const rows = shown.map((gap) => {
+            const note = gap.note || {};
+            const changed = gap.note && gap.note.gap_end_saved !== gap.gap_end ? ` <span class="f6" style="color:var(--warning)" title="Gap end changed after re-import (saved: ${escAttr(gap.note.gap_end_saved)})">changed</span>` : "";
+            const updated = gap.note ? `${escHtml(note.updated_by || "-")}<br><span class="f6 color-fg-muted">${escHtml(note.updated_at || "")}</span>` : "-";
+            return `<tr data-gap-start="${escAttr(gap.gap_start)}"><td>${gap.gap_start.slice(5, 16)}</td><td>${gap.gap_end.slice(5, 16)}${changed}</td><td class="num">${fmtHours(gap.hours)}</td>` +
+                `<td>${escHtml(gap.prev_batch || "-")}</td><td>${escHtml(gap.next_batch || "-")}</td>` +
+                `<td>${reasonSelect(data.reasons, note.reason)}</td><td><input class="form-control idle-detail" value="${escAttr(note.detail || "")}" ${CAN_EDIT ? "" : "disabled"}></td>` +
+                `<td>${updated}</td><td>${CAN_EDIT ? `<button class="btn btn-sm idle-save" type="button">Save</button>` : ""}</td></tr>`;
+        }).join("");
+        const stale = data.stale_notes.length
+            ? `<div class="p-3"><p class="f6 mb-1" style="color:var(--warning)"><strong>Notes no longer matching an idle gap</strong> (data was re-imported and the gap moved):</p><ul class="f6 mb-0">` +
+              data.stale_notes.map((n) => `<li>${escHtml(n.gap_start)} → ${escHtml(n.gap_end_saved)}: ${escHtml(n.reason || "-")} — ${escHtml(n.detail || "")} (${escHtml(n.updated_by || "-")})</li>`).join("") + "</ul></div>"
+            : "";
+        body.innerHTML = `<table class="preview-table idle-table idle-gap-table"><thead><tr><th>From</th><th>To</th><th>Idle (h)</th><th>Prev batch</th><th>Next batch</th><th>Reason</th><th>Detail</th><th>Updated</th><th></th></tr></thead><tbody>${rows}</tbody></table>${stale}`;
+    }
+    document.getElementById("idle-drawer-body").addEventListener("click", (event) => {
+        const button = event.target.closest(".idle-save");
+        if (!button || !drawerCell) return;
+        const tr = button.closest("tr");
+        button.disabled = true;
+        fetch(notesEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                machine: drawerCell.machine, production_date: drawerCell.day, gap_start: tr.dataset.gapStart,
+                reason: tr.querySelector(".idle-reason").value, detail: tr.querySelector(".idle-detail").value,
+            }),
+        }).then((r) => r.json().then((body) => ({ ok: r.ok, body }))).then(({ ok, body }) => {
+            if (!ok) { alert(body.error || "Save failed"); button.disabled = false; return; }
+            openDrawer(drawerCell.machine, drawerCell.day);
+            load();
+        });
+    });
+
+    // ---------------- Mode / Target / Load ----------------
+    document.querySelectorAll("#idle-mode .BtnGroup-item").forEach((button) => button.addEventListener("click", () => {
+        document.querySelectorAll("#idle-mode .BtnGroup-item").forEach((b) => b.classList.toggle("is-active", b === button));
+        mode = button.dataset.mode;
+        updateExportLink();
+        if (lastData) render();
+    }));
+    if (!CAN_EDIT) {
+        document.getElementById("idle-target").disabled = true;
+        document.getElementById("idle-target-save").style.display = "none";
+    }
+    document.getElementById("idle-target-save").addEventListener("click", () => {
+        fetch(targetEndpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_idle_pct: document.getElementById("idle-target").value }) })
+            .then((r) => r.json().then((body) => ({ ok: r.ok, body }))).then(({ ok, body }) => { if (!ok) { alert(body.error || "Save failed"); return; } load(); });
+    });
+    function pad2(value) { return String(value).padStart(2, "0"); }
+    function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+    const today = new Date();
+    document.getElementById("idle-from").value = formatDate(new Date(today.getFullYear(), today.getMonth(), 1));
+    document.getElementById("idle-to").value = formatDate(today);
+    document.getElementById("idle-load").addEventListener("click", load);
+    load();
+})();
+</script>
+{% endblock %}
