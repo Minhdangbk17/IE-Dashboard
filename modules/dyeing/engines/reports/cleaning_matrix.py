@@ -417,9 +417,14 @@ def _blank_machine_item(machine_label: str, machine_code: str | None, master: Ma
 def get_cleaning_matrix(
     from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None,
     brand_programs: list[str] | None = None, fabric_types: list[str] | None = None,
-    require_redye_zero: bool = True,
+    require_redye_zero: bool = True, tank_types: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Danh sách machine hiển thị (2026-09-22, đổi thiết kế theo yêu cầu người dùng) giờ
+    """`tank_types` (2026-10-05): lọc theo Tank Type của Machine Master ("J tank"/"O tank"/
+    "Unclassified", chuẩn hoá qua `_normalize_tank_label()` giống tab Summary + Batch/Day
+    Trend) — filter cấp MÁY như Capacity, nên KPI/bảng Colour/Excel tự theo. Máy unmapped
+    (không có trong Machine Master) không có Tank -> tính là "Unclassified".
+
+    Danh sách machine hiển thị (2026-09-22, đổi thiết kế theo yêu cầu người dùng) giờ
     LUÔN xuất phát từ Machine Master (`machines`, domain='dyeing') — KHÔNG còn tự phát hiện
     từ chính dữ liệu batch như bản cũ (máy chưa có mẻ trong kỳ đang lọc vẫn hiện đủ, với các
     cột ngày để trống). Batch nào có `machine` KHÔNG khớp mã máy nào trong Machine Master vẫn
@@ -440,7 +445,7 @@ def get_cleaning_matrix(
         sql += " AND production_date <= ?"
         params.append(to_date)
     sql += " ORDER BY production_date, machine, sequence_order, start_time, end_time"
-    empty_result = {"time_labels": [], "daily_sequence": {}, "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "available_fabric_types": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}, "fabric_groups": []}, "unmapped_machines": []}
+    empty_result = {"time_labels": [], "daily_sequence": {}, "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "available_fabric_types": [], "available_tank_types": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}, "fabric_groups": []}, "unmapped_machines": []}
     try:
         rows = execute_query(sql, params)
         master_rows = execute_query(
@@ -464,6 +469,7 @@ def get_cleaning_matrix(
     brand_program_filter = set(brand_programs) if brand_programs else None
     available_fabric_types = sorted({row["fabric_type"] for row in rows if row["fabric_type"]})
     fabric_type_filter = set(fabric_types) if fabric_types else None
+    tank_filter = set(tank_types) if tank_types else None
 
     machines: dict[str, dict[str, Any]] = {}
     master_by_norm: dict[str, Mapping[str, Any]] = {}
@@ -477,7 +483,15 @@ def get_cleaning_matrix(
             row_capacity = round(float(master["capacity_kg"]), 2) if master["capacity_kg"] not in (None, "") else None
             if row_capacity not in capacity_filter:
                 continue
+        if tank_filter is not None and _normalize_tank_label(master["tank_type"]) not in tank_filter:
+            continue
         machines[norm] = _blank_machine_item(machine_code_value, machine_code_value, master)
+    # Danh sách Tank để lọc: Tank đã khai báo trong Machine Master + "Unclassified" nếu có máy
+    # Tank trống/lạ HOẶC có mẻ từ máy unmapped — thứ tự J tank -> O tank -> Unclassified.
+    present_tanks = {_normalize_tank_label(master["tank_type"]) for master in master_by_norm.values()}
+    if any(_normalize_code((row["machine"] or "").strip()) not in master_by_norm for row in rows):
+        present_tanks.add(UNCLASSIFIED_TANK_LABEL)
+    available_tank_types = [label for label in (*CANONICAL_TANK_ORDER, UNCLASSIFIED_TANK_LABEL) if label in present_tanks]
 
     unmapped: dict[str, dict[str, Any]] = {}
     normal = cleaning_count = rework = 0
@@ -505,8 +519,11 @@ def get_cleaning_matrix(
         if item is None:
             master = master_by_norm.get(norm)
             if master is not None:
-                # Máy CÓ trong Machine Master nhưng bị loại bởi filter Capacity đang chọn —
+                # Máy CÓ trong Machine Master nhưng bị loại bởi filter Capacity/Tank đang chọn —
                 # đúng ý nghĩa filter, KHÔNG rơi vào nhóm 'unmapped' (đã biết máy này là gì).
+                continue
+            if tank_filter is not None and UNCLASSIFIED_TANK_LABEL not in tank_filter:
+                # Máy unmapped không có Tank -> "Unclassified", bị loại khi lọc J/O tank.
                 continue
             item = unmapped.setdefault(norm, _blank_machine_item(raw_machine or "(unknown)", None, None))
         normalized_batch_type = str(row["batch_type"] or "").strip().lower()
@@ -590,6 +607,7 @@ def get_cleaning_matrix(
         "available_capacities": available_capacities,
         "available_brand_programs": available_brand_programs,
         "available_fabric_types": available_fabric_types,
+        "available_tank_types": available_tank_types,
         "color_summary": color_summary,
         "unmapped_machines": unmapped_machines,
         "color_data_coverage": {
@@ -603,7 +621,7 @@ def get_cleaning_matrix(
 def export_cleaning_matrix_excel(
     from_date: str | None = None, to_date: str | None = None, capacities: list[float] | None = None,
     brand_programs: list[str] | None = None, fabric_types: list[str] | None = None,
-    require_redye_zero: bool = True,
+    require_redye_zero: bool = True, tank_types: list[str] | None = None,
 ) -> bytes:
     """Xuất tab "Detail" ra file `.xlsx` — 2 sheet: "Detail" (y hệt bảng chính trên UI: cột
     Machine Master + 5 cột KPI + N cột/ngày trong khoảng lọc) và "Color Summary" (y hệt bảng
@@ -620,7 +638,7 @@ def export_cleaning_matrix_excel(
     web, viền đỏ cho Rework/viền xám cho "W").
     Style header dùng CHUNG font/màu với `export_batch_summary_excel()` (nền tối `24292F`/chữ
     trắng đậm) để nhất quán giao diện file export trong toàn ứng dụng."""
-    data = get_cleaning_matrix(from_date, to_date, capacities, brand_programs, fabric_types, require_redye_zero)
+    data = get_cleaning_matrix(from_date, to_date, capacities, brand_programs, fabric_types, require_redye_zero, tank_types)
 
     workbook = Workbook()
     header_font = Font(bold=True, color="FFFFFF")

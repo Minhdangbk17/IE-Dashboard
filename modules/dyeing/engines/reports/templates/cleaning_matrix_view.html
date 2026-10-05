@@ -27,6 +27,11 @@
         <div id="capacity-menu" class="capacity-menu" hidden></div>
     </div>
     <div class="form-group mb-0 capacity-dropdown">
+        <label for="tank-type-toggle">Tank Type</label>
+        <button id="tank-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All tanks</button>
+        <div id="tank-type-menu" class="capacity-menu" hidden></div>
+    </div>
+    <div class="form-group mb-0 capacity-dropdown">
         <label for="fabric-type-toggle">Fabric Type</label>
         <button id="fabric-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All fabric types</button>
         <div id="fabric-type-menu" class="capacity-menu" hidden></div>
@@ -275,12 +280,16 @@
     // đúng nguyên nhân gây "thiếu machine" đã báo. "All" luôn hiện đủ mọi máy trong Machine
     // Master; người dùng tự thu hẹp bằng dropdown khi cần.
     const capacityFilter = makeMultiSelectDropdown("capacity-toggle", "capacity-menu", "All capacities", [], load);
+    // Tank Type (2026-10-05): J tank / O tank (+ Unclassified nếu có máy chưa khai báo Tank),
+    // lọc cấp máy theo Machine Master giống Capacity.
+    const tankTypeFilter = makeMultiSelectDropdown("tank-type-toggle", "tank-type-menu", "All tanks", [], load);
     const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", [], load);
     const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", [], load);
 
     function load(preserveDrafts) {
         const params = new URLSearchParams({ from_date: document.getElementById("matrix-from").value, to_date: document.getElementById("matrix-to").value });
         capacityFilter.selected().forEach((value) => params.append("capacity", value));
+        tankTypeFilter.selected().forEach((value) => params.append("tank_type", value));
         fabricTypeFilter.selected().forEach((value) => params.append("fabric_type", value));
         brandProgramFilter.selected().forEach((value) => params.append("brand_program", value));
         params.set("require_redye_zero", document.getElementById("matrix-require-redye-zero").checked ? "1" : "0");
@@ -288,6 +297,7 @@
         fetch(`${endpoint}?${params}`).then((response) => response.json()).then((data) => {
             render(data);
             capacityFilter.setOptions((data.available_capacities || []).map(String));
+            tankTypeFilter.setOptions(data.available_tank_types || []);
             fabricTypeFilter.setOptions(data.available_fabric_types || []);
             brandProgramFilter.setOptions(data.available_brand_programs || []);
             (preserveDrafts || []).forEach((draft) => {

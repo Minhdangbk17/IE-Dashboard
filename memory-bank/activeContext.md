@@ -1,6 +1,15 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-05 — **"Normal Dyeing Batches by Colour (per day)" tách theo
+**Cập nhật lần cuối:** 2026-10-05 — **Filter Tank Type (J tank / O tank) cho Batch Per Day by
+Machine** (yêu cầu người dùng). `get_cleaning_matrix()`/`export_cleaning_matrix_excel()` nhận
+`tank_types` (query `tank_type`, lặp được), trả `available_tank_types` (J tank -> O tank ->
+Unclassified). Lọc cấp MÁY theo `machines.tank_type` chuẩn hoá bằng `_normalize_tank_label()`
+(giống tab Summary + Batch/Day Trend) nên KPI, bảng Colour, Excel tự theo. Máy Tank trống/lạ và
+máy unmapped -> "Unclassified" (bị loại khi lọc J/O). Không đổi schema, không rebuild. Lưu ý:
+Machine Master local chưa khai báo Tank -> local chỉ thấy "Unclassified"; production cần khai
+báo Tank trong Machine Master thì filter mới có tác dụng. Test `tests/test_cleaning_matrix_tank_filter.py`.
+
+**Bản ghi trước:** 2026-10-05 — **"Normal Dyeing Batches by Colour (per day)" tách theo
 loại vải** (yêu cầu người dùng). `get_cleaning_matrix()` thêm `color_summary.fabric_groups`
 (thứ tự `FABRIC_GROUP_ORDER` = Cotton -> CVC -> Polyester, chỉ trả nhóm nằm trong filter Fabric
 Type), giữ nguyên `labels`/`by_day` (tương thích ngược). UI: 1 bảng, cột Fabric rowspan -> 5 màu

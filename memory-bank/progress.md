@@ -1066,6 +1066,8 @@
 - [x] 2026-10-05 — "Normal Dyeing Batches by Colour (per day)" tách theo loại vải
       Cotton/CVC/Polyester (UI + Excel "Color Summary", có Subtotal). Không đổi schema,
       không cần rebuild. Test `tests/test_color_summary_by_fabric.py`.
+- [x] 2026-10-05 — Filter Tank Type (J tank / O tank / Unclassified) cho Batch Per Day
+      by Machine (UI + API + Excel export). Test `tests/test_cleaning_matrix_tank_filter.py`.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên

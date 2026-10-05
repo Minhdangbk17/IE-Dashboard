@@ -38,9 +38,10 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
                 continue
         brand_programs = [value for value in request.args.getlist("brand_program") if value]
         fabric_types = [value for value in request.args.getlist("fabric_type") if value]
+        tank_types = [value for value in request.args.getlist("tank_type") if value]
         require_redye_zero = request.args.get("require_redye_zero", "1") != "0"
         try:
-            return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None, fabric_types or None, require_redye_zero))
+            return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None, fabric_types or None, require_redye_zero, tank_types or None))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -55,10 +56,11 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
                 continue
         brand_programs = [value for value in request.args.getlist("brand_program") if value]
         fabric_types = [value for value in request.args.getlist("fabric_type") if value]
+        tank_types = [value for value in request.args.getlist("tank_type") if value]
         require_redye_zero = request.args.get("require_redye_zero", "1") != "0"
         from_date = request.args.get("from_date")
         to_date = request.args.get("to_date")
-        content = export_cleaning_matrix_excel(from_date, to_date, capacities or None, brand_programs or None, fabric_types or None, require_redye_zero)
+        content = export_cleaning_matrix_excel(from_date, to_date, capacities or None, brand_programs or None, fabric_types or None, require_redye_zero, tank_types or None)
         name_range = f"{from_date}_to_{to_date}" if from_date and to_date else datetime.now().strftime("%Y-%m-%d")
         return send_file(
             io.BytesIO(content),
