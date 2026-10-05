@@ -316,22 +316,28 @@
         el.innerHTML = `<strong>Machines not in Machine Master:</strong> ${names} — batches from these machines are still counted above, but shown as separate rows at the end of the table. Use "+ Add Machine" to register them properly.`;
     }
     function renderColorSummary(data) {
-        const summary = data.color_summary || { labels: [], by_day: {} };
+        // Tách theo loại vải (2026-10-05): Fabric (rowspan) -> 5 dòng màu + "Subtotal"; dòng
+        // "Total" cuối lấy từ `by_day` tổng (mọi loại vải) để luôn khớp KPI "Normal Dyeing".
+        // Bố cục y hệt sheet "Color Summary" của Excel export.
+        const summary = data.color_summary || { labels: [], by_day: {}, fabric_groups: [] };
         const head = document.getElementById("color-summary-head");
         const body = document.querySelector("#color-summary-table tbody");
         if (!summary.labels.length || !data.time_labels.length) { head.innerHTML = ""; body.innerHTML = `<tr><td class="f6 color-fg-muted">No data</td></tr>`; return; }
-        head.innerHTML = "<th>Colour</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join("") + "<th>Total</th>";
-        const dayTotals = data.time_labels.map(() => 0);
-        let grandTotal = 0;
-        const rowsHtml = summary.labels.map((label, labelIndex) => {
-            const counts = data.time_labels.map((day) => (summary.by_day[day] || [])[labelIndex] || 0);
-            counts.forEach((count, dayIndex) => { dayTotals[dayIndex] += count; });
-            const rowTotal = counts.reduce((sum, count) => sum + count, 0);
-            grandTotal += rowTotal;
-            return `<tr><th>${label}</th>${counts.map((count) => `<td>${count}</td>`).join("")}<td><strong>${rowTotal}</strong></td></tr>`;
+        head.innerHTML = "<th>Fabric</th><th>Colour</th>" + data.time_labels.map((day) => `<th>${day}</th>`).join("") + "<th>Total</th>";
+        const countCells = (counts, bold) => counts.map((count) => `<td>${bold ? `<strong>${count}</strong>` : count}</td>`).join("") + `<td><strong>${counts.reduce((sum, count) => sum + count, 0)}</strong></td>`;
+        const groupsHtml = (summary.fabric_groups || []).map((group) => {
+            const subtotal = data.time_labels.map(() => 0);
+            const colourRows = summary.labels.map((label, labelIndex) => {
+                const counts = data.time_labels.map((day) => (group.by_day[day] || [])[labelIndex] || 0);
+                counts.forEach((count, dayIndex) => { subtotal[dayIndex] += count; });
+                const fabricCell = labelIndex === 0 ? `<td class="summary-group-cell" rowspan="${summary.labels.length + 1}">${escHtml(group.fabric)}</td>` : "";
+                return `<tr>${fabricCell}<th>${label}</th>${countCells(counts, false)}</tr>`;
+            }).join("");
+            return colourRows + `<tr class="summary-total-group"><th>Subtotal</th>${countCells(subtotal, true)}</tr>`;
         }).join("");
-        const totalRow = `<tr class="total-row"><th>Total</th>${dayTotals.map((count) => `<td><strong>${count}</strong></td>`).join("")}<td><strong>${grandTotal}</strong></td></tr>`;
-        body.innerHTML = rowsHtml + totalRow;
+        const dayTotals = data.time_labels.map((day) => (summary.by_day[day] || []).reduce((sum, count) => sum + count, 0));
+        const totalRow = `<tr class="total-row"><th colspan="2">Total</th>${countCells(dayTotals, true)}</tr>`;
+        body.innerHTML = groupsHtml + totalRow;
     }
     const MATRIX_HEAD_HTML = "<th>Machine</th><th>Group MC</th><th class=\"mc-config-col\">MC brand</th><th class=\"mc-config-col\">Tank</th><th class=\"mc-config-col\">MC quantity</th><th class=\"mc-config-col\">Tube no</th><th class=\"mc-config-col\">Capacity (Kg)</th><th class=\"mc-config-col\">Status</th><th class=\"mc-config-col\">Production Status</th><th class=\"mc-config-col\">Orgatex</th><th>No. of time Cleaning MC</th><th>No. of normal dyeing batch</th><th>Cleaning MC Ratio</th><th>No. of R&amp;D batch</th><th>Rework batch</th>";
     function renderMatrixRow(row, dayLabels) {

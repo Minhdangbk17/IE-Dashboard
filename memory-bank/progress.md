@@ -1063,6 +1063,9 @@
 - [x] 2026-10-02 — Batch là nguồn sự thật duy nhất cho Batch/Day Trend + Batch
       Per Day by Machine (`core/batch_source.py`). Không migration; CẦN
       `flask rebuild-summaries` trên production sau deploy.
+- [x] 2026-10-05 — "Normal Dyeing Batches by Colour (per day)" tách theo loại vải
+      Cotton/CVC/Polyester (UI + Excel "Color Summary", có Subtotal). Không đổi schema,
+      không cần rebuild. Test `tests/test_color_summary_by_fabric.py`.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên

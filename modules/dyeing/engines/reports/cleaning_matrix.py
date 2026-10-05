@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import Any, Iterable, Mapping
 
 from openpyxl import Workbook
-from openpyxl.styles import Border, Font, PatternFill, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from core.batch_source import load_resolved_batches
 from core.brand_program_importer import ensure_brand_program_table
@@ -40,6 +40,12 @@ ALL_BADGE_CODES = ("CM", "S", "B", "D", "M", "L", "W", "BR", "DR", "MR", "LR", "
 # base badge code (B/D/M/L/W) đã phân loại sẵn ở `classify_batch_badge()`.
 COLOR_LABEL_ORDER = ("Dark", "Light", "Medium", "Black", "White")
 BADGE_TO_COLOR_LABEL: dict[str, str] = {"D": "Dark", "L": "Light", "M": "Medium", "B": "Black", "W": "White"}
+# Nhóm loại vải của summary "Normal Dyeing Batches by Colour" (2026-10-05, theo thứ tự người
+# dùng chốt). KHÔNG có nhóm "Unknown": đã kiểm tra dữ liệu thật — FabricType "Unknown" (mẻ cuối
+# máy không có mẻ kế tiếp để fill-up) chỉ rơi vào CM/Sample/Rework, 0 mẻ Normal ở cả 2 trạng
+# thái ReDye. Nếu sau này có mẻ Normal ngoài 3 nhóm, `get_cleaning_matrix()` log warning thay
+# vì âm thầm bỏ (tổng các nhóm khi đó sẽ lệch KPI "Normal Dyeing").
+FABRIC_GROUP_ORDER = ("Cotton", "CVC", "Polyester")
 
 # Màu nền/chữ cho từng badge (2026-09-25) — COPY NGUYÊN VĂN từ `.code-XXX` trong
 # `cleaning_matrix_view.html` (không có "#") để Excel export (`export_cleaning_matrix_excel()`)
@@ -434,7 +440,7 @@ def get_cleaning_matrix(
         sql += " AND production_date <= ?"
         params.append(to_date)
     sql += " ORDER BY production_date, machine, sequence_order, start_time, end_time"
-    empty_result = {"time_labels": [], "daily_sequence": {}, "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "available_fabric_types": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}}, "unmapped_machines": []}
+    empty_result = {"time_labels": [], "daily_sequence": {}, "kpis": {"normal_batches": 0, "cleaning_count": 0, "cleaning_ratio": 0.0, "rework_batches": 0}, "matrix": [], "available_capacities": [], "available_brand_programs": [], "available_fabric_types": [], "color_summary": {"labels": list(COLOR_LABEL_ORDER), "by_day": {}, "fabric_groups": []}, "unmapped_machines": []}
     try:
         rows = execute_query(sql, params)
         master_rows = execute_query(
@@ -480,6 +486,9 @@ def get_cleaning_matrix(
     # Batches by Colour" — CÙNG điều kiện với KPI "Normal Dyeing" (`normal`/`item["normal_batches"]`
     # bên dưới), không định nghĩa tiêu chí "Normal" riêng để tránh 2 số lệch nhau.
     color_by_day: dict[str, Counter[str]] = defaultdict(Counter)
+    # Cùng số đếm trên nhưng tách thêm theo loại vải: {ngày: Counter[(fabric, màu)]}.
+    color_by_day_fabric: dict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
+    ungrouped_normal_dyelots: list[str] = []
     # Đếm bao nhiêu dòng lịch máy KHÔNG join được với batch_details (thiếu ColourNo/Shade
     # nguồn) — dùng để phân biệt "toàn M vì thiếu dữ liệu import" với lỗi thuật toán thật.
     color_source_missing = color_source_present = 0
@@ -530,6 +539,11 @@ def get_cleaning_matrix(
             color_label = BADGE_TO_COLOR_LABEL.get(code)
             if color_label:
                 color_by_day[day][color_label] += 1
+                fabric = row["fabric_type"] or ""
+                if fabric in FABRIC_GROUP_ORDER:
+                    color_by_day_fabric[day][(fabric, color_label)] += 1
+                else:
+                    ungrouped_normal_dyelots.append(f"{row['dyelot_ref']} ({fabric or 'blank'})")
         if normalized_batch_type in {"r&d", "rd", "research", "development"}:
             item["rd_batches"] += 1
         if is_rework_badge:
@@ -544,7 +558,21 @@ def get_cleaning_matrix(
     color_summary = {
         "labels": list(COLOR_LABEL_ORDER),
         "by_day": {day: [color_by_day.get(day, Counter()).get(label, 0) for label in COLOR_LABEL_ORDER] for day in time_labels},
+        # Khi đang lọc Fabric Type, chỉ trả các nhóm nằm trong bộ lọc (nhóm ngoài lọc luôn = 0).
+        "fabric_groups": [
+            {
+                "fabric": fabric,
+                "by_day": {day: [color_by_day_fabric.get(day, Counter()).get((fabric, label), 0) for label in COLOR_LABEL_ORDER] for day in time_labels},
+            }
+            for fabric in FABRIC_GROUP_ORDER
+            if fabric_type_filter is None or fabric in fabric_type_filter
+        ],
     }
+    if ungrouped_normal_dyelots:
+        logger.warning(
+            "Normal Dyeing Batches by Colour: %d mẻ Normal có FabricType ngoài %s -> không vào nhóm nào, tổng nhóm sẽ lệch KPI: %s",
+            len(ungrouped_normal_dyelots), FABRIC_GROUP_ORDER, ungrouped_normal_dyelots[:20],
+        )
     logger.info(
         "Machine Scheduling Matrix badge check: found=%s missing=%s counts=%s | batch_details join coverage: co_du_lieu_mau=%d thieu_du_lieu_mau=%d (%.0f%% thiếu -> cần bổ sung file Batch Detail nếu tỷ lệ cao)",
         sorted(badge_counter),
@@ -659,34 +687,51 @@ def export_cleaning_matrix_excel(
     detail_sheet.freeze_panes = "B2"
 
     color_sheet = workbook.create_sheet("Color Summary")
-    color_headers = ["Colour", *data["time_labels"], "Total"]
+    # Bố cục y hệt bảng trên UI (2026-10-05): Fabric (merge dọc) | Colour | N ngày | Total; mỗi
+    # nhóm vải có dòng "Subtotal" đậm; dòng "Total" cuối lấy từ `by_day` tổng (mọi loại vải) —
+    # luôn khớp KPI "Normal Dyeing", không cộng lại từ các nhóm.
+    summary = data["color_summary"]
+    labels = summary["labels"]
+    days = data["time_labels"]
+    color_headers = ["Fabric", "Colour", *days, "Total"]
     for col_idx, header in enumerate(color_headers, start=1):
         cell = color_sheet.cell(row=1, column=col_idx, value=header)
         cell.font = header_font
         cell.fill = header_fill
-    color_sheet.column_dimensions["A"].width = 14
-    for col_idx in range(2, len(color_headers) + 1):
+    for col_idx in range(1, len(color_headers) + 1):
         color_sheet.column_dimensions[color_sheet.cell(row=1, column=col_idx).column_letter].width = 14
-
-    day_totals = [0] * len(data["time_labels"])
-    grand_total = 0
-    for row_idx, label in enumerate(data["color_summary"]["labels"], start=2):
-        label_index = data["color_summary"]["labels"].index(label)
-        color_sheet.cell(row=row_idx, column=1, value=label)
-        row_total = 0
-        for col_offset, day in enumerate(data["time_labels"]):
-            count = (data["color_summary"]["by_day"].get(day) or [])[label_index] if data["color_summary"]["by_day"].get(day) else 0
-            color_sheet.cell(row=row_idx, column=2 + col_offset, value=count)
-            day_totals[col_offset] += count
-            row_total += count
-        color_sheet.cell(row=row_idx, column=len(color_headers), value=row_total)
-        grand_total += row_total
-    total_row = 2 + len(data["color_summary"]["labels"])
     total_font = Font(bold=True)
-    color_sheet.cell(row=total_row, column=1, value="Total").font = total_font
-    for col_offset, day_total in enumerate(day_totals):
-        color_sheet.cell(row=total_row, column=2 + col_offset, value=day_total).font = total_font
-    color_sheet.cell(row=total_row, column=len(color_headers), value=grand_total).font = total_font
+    total_col = len(color_headers)
+
+    def _write_counts_row(row_idx: int, counts: list[int], font: Font | None = None) -> None:
+        for col_offset, count in enumerate(counts):
+            cell = color_sheet.cell(row=row_idx, column=3 + col_offset, value=count)
+            if font:
+                cell.font = font
+        cell = color_sheet.cell(row=row_idx, column=total_col, value=sum(counts))
+        if font:
+            cell.font = font
+
+    row_idx = 2
+    for group in summary.get("fabric_groups", []):
+        group_start = row_idx
+        fabric_cell = color_sheet.cell(row=row_idx, column=1, value=group["fabric"])
+        fabric_cell.font = total_font
+        fabric_cell.alignment = Alignment(vertical="center")
+        subtotal = [0] * len(days)
+        for label_index, label in enumerate(labels):
+            color_sheet.cell(row=row_idx, column=2, value=label)
+            counts = [(group["by_day"].get(day) or [0] * len(labels))[label_index] for day in days]
+            subtotal = [a + b for a, b in zip(subtotal, counts)]
+            _write_counts_row(row_idx, counts)
+            row_idx += 1
+        color_sheet.cell(row=row_idx, column=2, value="Subtotal").font = total_font
+        _write_counts_row(row_idx, subtotal, total_font)
+        color_sheet.merge_cells(start_row=group_start, start_column=1, end_row=row_idx, end_column=1)
+        row_idx += 1
+    color_sheet.cell(row=row_idx, column=1, value="Total").font = total_font
+    _write_counts_row(row_idx, [sum(summary["by_day"].get(day) or []) for day in days], total_font)
+    color_sheet.freeze_panes = "C2"
 
     buffer = io.BytesIO()
     workbook.save(buffer)

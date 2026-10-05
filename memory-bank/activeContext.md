@@ -1,6 +1,17 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-02 — **Batch (`batch_details`) là NGUỒN SỰ THẬT DUY NHẤT cho
+**Cập nhật lần cuối:** 2026-10-05 — **"Normal Dyeing Batches by Colour (per day)" tách theo
+loại vải** (yêu cầu người dùng). `get_cleaning_matrix()` thêm `color_summary.fabric_groups`
+(thứ tự `FABRIC_GROUP_ORDER` = Cotton -> CVC -> Polyester, chỉ trả nhóm nằm trong filter Fabric
+Type), giữ nguyên `labels`/`by_day` (tương thích ngược). UI: 1 bảng, cột Fabric rowspan -> 5 màu
++ Subtotal, dòng Total cuối lấy từ `by_day` tổng. Excel sheet "Color Summary" cùng bố cục (cột A
+merge dọc). **Không có nhóm Unknown** — đã kiểm tra dữ liệu thật: FabricType "Unknown" (mẻ cuối
+máy) chỉ là CM/Sample/Rework, 0 mẻ Normal ở cả 2 trạng thái ReDye; mẻ Normal ngoài 3 nhóm (nếu
+có sau này) -> `logger.warning` kèm Dyelot. Không đổi schema, không cần rebuild. Verify: test
+mới `tests/test_color_summary_by_fabric.py`, 15/15 test PASS; tháng 9 thật: tổng 3 nhóm = KPI
+(1785 khi ReDye=0, 2005 khi tắt).
+
+**Bản ghi trước:** 2026-10-02 — **Batch (`batch_details`) là NGUỒN SỰ THẬT DUY NHẤT cho
 Batch/Day Trend + Batch Per Day by Machine** (yêu cầu người dùng). Tách chuẩn hoá mẻ của Trend
 ra `core/batch_source.py::load_resolved_batches()`; `cleaning_matrix.recompute_daily()` viết lại
 thành `recompute_all()` đọc từ đó (BỎ JOIN `availability_logs` + `_orphan_batch_rows()`),
