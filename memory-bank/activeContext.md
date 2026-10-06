@@ -1,6 +1,21 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-05 — **Engine mới `idle_time` — báo cáo Idle Time** (yêu cầu người
+**Cập nhật lần cuối:** 2026-10-05 — **Idle Entry: nhập tay lần dừng máy (nhánh
+`feature/idle-manual-entry`)**. Ca đêm chưa kịp upload Batch -> công nhân nhập Máy (Machine
+Master) / Từ / Đến (trống = vẫn dừng) / Reason / Detail trên trang `/dyeing/idle_time/entry` (dùng
+được trên điện thoại). Lưu `idle_time_stops`, ghép vào khoảng idle ở read time (quy tắc ở
+`systemPatterns.md` 6.2.2) — người dùng chốt: giờ nhập chỉ là cơ sở, CẢ khoảng idle thật nhận
+nguyên nhân; chia tại mốc giữa các lần nhập; KHÔNG giới hạn độ lệch; ghép trên khoảng liên tục
+qua 07:00; Save trong drawer báo cáo cũng là 1 lần dừng (bỏ `idle_time_notes`, note cũ tự chuyển);
+Target CHỈ admin; quyền `edit` nhập/sửa, `delete` xoá. Thêm KPI "Idle with reason". 2026-10-06:
+khi tìm khoảng GẦN NHẤT bỏ qua khoảng < 5 phút (trước đó lần dừng nhập lúc máy chạy bị gán vào
+khoảng chuyển mẻ 1 phút cách 5h); vẫn KHÔNG giới hạn độ lệch theo người dùng — dữ liệu thật máy
+1401 chạy liên tục: lần dừng 03/09 05:00 gán khoảng 5 phút cách 10h (lệch 613 phút), trạng thái
+hiện độ lệch để kiểm tra. **Deploy: chạy
+`supabase/migrate_idle_time_stops.sql` (sau `migrate_idle_time.sql`).** Test
+`tests/test_idle_time.py` (43 kiểm tra), 17/17 file test PASS.
+
+**Bản ghi trước:** 2026-10-05 — **Engine mới `idle_time` — báo cáo Idle Time** (yêu cầu người
 dùng: kiểm soát thời gian máy không chạy mẻ). Máy x ngày: giờ idle/giờ hoạt động (nút chuyển),
 % Idle, Target % Idle CHUNG (sửa trên UI, quyền `edit`), ô vượt Target tô đỏ; filter Tank +
 Capacity; bấm ô -> drawer liệt kê từng khoảng idle (mẻ trước/sau) + Reason (9 giá trị cố định

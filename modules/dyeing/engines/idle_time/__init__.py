@@ -25,11 +25,11 @@ class IdleTimeEngine(BaseEngine):
             domain=self.domain,
             description=(
                 "Idle Time: hours each machine runs no batch per production day (available hours "
-                "minus occupied hours from the Batch/Day split), with % Idle vs target and "
-                "reason notes per idle gap."
+                "minus occupied hours from the Batch/Day split), with % Idle vs target; Idle Entry "
+                "records machine stops (time range + reason) that are matched to idle gaps at read time."
             ),
             data_sources=["batch_day_trend_daily_summary", "batch_details", "machines"],
-            data_sinks=["idle_time_notes", "idle_time_settings"],
+            data_sinks=["idle_time_stops", "idle_time_settings"],
             # "batch_matrix": nguồn giờ hoạt động; "reports": chuẩn hoá Tank Type dùng chung.
             depends_on=["batch_matrix", "reports"],
         )

@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Idle Entry{% endblock %}
+{% block extra_head %}<style>
+    .entry-wrap { max-width: 640px; }
+    .entry-form .form-group { margin-bottom: 12px; }
+    .entry-form label { display: block; font-weight: 600; margin-bottom: 4px; }
+    .entry-form .form-control, .entry-form .form-select { width: 100%; min-height: 44px; font-size: 16px; box-sizing: border-box; }
+    .entry-form textarea.form-control { min-height: 72px; }
+    .entry-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .entry-actions { display: flex; gap: 8px; }
+    .entry-actions .btn { min-height: 44px; flex: 1; font-size: 15px; }
+    .entry-filters { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; align-items: end; }
+    .entry-filters .form-control, .entry-filters .form-select { width: 100%; min-height: 40px; box-sizing: border-box; }
+    .stop-card { border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 12px; margin-bottom: 10px; background: var(--bg-surface); }
+    .stop-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .stop-status { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+    .status-pending { color: var(--warning); }
+    .status-matched { color: var(--success); }
+    .status-unmatched, .status-overridden, .status-no_time { color: var(--danger); }
+    .stop-meta { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+    .stop-card .entry-actions { margin-top: 8px; }
+    .stop-card .entry-actions .btn { min-height: 36px; flex: 0 0 auto; font-size: 13px; }
+    @media (max-width: 520px) {
+        .entry-row, .entry-filters { grid-template-columns: 1fr; }
+    }
+</style>{% endblock %}
+{% block content %}
+<div class="entry-wrap">
+<div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Idle Time</p><h2 class="mt-0 mb-0">Idle Entry</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.idle_time.view') }}">Idle Time report</a></div>
+<p class="f6 color-fg-muted">Record machine stops before the Batch file is uploaded. Times you enter are only used to find the idle gap — after upload the report uses the exact times from Batch data.</p>
+
+<section class="Box p-3 mb-3 entry-form" id="entry-form-box">
+    <h3 class="mt-0" id="entry-form-title">New stop</h3>
+    <div class="form-group"><label for="entry-machine">Machine</label><select id="entry-machine" class="form-select"></select></div>
+    <div class="entry-row">
+        <div class="form-group"><label for="entry-start">Stop start</label><input id="entry-start" class="form-control" type="datetime-local" step="60"></div>
+        <div class="form-group"><label for="entry-end">Stop end <span class="f6 color-fg-muted">(empty = still stopped)</span></label><input id="entry-end" class="form-control" type="datetime-local" step="60"></div>
+    </div>
+    <div class="form-group"><label for="entry-reason">Reason</label><select id="entry-reason" class="form-select"><option value="">— Select reason —</option>{% for reason in reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></div>
+    <div class="form-group"><label for="entry-detail">Detail</label><textarea id="entry-detail" class="form-control" rows="2"></textarea></div>
+    <p class="f6 mb-2" id="entry-message" role="status"></p>
+    <div class="entry-actions">
+        <button id="entry-save" class="btn btn-primary" type="button">Save</button>
+        <button id="entry-cancel" class="btn" type="button" hidden>Cancel edit</button>
+    </div>
+</section>
+
+<section class="Box p-3">
+    <div class="entry-filters mb-3">
+        <div><label for="list-from" class="f6">From</label><input id="list-from" class="form-control" type="date"></div>
+        <div><label for="list-to" class="f6">To</label><input id="list-to" class="form-control" type="date"></div>
+        <div><label for="list-machine" class="f6">Machine</label><select id="list-machine" class="form-select"><option value="">All</option></select></div>
+    </div>
+    <div id="stop-list"><p class="f6 color-fg-muted">Loading...</p></div>
+</section>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+(function () {
+    "use strict";
+    const CAN_EDIT = {{ "true" if current_user_can('dyeing', 'idle_time', 'edit') else "false" }};
+    const CAN_DELETE = {{ "true" if current_user_can('dyeing', 'idle_time', 'delete') else "false" }};
+    const machinesEndpoint = "{{ url_for('dyeing.idle_time.api_machines') }}";
+    const stopsEndpoint = "{{ url_for('dyeing.idle_time.api_list_stops') }}";
+    const stopUrl = (id) => "{{ url_for('dyeing.idle_time.api_delete_stop', stop_id=0) }}".replace(/0$/, String(id));
+    const STATUS_LABELS = {
+        pending: "Waiting for Batch data", matched: "Matched", unmatched: "No idle gap found",
+        overridden: "Overridden by later entry", no_time: "No time left (later entry took the gap)",
+    };
+    let editingId = null;
+    let stopsById = {};
+
+    function escHtml(value) { return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+    function escAttr(value) { return escHtml(value).replace(/"/g, "&quot;"); }
+    const pad2 = (v) => String(v).padStart(2, "0");
+    const toLocalInput = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const toDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    const short = (text) => text ? text.slice(5, 16).replace("-", "/") : "";
+    const el = (id) => document.getElementById(id);
+
+    function setMessage(text, isError) {
+        const message = el("entry-message");
+        message.textContent = text || "";
+        message.style.color = isError ? "var(--danger)" : "var(--success)";
+    }
+    function resetForm() {
+        editingId = null;
+        el("entry-form-title").textContent = "New stop";
+        el("entry-save").textContent = "Save";
+        el("entry-cancel").hidden = true;
+        el("entry-start").value = toLocalInput(new Date());
+        el("entry-end").value = "";
+        el("entry-reason").value = "";
+        el("entry-detail").value = "";
+    }
+    function fillForm(stop) {
+        editingId = stop.id;
+        el("entry-form-title").textContent = `Edit stop #${stop.id}`;
+        el("entry-save").textContent = "Update";
+        el("entry-cancel").hidden = false;
+        el("entry-machine").value = stop.machine;
+        el("entry-start").value = stop.stop_start.slice(0, 16).replace(" ", "T");
+        el("entry-end").value = stop.stop_end ? stop.stop_end.slice(0, 16).replace(" ", "T") : "";
+        el("entry-reason").value = stop.reason || "";
+        el("entry-detail").value = stop.detail || "";
+        setMessage("");
+        el("entry-form-box").scrollIntoView({ behavior: "smooth" });
+    }
+
+    function loadMachines() {
+        fetch(machinesEndpoint).then((r) => r.json()).then((machines) => {
+            const options = machines.map((m) => `<option value="${escAttr(m)}">${escHtml(m)}</option>`).join("");
+            el("entry-machine").innerHTML = `<option value="">— Select machine —</option>${options}`;
+            el("list-machine").innerHTML = `<option value="">All</option>${options}`;
+        });
+    }
+    function loadStops() {
+        const params = new URLSearchParams({ from_date: el("list-from").value, to_date: el("list-to").value });
+        if (el("list-machine").value) params.set("machine", el("list-machine").value);
+        fetch(`${stopsEndpoint}?${params}`).then((r) => r.json()).then((stops) => {
+            stopsById = Object.fromEntries((stops || []).map((s) => [s.id, s]));
+            el("stop-list").innerHTML = stops.length ? stops.map(renderStop).join("") : `<p class="f6 color-fg-muted">No stops recorded in this range.</p>`;
+        });
+    }
+    function renderStop(stop) {
+        const matched = stop.status === "matched"
+            ? `<div class="stop-meta">Actual idle: ${stop.matched.map((m) => `${short(m.start)} → ${short(m.end)}`).join(", ")} (${stop.matched_hours.toFixed(2)} h)${stop.deviation_minutes ? ` · ${Math.round(stop.deviation_minutes)} min from input` : ""}</div>` : "";
+        const partial = stop.partially_overridden ? `<div class="stop-meta">Partly overridden by a later entry.</div>` : "";
+        const actions = [
+            CAN_EDIT && stop.source === "entry" ? `<button class="btn btn-sm stop-edit" data-id="${stop.id}" type="button">Edit</button>` : "",
+            CAN_DELETE ? `<button class="btn btn-sm btn-danger stop-delete" data-id="${stop.id}" type="button">Delete</button>` : "",
+        ].join("");
+        return `<div class="stop-card">
+            <div class="stop-card-head"><strong>${escHtml(stop.machine)} · ${short(stop.stop_start)} → ${stop.stop_end ? short(stop.stop_end) : "still stopped"}</strong><span class="stop-status status-${stop.status}">${STATUS_LABELS[stop.status] || stop.status}</span></div>
+            <div>${escHtml(stop.reason || "-")}${stop.detail ? ` — ${escHtml(stop.detail)}` : ""}</div>
+            ${matched}${partial}
+            <div class="stop-meta">${stop.source === "entry" ? "Idle Entry" : "Report"} · ${escHtml(stop.updated_by || "-")} · ${escHtml(stop.updated_at || "")}</div>
+            ${actions ? `<div class="entry-actions">${actions}</div>` : ""}
+        </div>`;
+    }
+
+    el("entry-save").addEventListener("click", () => {
+        const payload = {
+            machine: el("entry-machine").value, stop_start: el("entry-start").value, stop_end: el("entry-end").value,
+            reason: el("entry-reason").value, detail: el("entry-detail").value,
+        };
+        if (!payload.machine || !payload.stop_start || !payload.reason) { setMessage("Machine, Stop start and Reason are required.", true); return; }
+        if (payload.stop_end && payload.stop_end <= payload.stop_start) { setMessage("Stop end must be after stop start.", true); return; }
+        el("entry-save").disabled = true;
+        fetch(editingId ? stopUrl(editingId) : stopsEndpoint, {
+            method: editingId ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        }).then((r) => r.json().then((body) => ({ ok: r.ok, body }))).then(({ ok, body }) => {
+            el("entry-save").disabled = false;
+            if (!ok) { setMessage(body.error || "Save failed", true); return; }
+            setMessage(editingId ? "Updated." : "Saved.", false);
+            const machine = el("entry-machine").value;
+            resetForm();
+            el("entry-machine").value = machine;  // ca đêm thường nhập liên tiếp nhiều lần cho cùng máy
+            loadStops();
+        });
+    });
+    el("entry-cancel").addEventListener("click", () => { resetForm(); setMessage(""); });
+    el("stop-list").addEventListener("click", (event) => {
+        const edit = event.target.closest(".stop-edit");
+        const remove = event.target.closest(".stop-delete");
+        if (edit) fillForm(stopsById[edit.dataset.id]);
+        if (remove && confirm("Delete this stop?")) {
+            fetch(stopUrl(remove.dataset.id), { method: "DELETE" }).then((r) => r.json()).then(() => { if (String(editingId) === remove.dataset.id) resetForm(); loadStops(); });
+        }
+    });
+    ["list-from", "list-to", "list-machine"].forEach((id) => el(id).addEventListener("change", loadStops));
+
+    if (!CAN_EDIT) el("entry-form-box").hidden = true;
+    const now = new Date();
+    el("list-from").value = toDate(new Date(now.getTime() - 2 * 86400000));
+    el("list-to").value = toDate(now);
+    resetForm();
+    loadMachines();
+    loadStops();
+})();
+</script>
+{% endblock %}

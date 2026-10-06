@@ -14,7 +14,7 @@
     .idle-gap-table select, .idle-gap-table input { width: 100%; min-width: 140px; }
 </style>{% endblock %}
 {% block content %}
-<div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Idle Time</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
+<div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Idle Time</h2></div><div class="d-flex" style="gap:8px"><a class="btn btn-sm" href="{{ url_for('dyeing.idle_time.entry_view') }}">Idle Entry</a><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div></div>
 
 <section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px">
     <div class="form-group mb-0"><label for="idle-from">From Date</label><input id="idle-from" class="form-control" type="date"></div>
@@ -66,9 +66,13 @@
 (function () {
     "use strict";
     const CAN_EDIT = {{ "true" if current_user_can('dyeing', 'idle_time', 'edit') else "false" }};
+    const CAN_DELETE = {{ "true" if current_user_can('dyeing', 'idle_time', 'delete') else "false" }};
+    // Target % Idle: CHỈ admin sửa (người dùng chốt 2026-10-05) — quyền `edit` chỉ nhập nguyên nhân.
+    const IS_ADMIN = {{ "true" if CURRENT_USER and CURRENT_USER.role == 'admin' else "false" }};
     const matrixEndpoint = "{{ url_for('dyeing.idle_time.api_matrix') }}";
     const gapsEndpoint = "{{ url_for('dyeing.idle_time.api_gaps') }}";
-    const notesEndpoint = "{{ url_for('dyeing.idle_time.api_upsert_note') }}";
+    const reportStopsEndpoint = "{{ url_for('dyeing.idle_time.api_save_from_report') }}";
+    const stopUrl = (id) => "{{ url_for('dyeing.idle_time.api_delete_stop', stop_id=0) }}".replace(/0$/, String(id));
     const targetEndpoint = "{{ url_for('dyeing.idle_time.api_set_target') }}";
     const exportEndpoint = "{{ url_for('dyeing.idle_time.api_export') }}";
     let mode = "idle";
@@ -143,6 +147,7 @@
             ["Total Idle (h)", fmtHours(data.grand_total.idle)],
             ["Total Operating (h)", fmtHours(data.grand_total.operating)],
             ["% Idle", fmtPct(data.grand_total.idle_pct)],
+            ["Idle with reason", fmtPct(data.grand_total.explained_pct)],
             ["Target % Idle", target === null ? "Not set" : fmtPct(target)],
             ["Machine-days over target", target === null ? "-" : overCount],
         ].map(([label, value]) => `<div class="Box p-3" style="min-width:170px"><span class="f6 color-fg-muted">${label}</span><strong class="h2 d-block">${value}</strong></div>`).join("");
@@ -162,7 +167,7 @@
             const cells = data.days.map((day) => {
                 const cell = row.cells[day];
                 const cls = ["num", "cell-clickable", overTarget(cell.idle_pct) ? "ratio-warning" : ""].filter(Boolean).join(" ");
-                const mark = cell.noted_count ? `<span class="idle-note-mark" title="${cell.noted_count}/${cell.gap_count} idle gaps have a reason">✎${cell.noted_count}</span>` : "";
+                const mark = cell.explained > 0 ? `<span class="idle-note-mark" title="${fmtHours(cell.explained)} of ${fmtHours(cell.idle)} idle hours have a reason">✎</span>` : "";
                 return `<td class="${cls}" data-machine="${escAttr(row.machine)}" data-day="${day}" title="Idle ${fmtHours(cell.idle)} h (${fmtPct(cell.idle_pct)}) · Operating ${fmtHours(cell.operating)} h · Available ${fmtHours(cell.available)} h">${fmtHours(cell[valueKey])}${mark}</td>`;
             }).join("");
             return `<tr><td>${escHtml(row.machine)}</td><td>${escHtml(row.tank)}</td><td class="num">${row.capacity ?? "-"}</td>${cells}` +
@@ -203,52 +208,73 @@
         return `<select class="form-select idle-reason" ${CAN_EDIT ? "" : "disabled"}>${options.join("")}</select>`;
     }
     // Khoảng < 5 phút (chuyển mẻ) vẫn tính vào tổng idle, chỉ ẩn khỏi danh sách cho gọn —
-    // khoảng đã có note thì luôn hiện.
+    // khoảng đã có nguyên nhân thì luôn hiện.
     const SHORT_GAP_HOURS = 5 / 60;
     let drawerData = null;
     document.getElementById("idle-hide-short").addEventListener("change", () => { if (drawerData) renderDrawer(drawerData); });
+    const hhmm = (text) => text ? text.slice(5, 16) : "-";
+    // Mỗi khoảng idle có thể được chia thành nhiều đoạn theo lần dừng đã gán (nhập tay ở Idle
+    // Entry hoặc Save ở đây). Giờ hiển thị LUÔN là giờ chính xác từ Batch; giờ người dùng nhập
+    // chỉ hiện ở cột Source để đối chiếu. Save = tạo lần dừng có giờ đúng bằng đoạn đó.
+    function sourceCell(stop) {
+        if (!stop) return `<span class="color-fg-muted">No reason yet</span>`;
+        const origin = stop.source === "entry" ? "Idle Entry" : "Report";
+        const input = stop.source === "entry" ? `<br><span class="f6 color-fg-muted">input ${hhmm(stop.stop_start)} → ${stop.stop_end ? hhmm(stop.stop_end) : "open"}${stop.deviation_minutes ? ` · ${Math.round(stop.deviation_minutes)} min from gap` : ""}</span>` : "";
+        return `${origin} · ${escHtml(stop.updated_by || "-")}<br><span class="f6 color-fg-muted">${escHtml(stop.updated_at || "")}</span>${input}`;
+    }
     function renderDrawer(data) {
         drawerData = data;
         const hideShort = document.getElementById("idle-hide-short").checked;
-        const shown = data.gaps.filter((gap) => !hideShort || gap.hours >= SHORT_GAP_HOURS || gap.note);
+        const shown = data.gaps.filter((gap) => !hideShort || gap.hours >= SHORT_GAP_HOURS || gap.segments.some((seg) => seg.stop));
         const hidden = data.gaps.length - shown.length;
         document.getElementById("idle-drawer-meta").textContent =
             `Data ${data.available_from || "-"} → ${data.available_to || "-"} · Operating ${fmtHours(data.operating)} h · Idle ${fmtHours(data.idle)} h · ${data.gaps.length} gap(s)` +
             (hidden ? ` · ${hidden} short gap(s) hidden` : "");
         const body = document.getElementById("idle-drawer-body");
-        if (!shown.length && !data.stale_notes.length) { body.innerHTML = `<div class="drawer-empty">${data.gaps.length ? "Only short gaps (< 5 min) on this day." : "No idle time on this day."}</div>`; return; }
-        const rows = shown.map((gap) => {
-            const note = gap.note || {};
-            const changed = gap.note && gap.note.gap_end_saved !== gap.gap_end ? ` <span class="f6" style="color:var(--warning)" title="Gap end changed after re-import (saved: ${escAttr(gap.note.gap_end_saved)})">changed</span>` : "";
-            const updated = gap.note ? `${escHtml(note.updated_by || "-")}<br><span class="f6 color-fg-muted">${escHtml(note.updated_at || "")}</span>` : "-";
-            return `<tr data-gap-start="${escAttr(gap.gap_start)}"><td>${gap.gap_start.slice(5, 16)}</td><td>${gap.gap_end.slice(5, 16)}${changed}</td><td class="num">${fmtHours(gap.hours)}</td>` +
-                `<td>${escHtml(gap.prev_batch || "-")}</td><td>${escHtml(gap.next_batch || "-")}</td>` +
-                `<td>${reasonSelect(data.reasons, note.reason)}</td><td><input class="form-control idle-detail" value="${escAttr(note.detail || "")}" ${CAN_EDIT ? "" : "disabled"}></td>` +
-                `<td>${updated}</td><td>${CAN_EDIT ? `<button class="btn btn-sm idle-save" type="button">Save</button>` : ""}</td></tr>`;
-        }).join("");
-        const stale = data.stale_notes.length
-            ? `<div class="p-3"><p class="f6 mb-1" style="color:var(--warning)"><strong>Notes no longer matching an idle gap</strong> (data was re-imported and the gap moved):</p><ul class="f6 mb-0">` +
-              data.stale_notes.map((n) => `<li>${escHtml(n.gap_start)} → ${escHtml(n.gap_end_saved)}: ${escHtml(n.reason || "-")} — ${escHtml(n.detail || "")} (${escHtml(n.updated_by || "-")})</li>`).join("") + "</ul></div>"
-            : "";
-        body.innerHTML = `<table class="preview-table idle-table idle-gap-table"><thead><tr><th>From</th><th>To</th><th>Idle (h)</th><th>Prev batch</th><th>Next batch</th><th>Reason</th><th>Detail</th><th>Updated</th><th></th></tr></thead><tbody>${rows}</tbody></table>${stale}`;
+        if (!shown.length) { body.innerHTML = `<div class="drawer-empty">${data.gaps.length ? "Only short gaps (< 5 min) on this day." : "No idle time on this day."}</div>`; return; }
+        const rows = shown.map((gap) => gap.segments.map((seg, index) => {
+            const stop = seg.stop || {};
+            const crosses = index === 0 && (gap.gap_start !== gap.start || gap.gap_end !== gap.end)
+                ? `<br><span class="f6 color-fg-muted" title="Idle gap continues across 07:00">gap ${hhmm(gap.gap_start)} → ${hhmm(gap.gap_end)}</span>` : "";
+            const actions = [
+                CAN_EDIT ? `<button class="btn btn-sm idle-save" type="button">Save</button>` : "",
+                CAN_DELETE && seg.stop ? `<button class="btn btn-sm btn-danger idle-delete" type="button" title="Delete this stop record">Delete</button>` : "",
+            ].join(" ");
+            return `<tr data-start="${escAttr(seg.start)}" data-end="${escAttr(seg.end)}" data-stop-id="${seg.stop ? seg.stop.id : ""}">` +
+                `<td>${hhmm(seg.start)}${crosses}</td><td>${hhmm(seg.end)}</td><td class="num">${fmtHours(seg.hours)}</td>` +
+                `<td>${index === 0 ? escHtml(gap.prev_batch || "-") : ""}</td><td>${index === gap.segments.length - 1 ? escHtml(gap.next_batch || "-") : ""}</td>` +
+                `<td>${reasonSelect(data.reasons, stop.reason)}</td><td><input class="form-control idle-detail" value="${escAttr(stop.detail || "")}" ${CAN_EDIT ? "" : "disabled"}></td>` +
+                `<td>${sourceCell(seg.stop)}</td><td style="white-space:nowrap">${actions}</td></tr>`;
+        }).join("")).join("");
+        body.innerHTML = `<table class="preview-table idle-table idle-gap-table"><thead><tr><th>From</th><th>To</th><th>Idle (h)</th><th>Prev batch</th><th>Next batch</th><th>Reason</th><th>Detail</th><th>Source</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    const jsonResult = (r) => r.json().then((body) => ({ ok: r.ok, body }));
+    function afterChange({ ok, body }, button) {
+        if (!ok) { alert(body.error || "Save failed"); if (button) button.disabled = false; return; }
+        openDrawer(drawerCell.machine, drawerCell.day);
+        load();
     }
     document.getElementById("idle-drawer-body").addEventListener("click", (event) => {
-        const button = event.target.closest(".idle-save");
-        if (!button || !drawerCell) return;
-        const tr = button.closest("tr");
-        button.disabled = true;
-        fetch(notesEndpoint, {
+        if (!drawerCell) return;
+        const save = event.target.closest(".idle-save");
+        const remove = event.target.closest(".idle-delete");
+        if (!save && !remove) return;
+        const tr = (save || remove).closest("tr");
+        if (remove) {
+            if (!confirm("Delete this stop record? The reason will be removed from every idle period it covers.")) return;
+            remove.disabled = true;
+            fetch(stopUrl(tr.dataset.stopId), { method: "DELETE" }).then(jsonResult).then((res) => afterChange(res, remove));
+            return;
+        }
+        save.disabled = true;
+        fetch(reportStopsEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                machine: drawerCell.machine, production_date: drawerCell.day, gap_start: tr.dataset.gapStart,
+                machine: drawerCell.machine, start: tr.dataset.start, end: tr.dataset.end,
                 reason: tr.querySelector(".idle-reason").value, detail: tr.querySelector(".idle-detail").value,
             }),
-        }).then((r) => r.json().then((body) => ({ ok: r.ok, body }))).then(({ ok, body }) => {
-            if (!ok) { alert(body.error || "Save failed"); button.disabled = false; return; }
-            openDrawer(drawerCell.machine, drawerCell.day);
-            load();
-        });
+        }).then(jsonResult).then((res) => afterChange(res, save));
     });
 
     // ---------------- Mode / Target / Load ----------------
@@ -258,7 +284,7 @@
         updateExportLink();
         if (lastData) render();
     }));
-    if (!CAN_EDIT) {
+    if (!IS_ADMIN) {
         document.getElementById("idle-target").disabled = true;
         document.getElementById("idle-target-save").style.display = "none";
     }

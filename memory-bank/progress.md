@@ -1071,6 +1071,9 @@
 - [x] 2026-10-05 — Engine `idle_time` (báo cáo Idle Time): ma trận máy x ngày, Target % Idle,
       note Reason/Detail theo từng khoảng idle, Excel. CẦN `supabase/migrate_idle_time.sql`.
       Test `tests/test_idle_time.py`.
+- [x] 2026-10-05 — Idle Entry (nhập tay lần dừng ca đêm, ghép vào khoảng idle ở read time;
+      `idle_time_stops` thay `idle_time_notes`; Target chỉ admin). CẦN
+      `supabase/migrate_idle_time_stops.sql`.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên

@@ -476,8 +476,15 @@ từ bảng đã tổng hợp sẵn.
   mẻ nối từ hôm trước, ngược lại đoạn sớm nhất; tương tự đầu cuối. Ngày không có đoạn nào bị bỏ
   (khoảng hổng giữa 2 file import — VD local thiếu 01/09) -> KHÔNG dùng min/max cả kỳ.
 - Danh sách máy = máy có đoạn trong kỳ (không lấy Machine Master); Tank/Capacity tra Machine
-  Master tại read time. Note (`idle_time_notes`) khoá (machine, gap_start); import lại làm khoảng
-  dịch -> trả về `stale_notes`, không xoá. Target = `idle_time_settings.target_idle_pct`.
+  Master tại read time. Target = `idle_time_settings.target_idle_pct`, CHỈ admin sửa.
+- Nguyên nhân = LẦN DỪNG dạng khoảng (`idle_time_stops`, bản 2 thay `idle_time_notes`): nhập tay
+  ở trang Idle Entry (ca đêm, trước khi upload Batch) hoặc Save trong drawer (giờ = đúng đoạn
+  idle). Ghép ở READ TIME (`service._context()`): khoảng idle ghép LIÊN TỤC qua 07:00; lần dừng
+  chồng giờ cùng máy -> `updated_at` sau cùng thắng; phần còn lại giao khoảng idle nào thì CẢ
+  khoảng đó nhận nguyên nhân (giờ nhập chỉ là cơ sở, giờ hiển thị = giờ Batch), không giao thì
+  khoảng GẦN NHẤT >= 5 phút (không giới hạn độ lệch, trong dữ liệu đã nạp ±1 ngày); nhiều lần dừng trong
+  1 khoảng -> chia tại mốc lần sau; chưa nằm trọn trong giờ có dữ liệu -> "pending". Máy dùng
+  để dựng khoảng idle = máy có mẻ trong kỳ ±7 ngày (drawer/danh sách 1 ngày khớp ma trận).
 
 ### 6.3 Downtime "Total Valid Batches" vs Cleaning MC "Normal Dyeing" — KHÁC số theo THIẾT KẾ, không phải bug (2026-09-11)
 Người dùng phát hiện cùng filter (capacity 500/600/1200/2400, 1 khoảng ngày) ra 2 số khác

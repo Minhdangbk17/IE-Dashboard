@@ -494,21 +494,24 @@ create table if not exists import_log_rows (
 );
 create index if not exists idx_import_log_rows_log_id on import_log_rows (import_log_id);
 
--- Idle Time (Engine `idle_time`, 2026-10-05): Reason/Detail per idle gap (key machine +
--- gap_start) and key/value settings (`target_idle_pct`). Existing DB: supabase/migrate_idle_time.sql.
-create table if not exists idle_time_notes (
-    id               bigint generated always as identity primary key,
-    machine          text not null,
-    production_date  text not null,
-    gap_start        text not null,
-    gap_end          text not null,
-    reason           text,
-    detail           text,
-    updated_by       bigint not null references users (id),
-    updated_at       text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
-    unique (machine, gap_start)
+-- Idle Time (Engine `idle_time`, 2026-10-05): stop records (machine + time range + reason) entered
+-- on Idle Entry or saved from the report drawer, matched to idle gaps at read time; and key/value
+-- settings (`target_idle_pct`). Existing DB: supabase/migrate_idle_time.sql then
+-- supabase/migrate_idle_time_stops.sql (replaces the v1 `idle_time_notes` table).
+create table if not exists idle_time_stops (
+    id          bigint generated always as identity primary key,
+    machine     text not null,
+    stop_start  text not null,
+    stop_end    text,
+    reason      text,
+    detail      text,
+    source      text not null default 'entry',
+    created_by  bigint not null references users (id),
+    created_at  text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+    updated_by  bigint not null references users (id),
+    updated_at  text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
-create index if not exists idx_idle_time_notes_date on idle_time_notes (production_date);
+create index if not exists idx_idle_time_stops_machine_start on idle_time_stops (machine, stop_start);
 
 create table if not exists idle_time_settings (
     key         text primary key,
@@ -564,5 +567,5 @@ alter table brand_program_mapping enable row level security;
 alter table import_log_rows enable row level security;
 alter table rft_dye_results enable row level security;
 alter table rft_targets enable row level security;
-alter table idle_time_notes enable row level security;
+alter table idle_time_stops enable row level security;
 alter table idle_time_settings enable row level security;

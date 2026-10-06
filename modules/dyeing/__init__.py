@@ -85,6 +85,20 @@ def register(app: Flask) -> None:
                 engine_name="reports",
             ),
         )
+    # "Idle Entry" (2026-10-05) — trang THỨ 2 của Engine `idle_time` (nhập tay lần dừng máy ca
+    # đêm, dùng trên điện thoại), dùng CHUNG quyền của Engine đó — chèn ngay sau "Idle Time".
+    if any(e.name == "idle_time" for e in engines_loaded):
+        idle_index = next(i for i, item in enumerate(children) if item.endpoint == f"{DOMAIN_NAME}.idle_time.view")
+        children.insert(
+            idle_index + 1,
+            NavItem(
+                label="Idle Entry",
+                endpoint=f"{DOMAIN_NAME}.idle_time.entry_view",
+                icon="pencil",
+                domain="dyeing",
+                engine_name="idle_time",
+            ),
+        )
     register_menu(
         label="Dyeing",
         endpoint=f"{DOMAIN_NAME}.hub",
