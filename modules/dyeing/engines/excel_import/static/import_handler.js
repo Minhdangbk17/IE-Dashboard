@@ -10,7 +10,6 @@
     const fileInput = document.getElementById("file-input");
     const label = document.getElementById("dropzone-label");
     const previewArea = document.getElementById("preview-area");
-    const previewTable = document.getElementById("preview-table");
     const previewErrors = document.getElementById("preview-errors");
     const result = document.getElementById("import-result");
     const progressTrack = document.getElementById("progress-track");
@@ -87,20 +86,6 @@
 
     function renderPreview(data) {
         previewArea.classList.remove("d-none");
-        previewTable.innerHTML = "";
-        const head = document.createElement("thead");
-        head.innerHTML = `<tr>${data.columns.map((column) => `<th>${column}</th>`).join("")}</tr>`;
-        const body = document.createElement("tbody");
-        data.preview.forEach((row) => {
-            const tr = document.createElement("tr");
-            data.columns.forEach((column) => {
-                const td = document.createElement("td");
-                td.textContent = row[column] ?? "";
-                tr.appendChild(td);
-            });
-            body.appendChild(tr);
-        });
-        previewTable.append(head, body);
         previewErrors.innerHTML = data.errors.length
             ? `<div class="flash flash-warn"><strong>${data.errors.length} invalid rows:</strong><ul>${data.errors.slice(0, 20).map((error) => `<li>Row ${error.row}: ${error.error}</li>`).join("")}</ul></div>`
             : `<div class="flash flash-success">${data.file_type}: ${data.valid_rows} valid rows.</div>`;
