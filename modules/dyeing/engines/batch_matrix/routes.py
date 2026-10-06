@@ -15,19 +15,25 @@ Blueprint & Route (API + View) của Engine "batch_matrix".
 - `GET  /dyeing/batch_matrix/api/batch-day-trend?capacities=&brand_programs=&tank_types=&require_redye_zero=1&from_date=&to_date=&group_by=`
   -> API JSON tab "Batch/Day Trend" (LUÔN 3 dòng Cotton/CVC/Polyester cố định — xem
   `batch_day_trend.py` cho công thức đầy đủ).
+- `GET  /dyeing/batch_matrix/api/batch-day-trend/batches?fabric_type=&period_key=&<filter Trend>`
+  -> API JSON danh sách đoạn (mẻ x ngày) của 1 ô Trend (`period_key` rỗng = ô Total).
+- `GET  /dyeing/batch_matrix/api/batch-day-trend/export?<filter Trend>[&fabric_type=&period_key=]`
+  -> File .xlsx: không có `fabric_type` = cả báo cáo (Trend + Batches), có = danh sách mẻ 1 ô.
 - `POST /dyeing/batch_matrix/api/batch-day-trend/targets/<fabric_type>` -> Set/update
   Target (giờ/kỳ) của 1 trong 3 loại vải chính cho báo cáo Batch/Day Trend.
 """
 from __future__ import annotations
 
+import io
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, send_file
 
 from core.auth import permission_required
 
 from . import service
-from .batch_day_trend import get_batch_day_trend, set_trend_target
+from .batch_day_trend import export_batch_day_trend_excel, get_batch_day_trend, get_trend_batches, set_trend_target
 
 if TYPE_CHECKING:
     from core.engine_base import BaseEngine
@@ -64,19 +70,57 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         brand_programs = request.args.get("brand_programs") or None
         return jsonify(service.get_day_batches(production_date, fabric_type, color_group, capacities, brand_programs=brand_programs))
 
+    def _trend_filters() -> dict[str, Any]:
+        """Bộ lọc tab Trend — dùng CHUNG cho bảng, drill-down và Export để luôn khớp nhau."""
+        return {
+            "capacities": request.args.get("capacities") or None,
+            "brand_programs": request.args.get("brand_programs") or None,
+            "tank_types": request.args.get("tank_types") or None,
+            "from_date": request.args.get("from_date") or None,
+            "to_date": request.args.get("to_date") or None,
+            "group_by": request.args.get("group_by", "date"),
+            "require_redye_zero": request.args.get("require_redye_zero", "1") != "0",
+        }
+
     @bp.route("/api/batch-day-trend")
     @permission_required("dyeing", "batch_matrix", "view")
     def api_batch_day_trend() -> Any:
-        data = get_batch_day_trend(
-            capacities=request.args.get("capacities") or None,
-            brand_programs=request.args.get("brand_programs") or None,
-            tank_types=request.args.get("tank_types") or None,
-            from_date=request.args.get("from_date") or None,
-            to_date=request.args.get("to_date") or None,
-            group_by=request.args.get("group_by", "date"),
-            require_redye_zero=request.args.get("require_redye_zero", "1") != "0",
-        )
+        return jsonify(get_batch_day_trend(**_trend_filters()))
+
+    @bp.route("/api/batch-day-trend/batches")
+    @permission_required("dyeing", "batch_matrix", "view")
+    def api_trend_batches() -> Any:
+        try:
+            data = get_trend_batches(
+                request.args.get("fabric_type", ""),
+                period_key=request.args.get("period_key") or None,
+                **_trend_filters(),
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         return jsonify(data)
+
+    @bp.route("/api/batch-day-trend/export")
+    @permission_required("dyeing", "batch_matrix", "view")
+    def api_trend_export() -> Any:
+        filters = _trend_filters()
+        fabric_type = request.args.get("fabric_type") or None
+        period_key = request.args.get("period_key") or None
+        try:
+            content = export_batch_day_trend_excel(**filters, fabric_type=fabric_type, period_key=period_key)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if filters["from_date"] and filters["to_date"]:
+            name_range = f"{filters['from_date']}_to_{filters['to_date']}"
+        else:
+            name_range = datetime.now().strftime("%Y-%m-%d")
+        scope = f"_{fabric_type}_{period_key or 'total'}" if fabric_type else ""
+        return send_file(
+            io.BytesIO(content),
+            as_attachment=True,
+            download_name=f"batch_day_trend{scope}_{name_range}.xlsx".replace(" ", "_"),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     @bp.route("/api/batch-day-trend/targets/<fabric_type>", methods=["POST"])
     @permission_required("dyeing", "batch_matrix", "edit")

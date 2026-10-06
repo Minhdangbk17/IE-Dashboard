@@ -1,6 +1,20 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-05 — **Idle Entry: nhập tay lần dừng máy (nhánh
+**Cập nhật lần cuối:** 2026-10-06 — **Batch/Day Trend: drill-down danh sách mẻ + Export Excel**
+(yêu cầu người dùng, đã chốt qua 6 câu hỏi). Bấm ô loại vải x kỳ hoặc ô Total -> drawer liệt kê
+TẤT CẢ đoạn (mẻ x ngày) góp giờ vào mẫu số (cả CM/Sample/Rework), cột Counted = được đếm vào tử
+số, checkbox "Only Normal"; mẻ qua đêm hiện ở mỗi ngày, chỉ Counted ở ngày kết thúc; cột "Hours
+in period" = giờ của đoạn đó. Meta drawer hiện Batch/Day tính lại + giá trị web để đối chiếu.
+Export: trong drawer (1 ô: sheet Batches + Filters) và ở filter bar (cả báo cáo: Trend gồm 3 khối
+Batch/Day / Normal batches / Occupied hours, Batches, Filters); sheet Batches có autofilter + khối
+"Check". Kỹ thuật: `batch_day_trend.py::_load_filtered_rows()` dùng chung cho bảng/drill/export;
+summary không có Dyelot -> tra ngược `batch_details` theo `start_time` (+ machine, dòng machine
+trống khớp theo start_time); 2 mẻ trùng (machine, start_time) tách giờ riêng; summary cũ hơn raw
+-> dòng "Not found in Batch". Route `/api/batch-day-trend/batches`, `/api/batch-day-trend/export`.
+Không đổi schema/không rebuild. Dữ liệu thật tháng 9 (theo tuần): mọi ô + Total khớp web, 0 dòng
+Not found. Chưa làm (người dùng chọn): bấm điểm biểu đồ / thẻ KPI.
+
+**Bản ghi trước:** 2026-10-05 — **Idle Entry: nhập tay lần dừng máy (nhánh
 `feature/idle-manual-entry`)**. Ca đêm chưa kịp upload Batch -> công nhân nhập Máy (Machine
 Master) / Từ / Đến (trống = vẫn dừng) / Reason / Detail trên trang `/dyeing/idle_time/entry` (dùng
 được trên điện thoại). Lưu `idle_time_stops`, ghép vào khoảng idle ở read time (quy tắc ở

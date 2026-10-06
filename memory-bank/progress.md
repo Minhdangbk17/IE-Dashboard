@@ -1074,6 +1074,10 @@
 - [x] 2026-10-05 — Idle Entry (nhập tay lần dừng ca đêm, ghép vào khoảng idle ở read time;
       `idle_time_stops` thay `idle_time_notes`; Target chỉ admin). CẦN
       `supabase/migrate_idle_time_stops.sql`.
+- [x] 2026-10-06 — Batch/Day Trend: bấm ô (loại vải x kỳ) / ô Total -> drawer danh sách mẻ
+      (mọi đoạn góp giờ + cờ Counted, lọc "Only Normal") + Export Excel cho 1 ô và cho cả báo
+      cáo (Trend / Batches / Filters, khối Check). Không đổi schema, không cần rebuild.
+      Test `tests/test_batch_day_trend_drilldown.py`.
 
 ## Backlog (Phase 2+)
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên

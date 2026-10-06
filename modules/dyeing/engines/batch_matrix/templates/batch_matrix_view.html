@@ -68,6 +68,7 @@
             </div>
             <div class="form-group mb-0"><label for="trend-group-by">Group By</label><select id="trend-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
             <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="trend-require-redye-zero" checked> ReDye = 0</label>
+            <button id="trend-export" class="btn" type="button" title="Trend table + every batch in the filtered range">Export Excel</button>
         </div>
     </section>
 
@@ -100,7 +101,21 @@
             <thead><tr id="trend-head"><th>Fabric Type</th><th>Target</th><th>Total</th></tr></thead>
             <tbody></tbody>
         </table>
-        <p class="f6 color-fg-muted mt-2 mb-0">Source: Batch Detail only. Blank/"Unknown" Fabric Type takes the Fabric Type of the next batch on the same machine. Batches spanning several production days (07:00→07:00) split their hours by day and are counted once, on the end day. Only Cotton/CVC/Polyester are shown; other fabric types are excluded from this report.</p>
+        <p class="f6 color-fg-muted mt-2 mb-0">Source: Batch Detail only. Blank/"Unknown" Fabric Type takes the Fabric Type of the next batch on the same machine. Batches spanning several production days (07:00→07:00) split their hours by day and are counted once, on the end day. Only Cotton/CVC/Polyester are shown; other fabric types are excluded from this report. Click a value or Total to see the batches behind it.</p>
+    </div>
+
+    <div id="trend-batches-drawer" class="drawer-overlay" aria-hidden="true">
+        <div class="drawer-panel" role="dialog" aria-labelledby="trend-batches-title">
+            <div class="drawer-header d-flex flex-justify-between flex-items-center" style="gap:12px">
+                <div><h3 class="Box-title mb-0" id="trend-batches-title">Batches</h3><p class="f6 color-fg-muted mb-0" id="trend-batches-meta"></p></div>
+                <div class="d-flex flex-items-center" style="gap:12px">
+                    <label class="f6 mb-0" style="display:flex;align-items:center;gap:6px;white-space:nowrap" title="Show only the Normal batches counted in this cell (the numerator)"><input type="checkbox" id="trend-only-normal"> Only Normal</label>
+                    <button class="btn btn-sm" id="trend-batches-export" type="button">Export Excel</button>
+                    <button class="btn btn-sm" id="trend-batches-close" type="button">Close</button>
+                </div>
+            </div>
+            <div class="drawer-body" id="trend-batches-body"><div class="drawer-empty">Loading...</div></div>
+        </div>
     </div>
 </section>
 
@@ -159,6 +174,8 @@
 (function () { "use strict"; const matrixUrl = "{{ url_for('dyeing.batch_matrix.api_matrix') }}";
     const dayBatchesUrl = "{{ url_for('dyeing.batch_matrix.api_day_batches') }}";
     const trendUrl = "{{ url_for('dyeing.batch_matrix.api_batch_day_trend') }}";
+    const trendBatchesUrl = "{{ url_for('dyeing.batch_matrix.api_trend_batches') }}";
+    const trendExportUrl = "{{ url_for('dyeing.batch_matrix.api_trend_export') }}";
 
     function fmtValue(value) {
         return value === null || value === undefined ? "-" : Number(value).toFixed(2);
@@ -451,19 +468,112 @@
         });
     }
 
-    document.querySelector("#trend-table tbody").addEventListener("click", (event) => {
+    const trendTbody = document.querySelector("#trend-table tbody");
+    trendTbody.addEventListener("click", (event) => {
+        const batchCell = event.target.closest("td.cell-clickable");
+        if (batchCell) { openTrendBatches(batchCell); return; }
         const cell = event.target.closest(".case-note-cell");
         if (!cell || !cell.dataset.fabricType) return;
         startEditingTrendTarget(cell);
     });
+    trendTbody.addEventListener("keydown", (event) => {
+        const batchCell = event.target.closest("td.cell-clickable");
+        if (batchCell && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openTrendBatches(batchCell); }
+    });
+
+    // Ô số liệu + ô Total bấm được -> drawer danh sách mẻ (period_key rỗng = Total).
+    function trendBatchCell(row, periodKey, periodLabel, value, isTotal) {
+        const text = Number(value).toFixed(2);
+        return `<td class="cell-clickable" tabindex="0" title="Click to see batches" data-fabric-type="${escAttr(row.fabric_type)}" data-period-key="${escAttr(periodKey)}" data-period-label="${escAttr(periodLabel)}" data-value="${text}">${isTotal ? `<strong>${text}</strong>` : text}</td>`;
+    }
 
     function renderTrendTable(data) {
         const head = document.getElementById("trend-head");
         head.innerHTML = "<th>Fabric Type</th><th>Target</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
-        document.querySelector("#trend-table tbody").innerHTML = data.rows.map((row) =>
-            `<tr><th>${row.fabric_type}</th>${renderTrendTargetCell(row)}${row.values.map((value) => `<td>${Number(value).toFixed(2)}</td>`).join("")}<td><strong>${Number(row.total).toFixed(2)}</strong></td></tr>`
+        trendTbody.innerHTML = data.rows.map((row) =>
+            `<tr><th>${row.fabric_type}</th>${renderTrendTargetCell(row)}` +
+            row.values.map((value, i) => trendBatchCell(row, data.period_keys[i], data.periods[i], value, false)).join("") +
+            trendBatchCell(row, "", "Total", row.total, true) + `</tr>`
         ).join("");
     }
+
+    // -----------------------------------------------------------------
+    // Drawer danh sách mẻ của 1 ô Trend + Export Excel
+    // -----------------------------------------------------------------
+    let lastTrendParams = null;
+    let trendBatchesCell = null; // { fabricType, periodKey, periodLabel, webValue }
+    let trendBatchesData = null;
+    const trendDrawer = document.getElementById("trend-batches-drawer");
+    function closeTrendBatches() { trendDrawer.classList.remove("is-open"); trendDrawer.setAttribute("aria-hidden", "true"); }
+    document.getElementById("trend-batches-close").addEventListener("click", closeTrendBatches);
+    trendDrawer.addEventListener("click", (event) => { if (event.target === trendDrawer) closeTrendBatches(); });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape" && trendDrawer.classList.contains("is-open")) closeTrendBatches(); });
+    document.getElementById("trend-only-normal").addEventListener("change", () => { if (trendBatchesData) renderTrendBatches(trendBatchesData); });
+
+    function trendCellParams() {
+        const params = new URLSearchParams(lastTrendParams || trendParams());
+        params.set("fabric_type", trendBatchesCell.fabricType);
+        params.set("period_key", trendBatchesCell.periodKey);
+        return params;
+    }
+
+    function openTrendBatches(cell) {
+        trendBatchesCell = {
+            fabricType: cell.dataset.fabricType,
+            periodKey: cell.dataset.periodKey,
+            periodLabel: cell.dataset.periodLabel,
+            webValue: cell.dataset.value,
+        };
+        trendBatchesData = null;
+        document.getElementById("trend-batches-title").textContent = `${trendBatchesCell.fabricType} · ${trendBatchesCell.periodLabel}`;
+        document.getElementById("trend-batches-meta").textContent = "";
+        document.getElementById("trend-batches-body").innerHTML = `<div class="drawer-empty">Loading...</div>`;
+        trendDrawer.classList.add("is-open");
+        trendDrawer.setAttribute("aria-hidden", "false");
+        const requested = trendBatchesCell;
+        fetch(`${trendBatchesUrl}?${trendCellParams()}`).then((response) => response.json()).then((data) => {
+            if (requested !== trendBatchesCell) return;
+            if (data.error) throw new Error(data.error);
+            trendBatchesData = data;
+            renderTrendBatches(data);
+        }).catch(() => {
+            document.getElementById("trend-batches-body").innerHTML = `<div class="drawer-empty">Failed to load batches.</div>`;
+        });
+    }
+
+    function renderTrendBatches(data) {
+        const s = data.summary;
+        document.getElementById("trend-batches-meta").textContent =
+            `${s.segments} rows · ${Number(s.occupied_hours).toLocaleString()} h occupied · ${s.normal_batches} Normal counted · ` +
+            `Batch/Day = ${s.normal_batches} × 24 / ${Number(s.occupied_hours).toLocaleString()} = ${Number(s.batch_per_day).toFixed(2)} (web: ${trendBatchesCell.webValue})`;
+        const onlyNormal = document.getElementById("trend-only-normal").checked;
+        const shown = onlyNormal ? data.batches.filter((b) => b.counted) : data.batches;
+        const body = document.getElementById("trend-batches-body");
+        if (!shown.length) {
+            body.innerHTML = `<div class="drawer-empty">${data.batches.length ? "No counted Normal batches in this cell." : "No batches match the current filters."}</div>`;
+            return;
+        }
+        const dash = (value) => (value === null || value === undefined || value === "" ? "-" : escHtml(value));
+        body.innerHTML = `<table class="preview-table"><thead><tr>` +
+            ["Production Date", "Machine", "Capacity (Kg)", "Tank", "Dyelot", "SapLot", "ReDye", "Brand Program", "Fabric Type", "Start", "End", "Hours in period", "Classification", "Counted"].map((h) => `<th>${h}</th>`).join("") +
+            `</tr></thead><tbody>` +
+            shown.map((b) => `<tr>` +
+                `<td>${dash(b.production_date)}</td><td>${dash(b.machine)}</td><td>${dash(b.capacity_kg)}</td><td>${dash(b.tank)}</td>` +
+                `<td>${dash(b.dyelot)}</td><td>${dash(b.sap_lot)}</td><td>${dash(b.redye)}</td><td>${dash(b.brand_program)}</td>` +
+                `<td>${escHtml(b.fabric_type)}${b.fabric_filled ? ` <span class="f6 color-fg-muted" title="Fabric Type blank in Batch — taken from the next batch on the same machine">(from next)</span>` : ""}</td>` +
+                `<td>${dash(b.start_time)}</td><td>${dash(b.end_time)}</td><td>${Number(b.hours).toFixed(2)}</td>` +
+                `<td>${escHtml(b.classification)}</td>` +
+                `<td>${b.counted ? `<span class="Label">Yes</span>` : `<span class="Label Label--secondary">No</span>`}</td>` +
+                `</tr>`).join("") +
+            `</tbody></table>`;
+    }
+
+    document.getElementById("trend-batches-export").addEventListener("click", () => {
+        if (trendBatchesCell) window.location.href = `${trendExportUrl}?${trendCellParams()}`;
+    });
+    document.getElementById("trend-export").addEventListener("click", () => {
+        window.location.href = `${trendExportUrl}?${trendParams()}`;
+    });
 
     function trendCanvasId(fabricType) {
         return `trend-chart-${fabricType.toLowerCase()}`;
@@ -524,8 +634,9 @@
     // đã áp — sau đó cờ này khoá lại, không tự áp lại nữa dù người dùng có xoá hết lựa chọn.
     let trendCapacityDefaultApplied = false;
 
-    function loadTrend() {
-        const params = new URLSearchParams({
+    // 1 bộ tham số lọc DUY NHẤT cho bảng Trend, drill-down và Export (UI_GUIDELINES 5.4).
+    function trendParams() {
+        return new URLSearchParams({
             from_date: document.getElementById("trend-from").value,
             to_date: document.getElementById("trend-to").value,
             group_by: document.getElementById("trend-group-by").value,
@@ -534,6 +645,10 @@
             tank_types: trendTankFilter.selected().join(","),
             require_redye_zero: document.getElementById("trend-require-redye-zero").checked ? "1" : "0",
         });
+    }
+
+    function loadTrend() {
+        const params = trendParams();
         fetch(`${trendUrl}?${params}`).then((response) => response.json()).then((data) => {
             trendCapacityFilter.setOptions((data.available_capacities || []).map(String));
             trendBrandProgramFilter.setOptions(data.available_brand_programs || []);
@@ -551,6 +666,7 @@
             document.querySelector(".kpi-valid-batches").textContent = Number(data.kpis.valid_batches).toLocaleString();
             document.querySelector(".kpi-total-hours").textContent = Number(data.kpis.total_planned_hours).toLocaleString();
             lastTrendData = data;
+            lastTrendParams = params;
             renderTrendTable(data);
             updateTrendChart(data);
         }).catch((error) => { console.error("Batch/Day Trend load failed:", error); });
