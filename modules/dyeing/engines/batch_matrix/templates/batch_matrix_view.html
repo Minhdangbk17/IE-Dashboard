@@ -130,16 +130,18 @@
                 <div id="capacity-menu" class="capacity-menu" hidden></div>
             </div>
             <div class="form-group mb-0 capacity-dropdown">
-                <label for="fabric-type-toggle">Fabric Type</label>
-                <button id="fabric-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All fabric types</button>
-                <div id="fabric-type-menu" class="capacity-menu" hidden></div>
-            </div>
-            <div class="form-group mb-0 capacity-dropdown">
                 <label for="brand-program-toggle">Brand Program</label>
                 <button id="brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
                 <div id="brand-program-menu" class="capacity-menu" hidden></div>
             </div>
-            <button id="matrix-load" class="btn btn-primary">View Report</button>
+            <div class="form-group mb-0 capacity-dropdown">
+                <label for="matrix-tank-toggle">Tank Type</label>
+                <button id="matrix-tank-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All tanks</button>
+                <div id="matrix-tank-menu" class="capacity-menu" hidden></div>
+            </div>
+            <div class="form-group mb-0"><label for="matrix-group-by">Group By</label><select id="matrix-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
+            <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="matrix-require-redye-zero" checked> ReDye = 0</label>
+            <button id="matrix-export" class="btn" type="button" title="Matrix table + every counted batch in the filtered range">Export Excel</button>
         </div>
     </section>
 
@@ -150,7 +152,7 @@
         <thead><tr id="matrix-head"></tr></thead>
         <tbody></tbody>
     </table>
-    <p class="f6 color-fg-muted mt-2 mb-0">Click a cell to see the batches behind that number.</p>
+    <p class="f6 color-fg-muted mt-2 mb-0">Normal dyeing batches only (Dyelot *0, SapLot 1*/3*, + ReDye = 0 if ticked). Week/Month = batches in period × 24 / machine hours in period. Click a cell or Total to see the batches behind that number.</p>
     </div>
 
     <div id="day-batches-overlay" class="day-batches-overlay" hidden>
@@ -172,7 +174,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 (function () { "use strict"; const matrixUrl = "{{ url_for('dyeing.batch_matrix.api_matrix') }}";
-    const dayBatchesUrl = "{{ url_for('dyeing.batch_matrix.api_day_batches') }}";
+    const dayBatchesUrl = "{{ url_for('dyeing.batch_matrix.api_matrix_batches') }}";
+    const matrixExportUrl = "{{ url_for('dyeing.batch_matrix.api_matrix_export') }}";
     const trendUrl = "{{ url_for('dyeing.batch_matrix.api_batch_day_trend') }}";
     const trendBatchesUrl = "{{ url_for('dyeing.batch_matrix.api_trend_batches') }}";
     const trendExportUrl = "{{ url_for('dyeing.batch_matrix.api_trend_export') }}";
@@ -265,43 +268,57 @@
     dayBatchesOverlay.addEventListener("click", (event) => { if (event.target === dayBatchesOverlay) closeDayBatches(); });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !dayBatchesOverlay.hidden) closeDayBatches(); });
 
-    function openDayBatches(day, fabricType, colorGroup) {
-        dayBatchesTitle.textContent = `${fabricType} / ${colorGroup} — ${day}`;
+    // Drill-down 1 ô ma trận (kỳ đang bấm, `period_key` rỗng = ô Total) — dùng ĐÚNG bộ tham
+    // số của lần tải bảng gần nhất để danh sách luôn khớp con số đang hiển thị.
+    let lastMatrixParams = null;
+    function openDayBatches(periodKey, periodLabel, fabricType, colorGroup) {
+        dayBatchesTitle.textContent = `${fabricType} / ${colorGroup} — ${periodLabel}`;
         dayBatchesBody.innerHTML = `<p class="color-fg-muted">Loading...</p>`;
         dayBatchesOverlay.hidden = false;
-        const params = new URLSearchParams({ date: day, fabric_type: fabricType, color_group: colorGroup });
-        capacityFilter.selected().forEach((value) => params.append("capacity", value));
-        params.set("brand_programs", brandProgramFilter.selected().join(","));
+        const params = new URLSearchParams(lastMatrixParams || matrixParams());
+        params.set("fabric_type", fabricType);
+        params.set("color_group", colorGroup);
+        params.set("period_key", periodKey);
         fetch(`${dayBatchesUrl}?${params}`).then((response) => response.json()).then((batches) => {
             if (!Array.isArray(batches) || !batches.length) {
                 dayBatchesBody.innerHTML = `<p class="color-fg-muted">No batches match the current filters.</p>`;
                 return;
             }
-            dayBatchesBody.innerHTML = `<p class="f6 color-fg-muted">${batches.length} batches (cross-checked directly against raw data).</p>` +
-                `<table class="preview-table"><thead><tr><th>Machine</th><th>Batch No</th><th>Dyelot</th><th>Shade</th><th>ColourNo</th><th>Capacity (Kg)</th><th>Start</th><th>End</th></tr></thead><tbody>` +
-                batches.map((batch) => `<tr><td>${escHtml(batch.machine) || "-"}</td><td>${escHtml(batch.batch_no) || "-"}</td><td>${escHtml(batch.dyelot) || "-"}</td><td>${escHtml(batch.shade) || "-"}</td><td>${escHtml(batch.colour_no) || "-"}</td><td>${batch.capacity_kg ?? "-"}</td><td>${escHtml(batch.start_time) || "-"}</td><td>${escHtml(batch.end_time) || "-"}</td></tr>`).join("") +
+            const dash = (value) => (value === null || value === undefined || value === "" ? "-" : escHtml(value));
+            dayBatchesBody.innerHTML = `<p class="f6 color-fg-muted">${batches.length} Normal batches counted in this cell.</p>` +
+                `<table class="preview-table"><thead><tr><th>Production Date</th><th>Machine</th><th>Batch No</th><th>Dyelot</th><th>SapLot</th><th>ReDye</th><th>Shade</th><th>ColourNo</th><th>Capacity (Kg)</th><th>Tank</th><th>Start</th><th>End</th></tr></thead><tbody>` +
+                batches.map((batch) => `<tr><td>${dash(batch.day)}</td><td>${dash(batch.machine)}</td><td>${dash(batch.batch_no)}</td><td>${dash(batch.dyelot)}</td><td>${dash(batch.sap_lot)}</td><td>${dash(batch.redye)}</td><td>${dash(batch.shade)}</td><td>${dash(batch.colour_no)}</td><td>${dash(batch.capacity)}</td><td>${dash(batch.tank)}</td><td>${dash(batch.start_time)}</td><td>${dash(batch.end_time)}</td></tr>`).join("") +
                 `</tbody></table>`;
         }).catch(() => { dayBatchesBody.innerHTML = `<p class="color-fg-muted">Failed to load batches.</p>`; });
     }
 
-    document.querySelector("#matrix-table tbody").addEventListener("click", (event) => {
+    const matrixTbody = document.querySelector("#matrix-table tbody");
+    matrixTbody.addEventListener("click", (event) => {
         const cell = event.target.closest("td.cell-clickable");
         if (!cell) return;
-        openDayBatches(cell.dataset.date, cell.dataset.fabricType, cell.dataset.colorGroup);
+        openDayBatches(cell.dataset.periodKey, cell.dataset.periodLabel, cell.dataset.fabricType, cell.dataset.colorGroup);
+    });
+    matrixTbody.addEventListener("keydown", (event) => {
+        const cell = event.target.closest("td.cell-clickable");
+        if (!cell || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        openDayBatches(cell.dataset.periodKey, cell.dataset.periodLabel, cell.dataset.fabricType, cell.dataset.colorGroup);
     });
 
     function renderSummary(data) {
-        const dateRange = data.days.length ? `${data.days[0]} → ${data.days[data.days.length - 1]}` : "-";
         document.getElementById("matrix-summary").innerHTML = [
-            ["Date Range", dateRange],
             ["Grand Total (batches/machine)", fmtValue(data.grand_total)],
-            ["Days", data.days.length],
+            ["Days", data.day_count || 0],
         ].map(([label, value]) => `<div class="Box p-3" style="min-width:200px"><span class="f6 color-fg-muted">${label}</span><strong class="h2 d-block">${value}</strong></div>`).join("");
+    }
+
+    function matrixClickableCell(cls, row, periodKey, periodLabel, content) {
+        return `<td class="${cls} cell-clickable" tabindex="0" data-period-key="${escAttr(periodKey)}" data-period-label="${escAttr(periodLabel)}" data-fabric-type="${escAttr(row.fabric_type)}" data-color-group="${escAttr(row.color_group)}">${content}</td>`;
     }
 
     function renderTable(data) {
         const head = document.getElementById("matrix-head");
-        head.innerHTML = `<th>Fabric Type</th><th>Color Group</th><th>Target</th><th>Total</th>` + data.day_labels.map((label) => `<th>${label}</th>`).join("");
+        head.innerHTML = `<th>Fabric Type</th><th>Color Group</th><th>Target</th><th>Total</th>` + data.periods.map((label) => `<th>${label}</th>`).join("");
 
         if (!data.rows.length) {
             document.querySelector("#matrix-table tbody").innerHTML = `<tr><td colspan="4" class="color-fg-muted">No data yet.</td></tr>`;
@@ -316,14 +333,14 @@
         const fabricSpanWritten = new Set();
 
         const bodyRows = data.rows.map((row) => {
-            const dayCells = data.days.map((day) => {
-                const value = row.days[day];
+            const dayCells = data.period_keys.map((key, i) => {
+                const value = row.values[key] ?? null;
                 let cls = value === null ? "cell-empty" : "";
                 if (row.row_type === "data" && row.target !== null && row.target !== undefined && value !== null) {
                     cls = value >= row.target ? "cell-above-target" : "cell-below-target";
                 }
                 if (row.row_type === "data" && value !== null) {
-                    return `<td class="${cls} cell-clickable" data-date="${escAttr(day)}" data-fabric-type="${escAttr(row.fabric_type)}" data-color-group="${escAttr(row.color_group)}">${fmtValue(value)}</td>`;
+                    return matrixClickableCell(cls, row, key, data.periods[i], fmtValue(value));
                 }
                 return `<td class="${cls}">${fmtValue(value)}</td>`;
             }).join("");
@@ -333,7 +350,8 @@
                 fabricSpanWritten.add(row.fabric_type);
                 const fabricCell = isFirstOfGroup ? `<td class="col-fabric" rowspan="${fabricRowCount[row.fabric_type] + 1}">${row.fabric_type}</td>` : "";
                 const colorGroupClass = row.color_group === "Unclassified" ? "col-color color-group-unclassified" : "col-color";
-                return `<tr>${fabricCell}<td class="${colorGroupClass}">${row.color_group}</td><td>${row.target === null || row.target === undefined ? "-" : fmtValue(row.target)}</td><td><strong>${fmtValue(row.total)}</strong></td>${dayCells}</tr>`;
+                const totalCell = row.total === null ? `<td><strong>${fmtValue(row.total)}</strong></td>` : matrixClickableCell("", row, "", "Total", `<strong>${fmtValue(row.total)}</strong>`);
+                return `<tr>${fabricCell}<td class="${colorGroupClass}">${row.color_group}</td><td>${row.target === null || row.target === undefined ? "-" : fmtValue(row.target)}</td>${totalCell}${dayCells}</tr>`;
             }
             if (row.row_type === "fabric_total") {
                 return `<tr class="row-fabric-total"><td class="col-color" colspan="2">Total (${row.fabric_type})</td><td>-</td><td><strong>${fmtValue(row.total)}</strong></td>${dayCells}</tr>`;
@@ -344,27 +362,52 @@
     }
 
     const capacityFilter = makeMultiSelectDropdown("capacity-toggle", "capacity-menu", "All capacities", load);
-    const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", load);
     const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", load);
+    const matrixTankFilter = makeMultiSelectDropdown("matrix-tank-toggle", "matrix-tank-menu", "All tanks", load);
+    let matrixCapacityDefaultApplied = false;
 
-    function load() {
-        const params = new URLSearchParams({
-            date_from: document.getElementById("matrix-from").value,
-            date_to: document.getElementById("matrix-to").value,
-            fabric_types: fabricTypeFilter.selected().join(","),
+    // Bộ lọc + tên tham số GIỐNG HỆT tab Trend (`trendParams()`), dùng chung cho bảng,
+    // drill-down và Export.
+    function matrixParams() {
+        return new URLSearchParams({
+            from_date: document.getElementById("matrix-from").value,
+            to_date: document.getElementById("matrix-to").value,
+            group_by: document.getElementById("matrix-group-by").value,
+            capacities: capacityFilter.selected().join(","),
             brand_programs: brandProgramFilter.selected().join(","),
-        });
-        capacityFilter.selected().forEach((value) => params.append("capacity", value));
-        fetch(`${matrixUrl}?${params}`).then((response) => response.json()).then((data) => {
-            capacityFilter.setOptions((data.available_capacities || []).map(String));
-            fabricTypeFilter.setOptions(data.available_fabric_types || []);
-            brandProgramFilter.setOptions(data.available_brand_programs || []);
-            renderSummary(data);
-            renderTable(data);
+            tank_types: matrixTankFilter.selected().join(","),
+            require_redye_zero: document.getElementById("matrix-require-redye-zero").checked ? "1" : "0",
         });
     }
 
-    document.getElementById("matrix-load").addEventListener("click", load);
+    function load() {
+        const params = matrixParams();
+        fetch(`${matrixUrl}?${params}`).then((response) => response.json()).then((data) => {
+            capacityFilter.setOptions((data.available_capacities || []).map(String));
+            brandProgramFilter.setOptions(data.available_brand_programs || []);
+            matrixTankFilter.setOptions(data.available_tank_types || []);
+            // Mặc định giống Trend: lần tải đầu tự chọn Capacity >= 500Kg.
+            if (!matrixCapacityDefaultApplied) {
+                matrixCapacityDefaultApplied = true;
+                const defaultCapacities = (data.available_capacities || []).filter((value) => Number(value) >= 500).map(String);
+                if (defaultCapacities.length) {
+                    capacityFilter.setSelected(defaultCapacities);
+                    load();
+                    return;
+                }
+            }
+            lastMatrixParams = params;
+            renderSummary(data);
+            renderTable(data);
+        }).catch((error) => { console.error("Fabric/Color Matrix load failed:", error); });
+    }
+
+    ["matrix-from", "matrix-to", "matrix-group-by", "matrix-require-redye-zero"].forEach((id) => {
+        document.getElementById(id).addEventListener("change", load);
+    });
+    document.getElementById("matrix-export").addEventListener("click", () => {
+        window.location.href = `${matrixExportUrl}?${matrixParams()}`;
+    });
 
     // -----------------------------------------------------------------
     // Tab "Batch/Day Trend"
@@ -706,6 +749,8 @@
     const trendDefaultRange = defaultTrendRange();
     document.getElementById("trend-from").value = trendDefaultRange.from;
     document.getElementById("trend-to").value = trendDefaultRange.to;
+    document.getElementById("matrix-from").value = trendDefaultRange.from;
+    document.getElementById("matrix-to").value = trendDefaultRange.to;
 
     load();
     loadTrend();

@@ -44,7 +44,7 @@ def _init_schema(db_path: str) -> None:
     conn.execute("""
         CREATE TABLE availability_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            batch TEXT, fabric_type TEXT, machine TEXT, capacity_kg REAL,
+            batch TEXT, batch_ref_no TEXT, fabric_type TEXT, machine TEXT, capacity_kg REAL,
             start_time TEXT, end_time TEXT
         )
     """)
@@ -52,10 +52,11 @@ def _init_schema(db_path: str) -> None:
         CREATE TABLE batch_details (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             dyelot TEXT NOT NULL, shade TEXT, colour_no TEXT, batch_type TEXT, greige_code TEXT,
-            machine TEXT, start_time TEXT, end_time TEXT
+            machine TEXT, start_time TEXT, end_time TEXT, sap_lot TEXT, redye REAL DEFAULT 0
         )
     """)
     conn.execute("CREATE UNIQUE INDEX uq_batch_details_dyelot_machine_start ON batch_details(dyelot, machine, start_time)")
+    conn.execute("CREATE TABLE machines (machine_code TEXT, machine_id TEXT, capacity_kg REAL, tank_type TEXT)")
     conn.commit()
     conn.close()
 
@@ -194,17 +195,18 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
         conn.executemany(
             "INSERT INTO availability_logs (batch, fabric_type, machine, capacity_kg, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)",
             [
-                ("M1-DARK", "CVC", "M1", 700, "2026-09-10 07:00:00", "2026-09-10 11:00:00"),
-                ("M1-MED", "CVC", "M1", 700, "2026-09-10 11:00:00", "2026-09-10 16:00:00"),
-                ("M2-DARK", "CVC", "M2", 700, "2026-09-10 07:00:00", "2026-09-10 13:00:00"),
+                # Dyelot *0 + SapLot 1* = mẻ Normal theo quy tắc Trend (build_matrix từ 2026-10-06).
+                ("M1-DARK0", "CVC", "M1", 700, "2026-09-10 07:00:00", "2026-09-10 11:00:00"),
+                ("M1-MED0", "CVC", "M1", 700, "2026-09-10 11:00:00", "2026-09-10 16:00:00"),
+                ("M2-DARK0", "CVC", "M2", 700, "2026-09-10 07:00:00", "2026-09-10 13:00:00"),
             ],
         )
         conn.executemany(
-            "INSERT INTO batch_details (dyelot, shade, colour_no, batch_type) VALUES (?, ?, ?, ?)",
+            "INSERT INTO batch_details (dyelot, shade, colour_no, batch_type, sap_lot) VALUES (?, ?, ?, ?, '1000')",
             [
-                ("M1-DARK", "Dark", "091-NAVY", "Normal"),
-                ("M1-MED", "Medium", "500-GREY", "Normal"),
-                ("M2-DARK", "Dark", "091-NAVY", "Normal"),
+                ("M1-DARK0", "Dark", "091-NAVY", "Normal"),
+                ("M1-MED0", "Medium", "500-GREY", "Normal"),
+                ("M2-DARK0", "Dark", "091-NAVY", "Normal"),
             ],
         )
         conn.commit()
@@ -233,8 +235,11 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
         with app.app_context():
             data = build_matrix()
             fabric_total_row = next(r for r in data["rows"] if r["row_type"] == "fabric_total" and r["fabric_type"] == "CVC")
-            total_cvc_value = fabric_total_row["days"].get(day.isoformat())
+            total_cvc_value = fabric_total_row["values"].get(day.isoformat())
+            week = build_matrix(group_by="week")
+            week_total = next(r for r in week["rows"] if r["row_type"] == "fabric_total" and r["fabric_type"] == "CVC")
             close_db()
+        _check("Group By Week: cột tuần = giá trị ngày duy nhất (4.8)", week_total["values"].get(week["period_keys"][0]), 4.8, failures, tolerance=0.01)
 
         _check("Total(CVC) từ build_matrix() (PHẢI khử trùng M1, ra 4.8 KHÔNG PHẢI 3.0)", total_cvc_value, 4.8, failures, tolerance=0.01)
         if total_cvc_value == naive_value:

@@ -33,7 +33,7 @@ class BatchMatrixEngine(BaseEngine):
             ),
             data_sources=["availability_logs", "batch_details", "machines", "brand_program_mapping"],
             data_sinks=["batch_matrix_targets", "batch_matrix_daily_summary", "batch_day_trend_daily_summary"],
-            # "reports": Trend dùng lại `classify_batch_badge()` (quy tắc Normal dyeing).
+            # "reports": Trend + Matrix (từ 2026-10-06) dùng lại `classify_batch_badge()` (quy tắc Normal dyeing).
             depends_on=["excel_import", "reports"],
         )
 

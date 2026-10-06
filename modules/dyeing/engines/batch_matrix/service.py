@@ -3,6 +3,14 @@ modules/dyeing/engines/batch_matrix/service.py
 --------------------------------------------------
 Ma trận Số mẻ/Máy theo Ngày: pivot Fabric Type x Color Group x Ngày sản xuất.
 
+2026-10-06 (yêu cầu người dùng): bộ lọc + mặc định GIỐNG HỆT tab Batch/Day Trend (Capacity,
+Brand Program, Tank Type, Group By Day/Week/Month, ReDye = 0; bỏ filter Fabric Type), mẻ Normal
+theo quy tắc Trend (`classify_batch_badge()`) thay cho `batch_type = 'Normal'`. `build_matrix()`
+giờ tính TRỰC TIẾP từ raw cho mọi dòng (xem mục "Đọc báo cáo" bên dưới) — KHÔNG còn đọc
+`batch_matrix_daily_summary`; `recompute_daily()` vẫn ghi bảng đó (quy tắc cũ) nhưng không
+còn báo cáo nào đọc. Capacity + Tank tra Machine Master (`machines`) giống Trend, KHÔNG dùng
+`availability_logs.capacity_kg`. Công thức mẫu số (giờ của ĐÚNG tập máy, khử trùng máy) giữ nguyên.
+
 Daily Rollup Pattern (xem `memory-bank/systemPatterns.md`): JOIN `availability_logs`
 với `batch_details` để lấy Shade/ColourNo/BatchType (phần tốn kém nhất — quét toàn bộ
 dòng khớp bộ lọc mỗi lần load trang) giờ CHỈ chạy 1 lần trong `recompute_daily()`, lưu
@@ -52,13 +60,20 @@ giờ nếu tái diễn.
 """
 from __future__ import annotations
 
+import io
 from datetime import date, datetime, timedelta
 from typing import Any
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 
 from core.batch_details_match import batch_details_join_sql
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import execute_query, get_db, get_dialect, sql_datetime
 from core.production_time import get_production_date, normalize_production_date, production_bounds, production_date_sql_expr
+from modules.dyeing.engines.reports.cleaning_matrix import UNCLASSIFIED_TANK_LABEL
+
+from .batch_day_trend import _TANK_ORDER, _is_normal_batch, _machine_capacities, _machine_tank_labels, _period
 
 # Nhãn "Brand - Program" suy từ batch/dyelot -> greige_code -> brand_program_mapping (cùng
 # cơ chế `downtime/service.py`/`reports/cleaning_matrix.py`) — reuse alias `b` (batch_details)
@@ -304,32 +319,31 @@ def recompute_daily(production_date: date, conn: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Đọc báo cáo — dòng "data" đọc từ batch_matrix_daily_summary; dòng Total(Fabric)/
-# Grand Total PHẢI truy vấn lại raw data để khử trùng máy (xem docstring đầu file).
+# Đọc báo cáo (2026-10-06) — TÍNH TRỰC TIẾP từ raw data cho MỌI dòng (không còn đọc
+# `batch_matrix_daily_summary`): dòng Total(Fabric)/Grand Total vốn đã luôn phải truy vấn raw để
+# khử trùng máy, nay dòng "data" dùng chung 1 lần truy vấn đó. Bộ lọc + mặc định GIỐNG HỆT tab
+# Batch/Day Trend (theo yêu cầu người dùng): Capacity, Brand Program, Tank Type, Group By
+# (Day/Week/Month), ReDye = 0. Mẻ Normal theo ĐÚNG quy tắc Trend (`classify_batch_badge()`:
+# Dyelot *0, SapLot 1*/3*, ReDye = 0 nếu bật) — thay cho `batch_type = 'Normal'` cũ; dòng
+# availability không JOIN được batch_details (không có Dyelot/SapLot) -> không tính.
+# Ô Week/Month = tổng mẻ trong kỳ * 24 / tổng giờ máy trong kỳ (giờ mỗi máy tính 1 lần/ngày).
 # ---------------------------------------------------------------------------
 
 
-def _raw_matrix_rows(date_from: str | None, date_to: str | None) -> list[dict[str, Any]]:
-    """Trả về TOÀN BỘ dòng raw (đã lọc base: FabricType hợp lệ + batch_type Normal, ĐÃ phân
-    loại color_group + suy Brand Program) trong khoảng ngày — nguồn DUY NHẤT cho mọi tính
-    toán cần khử trùng máy: Total(Fabric)/Grand Total (LUÔN LUÔN, bất kể có Brand Program
-    filter hay không) VÀ toàn bộ ma trận khi có Brand Program filter (bảng rollup
-    `batch_matrix_daily_summary` KHÔNG lưu theo brand_program — xem lý do ở
-    `_ensure_summary_table()`: 1 máy có thể chạy NHIỀU brand_program cùng ngày nên không thể
-    lưu sẵn operating_hours theo từng nhóm brand_program rồi cộng lại, sẽ tái diễn đúng bug
-    COUNT DISTINCT đã tốn 3 lần sửa). KHÔNG lọc theo capacity/fabric_type/brand_program ở
-    đây — lọc ở tầng gọi (`_aggregate_raw_rows()`) để tái dùng 1 lần truy vấn DB cho nhiều tổ
-    hợp filter khác nhau trong CÙNG 1 request."""
+def _raw_matrix_rows(date_from: str | None, date_to: str | None, require_redye_zero: bool = True) -> list[dict[str, Any]]:
+    """TOÀN BỘ mẻ Normal (theo quy tắc Trend) có FabricType hợp lệ trong khoảng ngày, ĐÃ phân
+    loại color_group + suy Brand Program. KHÔNG lọc capacity/brand_program/tank ở đây — lọc ở
+    `_build_core()` để `available_*` phản ánh toàn bộ khoảng ngày (giống Trend)."""
     shifted_date = production_date_sql_expr("a.end_time")
     sql = f"""
-        SELECT {shifted_date} AS production_date, a.fabric_type, a.machine, a.capacity_kg,
-               b.shade, b.colour_no, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
+        SELECT {shifted_date} AS production_date, a.fabric_type, a.machine,
+               a.batch, a.batch_ref_no, a.start_time, a.end_time,
+               b.dyelot, b.sap_lot, b.redye, b.shade, b.colour_no, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM availability_logs a
         {batch_details_join_sql("a.batch", "a.end_time")}
         {_BRAND_PROGRAM_JOIN_SQL}
         WHERE a.end_time IS NOT NULL AND a.end_time != ''
           AND a.fabric_type IS NOT NULL AND lower(trim(a.fabric_type)) NOT IN (?, ?, ?)
-          AND (b.batch_type IS NULL OR lower(trim(b.batch_type)) = 'normal')
     """
     params: list[Any] = list(_INVALID_FABRIC_TYPES)
     if date_from:
@@ -343,66 +357,23 @@ def _raw_matrix_rows(date_from: str | None, date_to: str | None) -> list[dict[st
     for row in execute_query(sql, params):
         day = normalize_production_date(row["production_date"])
         machine = (row["machine"] or "").strip()
-        if not day or not machine:
+        if not day or not machine or row["dyelot"] is None:
+            continue
+        if not _is_normal_batch(row, require_redye_zero):
             continue
         result.append({
             "day": day,
             "fabric_type": row["fabric_type"].strip(),
             "color_group": _classify_color_group(row["shade"], row["colour_no"]),
-            "capacity": round(float(row["capacity_kg"]), 2) if row["capacity_kg"] not in (None, "") else None,
+            "capacity": None,  # gán từ Machine Master ở `_build_core()`
             "machine": machine,
             "brand_program": str(row["brand_program"] or "").strip(),
+            "batch_no": row["batch_ref_no"] or row["batch"],
+            "dyelot": row["dyelot"], "sap_lot": row["sap_lot"], "redye": row["redye"],
+            "shade": row["shade"], "colour_no": row["colour_no"],
+            "start_time": row["start_time"], "end_time": row["end_time"],
         })
     return result
-
-
-def _aggregate_raw_rows(
-    rows: list[dict[str, Any]], capacity_filter: set[float] | None,
-    fabric_type_filter: set[str] | None, brand_program_filter: set[str] | None,
-) -> dict[str, Any]:
-    """Gộp danh sách dòng raw của `_raw_matrix_rows()` thành các dict đếm/tập máy theo cấp
-    ô (fabric_type, color_group), theo Fabric Type (Total Fabric), và Grand Total — CÙNG 1
-    lần duyệt Python, áp dụng Capacity trước (để `available_fabric_types`/
-    `available_brand_programs` phản ánh đúng phạm vi Capacity+ngày đang chọn, độc lập với
-    chính 2 filter Fabric Type/Brand Program — cùng nguyên tắc `downtime/service.py::
-    _available_fabric_types_and_brand_programs()`), rồi mới áp Fabric Type/Brand Program."""
-    cell_count: dict[tuple[str, str], dict[str, int]] = {}
-    cell_machines: dict[tuple[str, str], dict[str, set[str]]] = {}
-    fabric_count: dict[str, dict[str, int]] = {}
-    fabric_machines: dict[tuple[str, str], set[str]] = {}
-    grand_count: dict[str, int] = {}
-    grand_machines: dict[str, set[str]] = {}
-    available_fabric_types: set[str] = set()
-    available_brand_programs: set[str] = set()
-
-    for row in rows:
-        if capacity_filter is not None and row["capacity"] not in capacity_filter:
-            continue
-        available_fabric_types.add(row["fabric_type"])
-        if row["brand_program"]:
-            available_brand_programs.add(row["brand_program"])
-        if fabric_type_filter is not None and row["fabric_type"] not in fabric_type_filter:
-            continue
-        if brand_program_filter is not None and row["brand_program"] not in brand_program_filter:
-            continue
-        day, fabric_type, color_group, machine = row["day"], row["fabric_type"], row["color_group"], row["machine"]
-        cell_key = (fabric_type, color_group)
-        cell_count_bucket = cell_count.setdefault(cell_key, {})
-        cell_count_bucket[day] = cell_count_bucket.get(day, 0) + 1
-        cell_machines.setdefault(cell_key, {}).setdefault(day, set()).add(machine)
-        fabric_count_bucket = fabric_count.setdefault(fabric_type, {})
-        fabric_count_bucket[day] = fabric_count_bucket.get(day, 0) + 1
-        fabric_machines.setdefault((day, fabric_type), set()).add(machine)
-        grand_count[day] = grand_count.get(day, 0) + 1
-        grand_machines.setdefault(day, set()).add(machine)
-
-    return {
-        "cell_count": cell_count, "cell_machines": cell_machines,
-        "fabric_count": fabric_count, "fabric_machines": fabric_machines,
-        "grand_count": grand_count, "grand_machines": grand_machines,
-        "available_fabric_types": sorted(available_fabric_types),
-        "available_brand_programs": sorted(available_brand_programs),
-    }
 
 
 def _machine_hours_by_day_for_range(days: list[str]) -> dict[str, dict[str, float]]:
@@ -461,13 +432,11 @@ def _machine_hours_by_day_for_range(days: list[str]) -> dict[str, dict[str, floa
     return result
 
 
-def _empty_result(date_from: str | None = None, date_to: str | None = None, error: str | None = None) -> dict[str, Any]:
+def _empty_result(date_from: str | None = None, date_to: str | None = None, group_by: str = "date", error: str | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "date_from": date_from, "date_to": date_to,
-        "days": [], "day_labels": [],
-        "capacities": [], "available_capacities": [],
-        "fabric_types": [], "available_fabric_types": [],
-        "brand_programs": [], "available_brand_programs": [],
+        "date_from": date_from, "date_to": date_to, "group_by": group_by,
+        "periods": [], "period_keys": [], "day_count": 0,
+        "available_capacities": [], "available_brand_programs": [], "available_tank_types": [],
         "rows": [], "grand_total": None,
     }
     if error:
@@ -475,205 +444,164 @@ def _empty_result(date_from: str | None = None, date_to: str | None = None, erro
     return result
 
 
-def build_matrix(
-    date_from: str | None = None, date_to: str | None = None, capacities: str | list[str] | None = None,
-    fabric_types: str | list[str] | None = None, brand_programs: str | list[str] | None = None,
-) -> dict[str, Any]:
+def _build_core(
+    date_from: str | None, date_to: str | None, capacities: str | list[str] | None,
+    brand_programs: str | list[str] | None, tank_types: str | list[str] | None,
+    group_by: str, require_redye_zero: bool,
+) -> dict[str, Any] | None:
+    """Truy vấn raw 1 lần, áp bộ lọc, xác định cột kỳ — dùng CHUNG cho bảng, drill-down và
+    Excel export. Trả `None` khi không có dữ liệu trong khoảng ngày."""
     conn = get_db()
-    _ensure_targets_table(conn)
-    _ensure_summary_table(conn)
     ensure_brand_program_table(conn)
+    raw_rows = _raw_matrix_rows(date_from, date_to, require_redye_zero)
+    if not raw_rows:
+        return None
+    # Capacity + Tank tra Machine Master (`machines`) tại read time — GIỐNG Trend; máy chưa khai
+    # báo Capacity -> None (bị ẩn khi lọc Capacity cụ thể, như Trend).
+    tank_by_machine = _machine_tank_labels(conn)
+    capacity_by_machine = _machine_capacities(conn)
+    for row in raw_rows:
+        code = row["machine"].lower()
+        row["tank"] = tank_by_machine.get(code, UNCLASSIFIED_TANK_LABEL)
+        row["capacity"] = capacity_by_machine.get(code)
 
-    sql = "SELECT production_date, fabric_type, color_group, capacity_kg, batch_count, operating_hours FROM batch_matrix_daily_summary WHERE 1=1"
-    params: list[Any] = []
-    if date_from:
-        sql += " AND production_date >= ?"
-        params.append(date_from)
-    if date_to:
-        sql += " AND production_date <= ?"
-        params.append(date_to)
+    selected_capacities = _parse_capacities(capacities)
+    capacity_filter = {round(value, 2) for value in selected_capacities} if selected_capacities else None
+    selected_brand_programs = _parse_text_filter(brand_programs)
+    brand_program_filter = set(selected_brand_programs) if selected_brand_programs else None
+    selected_tank_types = [value for value in _parse_text_filter(tank_types) if value in _TANK_ORDER]
+    tank_filter = set(selected_tank_types) if selected_tank_types else None
+    rows = [
+        row for row in raw_rows
+        if (capacity_filter is None or row["capacity"] in capacity_filter)
+        and (brand_program_filter is None or row["brand_program"] in brand_program_filter)
+        and (tank_filter is None or row["tank"] in tank_filter)
+    ]
 
-    try:
-        all_rows = execute_query(sql, params)
-    except Exception as exc:
-        return _empty_result(date_from, date_to, error=str(exc))
-
-    if not all_rows:
-        return _empty_result(date_from, date_to)
-
-    # Cột ngày = khoảng đã chọn (Từ ngày/Đến ngày) nếu có, hoặc MIN..MAX production_date
-    # thực tế trong dữ liệu đã lọc nếu người dùng không chọn ngày. KHÔNG lọc theo Capacity
-    # ở bước này, để bộ lọc Capacity chỉ đổi GIÁ TRỊ ô chứ không làm nhảy tập cột ngày.
-    all_days_sorted = sorted({row["production_date"] for row in all_rows if row["production_date"]})
-    if not all_days_sorted:
-        return _empty_result(date_from, date_to)
-    start_day = datetime.strptime(date_from, "%Y-%m-%d").date() if date_from else datetime.strptime(all_days_sorted[0], "%Y-%m-%d").date()
-    end_day = datetime.strptime(date_to, "%Y-%m-%d").date() if date_to else datetime.strptime(all_days_sorted[-1], "%Y-%m-%d").date()
+    # Cột kỳ = khoảng đã chọn (From/To) nếu có, hoặc MIN..MAX ngày có dữ liệu. Bộ lọc chỉ đổi
+    # GIÁ TRỊ ô, không làm nhảy tập cột.
+    all_days = sorted({row["day"] for row in raw_rows})
+    start_day = datetime.strptime(date_from or all_days[0], "%Y-%m-%d").date()
+    end_day = datetime.strptime(date_to or all_days[-1], "%Y-%m-%d").date()
     if end_day < start_day:
         start_day, end_day = end_day, start_day
     days: list[str] = []
+    period_of_day: dict[str, str] = {}
+    period_labels: dict[str, str] = {}
     current = start_day
     while current <= end_day:
+        key, label = _period(current, group_by)
         days.append(current.isoformat())
+        period_of_day[current.isoformat()] = key
+        period_labels[key] = label
         current += timedelta(days=1)
-    day_set = set(days)
+    for row in rows:
+        row["period_key"] = period_of_day.get(row["day"])
+    period_keys = sorted(period_labels)
+    return {
+        "rows": [row for row in rows if row["period_key"] is not None],
+        "days": days,
+        "period_of_day": period_of_day,
+        "period_keys": period_keys,
+        "periods": [period_labels[key] for key in period_keys],
+        "period_labels": period_labels,
+        "available_capacities": sorted({row["capacity"] for row in raw_rows if row["capacity"] is not None}),
+        "available_brand_programs": sorted({row["brand_program"] for row in raw_rows if row["brand_program"]}),
+        "available_tank_types": [label for label in _TANK_ORDER if label in {row["tank"] for row in raw_rows}],
+        "selected_capacities": selected_capacities,
+        "selected_brand_programs": selected_brand_programs,
+        "selected_tank_types": selected_tank_types,
+    }
 
-    available_capacities = sorted({round(float(row["capacity_kg"]), 2) for row in all_rows if row["capacity_kg"] not in (None, "")})
-    selected_capacities = _parse_capacities(capacities)
-    capacity_filter = {round(value, 2) for value in selected_capacities} if selected_capacities else None
-    selected_fabric_types = _parse_text_filter(fabric_types)
-    fabric_type_filter = set(selected_fabric_types) if selected_fabric_types else None
-    selected_brand_programs = _parse_text_filter(brand_programs)
-    brand_program_filter = set(selected_brand_programs) if selected_brand_programs else None
 
-    # Truy vấn raw data 1 LẦN — nguồn cho Total(Fabric)/Grand Total (LUÔN LUÔN cần khử trùng
-    # máy, xem docstring đầu file) VÀ cho `available_fabric_types`/`available_brand_programs`
-    # (luôn tính từ raw data, phản ánh đúng phạm vi Capacity+ngày đang chọn). Khi có Brand
-    # Program filter, CŨNG dùng làm nguồn cho cả dòng "data" (bảng rollup không lưu theo
-    # brand_program — xem `_ensure_summary_table()`).
-    raw_rows = _raw_matrix_rows(date_from, date_to)
-    aggregated = _aggregate_raw_rows(raw_rows, capacity_filter, fabric_type_filter, brand_program_filter)
+def build_matrix(
+    date_from: str | None = None, date_to: str | None = None, capacities: str | list[str] | None = None,
+    brand_programs: str | list[str] | None = None, tank_types: str | list[str] | None = None,
+    group_by: str = "date", require_redye_zero: bool = True,
+) -> dict[str, Any]:
+    conn = get_db()
+    _ensure_targets_table(conn)
+    group_by = group_by if group_by in {"date", "week", "month"} else "date"
+    try:
+        core = _build_core(date_from, date_to, capacities, brand_programs, tank_types, group_by, require_redye_zero)
+    except Exception as exc:
+        return _empty_result(date_from, date_to, group_by, error=str(exc))
+    if core is None:
+        return _empty_result(date_from, date_to, group_by)
+
+    days, period_keys = core["days"], core["period_keys"]
     machine_hours_by_day = _machine_hours_by_day_for_range(days)
 
-    def _dedup_hours(machines: set[str], day: str) -> float:
-        day_hours = machine_hours_by_day.get(day, {})
-        return sum(day_hours.get(m, 0.0) for m in machines)
+    # Đếm mẻ + TẬP MÁY theo (cấp gộp, ngày). Mẫu số của mọi cấp = giờ máy của ĐÚNG tập máy đó
+    # trong ngày, mỗi máy cộng 1 lần (khử trùng máy — xem docstring đầu file).
+    cell_count: dict[tuple[str, str], dict[str, int]] = {}
+    cell_machines: dict[tuple[str, str], dict[str, set[str]]] = {}
+    fabric_count: dict[str, dict[str, int]] = {}
+    fabric_machines: dict[str, dict[str, set[str]]] = {}
+    grand_count: dict[str, int] = {}
+    grand_machines: dict[str, set[str]] = {}
+    for row in core["rows"]:
+        day, fabric_type, machine = row["day"], row["fabric_type"], row["machine"]
+        cell_key = (fabric_type, row["color_group"])
+        cell_bucket = cell_count.setdefault(cell_key, {})
+        cell_bucket[day] = cell_bucket.get(day, 0) + 1
+        cell_machines.setdefault(cell_key, {}).setdefault(day, set()).add(machine)
+        fabric_bucket = fabric_count.setdefault(fabric_type, {})
+        fabric_bucket[day] = fabric_bucket.get(day, 0) + 1
+        fabric_machines.setdefault(fabric_type, {}).setdefault(day, set()).add(machine)
+        grand_count[day] = grand_count.get(day, 0) + 1
+        grand_machines.setdefault(day, set()).add(machine)
 
-    if brand_program_filter is None:
-        # Đường NHANH (mặc định, không lọc Brand Program): tử số + mẫu số của dòng "data"
-        # đọc TRỰC TIẾP từ bảng summary — AN TOÀN để SUM operating_hours qua nhiều
-        # capacity_kg cho CÙNG 1 (fabric,color,ngày) vì 1 máy chỉ có ĐÚNG 1 capacity_kg cố
-        # định trong dữ liệu thật (đã verify: 0 máy có >1 capacity_kg) nên không có rủi ro
-        # cộng trùng giờ khi filter nhiều Capacity cùng lúc cho CÙNG 1 dòng màu.
-        by_cell_count: dict[tuple[str, str], dict[str, int]] = {}
-        by_cell_hours: dict[tuple[str, str], dict[str, float]] = {}
-        by_fabric_count: dict[str, dict[str, int]] = {}
+    period_of_day = core["period_of_day"]
 
-        for row in all_rows:
-            day = row["production_date"]
-            if day not in day_set:
-                continue
-            row_capacity = round(float(row["capacity_kg"]), 2) if row["capacity_kg"] not in (None, "") else None
-            if capacity_filter is not None and row_capacity not in capacity_filter:
-                continue
-            fabric_type = row["fabric_type"]
-            if fabric_type_filter is not None and fabric_type not in fabric_type_filter:
-                continue
-            color_group = row["color_group"]
-            batch_count = int(row["batch_count"] or 0)
-            operating_hours = float(row["operating_hours"] or 0)
+    def ratio(count_by_day: dict[str, int], machines_by_day: dict[str, set[str]], period_key: str | None) -> float | None:
+        """Tổng mẻ * 24 / tổng giờ tập máy của các ngày có mẻ trong kỳ (`None` = cả khoảng)."""
+        selected = [day for day in count_by_day if period_key is None or period_of_day.get(day) == period_key]
+        numerator = sum(count_by_day[day] for day in selected)
+        hours = sum(
+            sum(machine_hours_by_day.get(day, {}).get(machine, 0.0) for machine in machines_by_day.get(day, set()))
+            for day in selected
+        )
+        return round(numerator * 24 / hours, 2) if numerator and hours else None
 
-            cell_key = (fabric_type, color_group)
-            count_bucket = by_cell_count.setdefault(cell_key, {})
-            count_bucket[day] = count_bucket.get(day, 0) + batch_count
-            hours_bucket = by_cell_hours.setdefault(cell_key, {})
-            hours_bucket[day] = hours_bucket.get(day, 0.0) + operating_hours
-
-            fabric_count_bucket = by_fabric_count.setdefault(fabric_type, {})
-            fabric_count_bucket[day] = fabric_count_bucket.get(day, 0) + batch_count
-
-        # Dòng Total(Fabric)/Grand Total: BẮT BUỘC dùng TẬP MÁY từ raw data (`aggregated`) —
-        # KHÔNG được cộng operating_hours của các dòng ColorGroup con (xem docstring đầu
-        # file, đúng loại bug COUNT DISTINCT đã bắt được trước đây, ở "giờ" thay vì "đếm máy").
-        fabric_machines = aggregated["fabric_machines"]
-        grand_machines = aggregated["grand_machines"]
-        grand_count: dict[str, int] = {}
-        for count_bucket in by_fabric_count.values():
-            for day, count in count_bucket.items():
-                grand_count[day] = grand_count.get(day, 0) + count
-        use_dedup_for_cells = False
-    else:
-        # Đường TRỰC TIẾP (có lọc Brand Program): bảng rollup KHÔNG lưu theo brand_program
-        # nên CẢ tử số lẫn mẫu số của dòng "data" (và Total(Fabric)/Grand Total) đều phải
-        # tính từ `aggregated` (raw data, đã khử trùng máy đúng cấp — xem `_aggregate_raw_rows()`).
-        by_cell_count = aggregated["cell_count"]
-        by_cell_machines = aggregated["cell_machines"]
-        by_fabric_count = aggregated["fabric_count"]
-        fabric_machines = aggregated["fabric_machines"]
-        grand_machines = aggregated["grand_machines"]
-        grand_count = aggregated["grand_count"]
-        use_dedup_for_cells = True
+    def values(count_by_day: dict[str, int], machines_by_day: dict[str, set[str]]) -> dict[str, float | None]:
+        return {key: ratio(count_by_day, machines_by_day, key) for key in period_keys}
 
     targets = {(row["fabric_type"], row["color_group"]): row["target_value"] for row in execute_query("SELECT fabric_type, color_group, target_value FROM batch_matrix_targets")}
-
-    def cell_value_from_hours(count: int | None, hours: float | None) -> float | None:
-        if count is None or not hours:
-            return None
-        return round(count / (hours / 24), 2)
-
-    def cell_value(day: str, count_by_day: dict[str, int], hours_by_day: dict[str, float]) -> float | None:
-        return cell_value_from_hours(count_by_day.get(day), hours_by_day.get(day))
-
-    def total_value(count_by_day: dict[str, int], hours_by_day: dict[str, float]) -> float | None:
-        numerator = sum(count_by_day.values())
-        # Chỉ SUM operating_hours ở ĐÚNG các ngày mà dòng này có batch_count (giữ đúng quy
-        # ước Sum(tử theo ngày)/Sum(mẫu theo ngày) đã chốt trước đây) — sum RAW hours rồi
-        # mới chia 24 MỘT LẦN ở bước cuối.
-        denominator_hours = sum(hours_by_day.get(day, 0.0) for day in count_by_day)
-        return round(numerator / (denominator_hours / 24), 2) if denominator_hours else None
-
-    def cell_value_dedup(day: str, count_by_day: dict[str, int], machines_by_day: dict[str, set[str]]) -> float | None:
-        return cell_value_from_hours(count_by_day.get(day), _dedup_hours(machines_by_day.get(day, set()), day))
-
-    def total_value_dedup(count_by_day: dict[str, int], machines_by_day: dict[str, set[str]]) -> float | None:
-        numerator = sum(count_by_day.values())
-        denominator_hours = sum(_dedup_hours(machines_by_day.get(day, set()), day) for day in count_by_day)
-        return round(numerator / (denominator_hours / 24), 2) if denominator_hours else None
 
     def color_group_sort_key(name: str) -> tuple[int, str]:
         return (1, name) if name == UNCLASSIFIED_COLOR_GROUP else (0, name)
 
     rows: list[dict[str, Any]] = []
-    for fabric_type in sorted(by_fabric_count.keys()):
-        color_groups = sorted({color_group for (ft, color_group) in by_cell_count if ft == fabric_type}, key=color_group_sort_key)
+    for fabric_type in sorted(fabric_count):
+        color_groups = sorted({color_group for (ft, color_group) in cell_count if ft == fabric_type}, key=color_group_sort_key)
         for color_group in color_groups:
             cell_key = (fabric_type, color_group)
-            count_by_day = by_cell_count[cell_key]
-            if use_dedup_for_cells:
-                machines_by_day = by_cell_machines.get(cell_key, {})
-                cell_days = {day: cell_value_dedup(day, count_by_day, machines_by_day) for day in days}
-                cell_total = total_value_dedup(count_by_day, machines_by_day)
-            else:
-                hours_by_day = by_cell_hours[cell_key]
-                cell_days = {day: cell_value(day, count_by_day, hours_by_day) for day in days}
-                cell_total = total_value(count_by_day, hours_by_day)
             rows.append({
-                "row_type": "data",
-                "fabric_type": fabric_type,
-                "color_group": color_group,
-                "target": targets.get((fabric_type, color_group)),
-                "days": cell_days,
-                "total": cell_total,
+                "row_type": "data", "fabric_type": fabric_type, "color_group": color_group,
+                "target": targets.get(cell_key),
+                "values": values(cell_count[cell_key], cell_machines[cell_key]),
+                "total": ratio(cell_count[cell_key], cell_machines[cell_key], None),
             })
-        fabric_count_by_day = by_fabric_count[fabric_type]
-        fabric_machines_by_day = {day: fabric_machines.get((day, fabric_type), set()) for day in days}
         rows.append({
-            "row_type": "fabric_total",
-            "fabric_type": fabric_type,
-            "color_group": None,
-            "target": None,
-            "days": {day: cell_value_dedup(day, fabric_count_by_day, fabric_machines_by_day) for day in days},
-            "total": total_value_dedup(fabric_count_by_day, fabric_machines_by_day),
+            "row_type": "fabric_total", "fabric_type": fabric_type, "color_group": None, "target": None,
+            "values": values(fabric_count[fabric_type], fabric_machines[fabric_type]),
+            "total": ratio(fabric_count[fabric_type], fabric_machines[fabric_type], None),
         })
-
-    grand_machines_by_day = {day: grand_machines.get(day, set()) for day in days}
+    grand_total = ratio(grand_count, grand_machines, None)
     rows.append({
-        "row_type": "grand_total",
-        "fabric_type": None,
-        "color_group": None,
-        "target": None,
-        "days": {day: cell_value_dedup(day, grand_count, grand_machines_by_day) for day in days},
-        "total": total_value_dedup(grand_count, grand_machines_by_day),
+        "row_type": "grand_total", "fabric_type": None, "color_group": None, "target": None,
+        "values": values(grand_count, grand_machines), "total": grand_total,
     })
 
     return {
-        "date_from": date_from, "date_to": date_to,
-        "days": days,
-        "day_labels": [datetime.strptime(day, "%Y-%m-%d").strftime("%d/%m") for day in days],
-        "capacities": selected_capacities, "available_capacities": available_capacities,
-        "fabric_types": selected_fabric_types, "available_fabric_types": aggregated["available_fabric_types"],
-        "brand_programs": selected_brand_programs, "available_brand_programs": aggregated["available_brand_programs"],
-        "rows": rows, "grand_total": total_value_dedup(grand_count, grand_machines_by_day),
+        "date_from": date_from, "date_to": date_to, "group_by": group_by,
+        "require_redye_zero": require_redye_zero,
+        "periods": core["periods"], "period_keys": period_keys, "day_count": len(days),
+        "capacities": core["selected_capacities"], "available_capacities": core["available_capacities"],
+        "brand_programs": core["selected_brand_programs"], "available_brand_programs": core["available_brand_programs"],
+        "tank_types": core["selected_tank_types"], "available_tank_types": core["available_tank_types"],
+        "rows": rows, "grand_total": grand_total,
     }
 
 
@@ -682,60 +610,100 @@ def build_matrix(
 # ---------------------------------------------------------------------------
 
 
-def get_day_batches(
-    production_date: str, fabric_type: str, color_group: str, capacities: str | list[str] | None = None,
-    brand_programs: str | list[str] | None = None,
+_BATCH_FIELDS: tuple[tuple[str, str], ...] = (
+    ("day", "Production Date"), ("machine", "Machine"), ("capacity", "Capacity (Kg)"), ("tank", "Tank"),
+    ("fabric_type", "Fabric Type"), ("color_group", "Color Group"), ("brand_program", "Brand Program"),
+    ("batch_no", "Batch No"), ("dyelot", "Dyelot"), ("sap_lot", "SapLot"), ("redye", "ReDye"),
+    ("shade", "Shade"), ("colour_no", "ColourNo"), ("start_time", "Start"), ("end_time", "End"),
+)
+
+
+def _public_batch(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: row[key] for key, _ in _BATCH_FIELDS}
+
+
+def get_cell_batches(
+    fabric_type: str, color_group: str, period_key: str | None = None,
+    date_from: str | None = None, date_to: str | None = None, capacities: str | list[str] | None = None,
+    brand_programs: str | list[str] | None = None, tank_types: str | list[str] | None = None,
+    group_by: str = "date", require_redye_zero: bool = True,
 ) -> list[dict[str, Any]]:
-    """Trả về danh sách mẻ THẬT được tính vào đúng 1 ô (production_date, fabric_type,
-    color_group[, capacity, brand_program]) của ma trận — dùng để double-check khi người
-    dùng bấm vào ô ngày trên UI. Query trực tiếp trên raw data (KHÔNG qua
-    `batch_matrix_daily_summary`): đây là truy vấn hẹp (1 ngày, 1 ô), chỉ chạy khi bấm xem
-    chi tiết — không phải đường đọc tần suất cao nên không cần rollup riêng (xem nguyên tắc
-    "không bắt buộc rollup 100% mọi chỉ số" ở memory-bank/systemPatterns.md mục 6.2). Dùng
-    LẠI ĐÚNG điều kiện lọc/JOIN như `recompute_daily()` (fabric_type hợp lệ, batch_type
-    Normal, cùng công thức Color Group) để đảm bảo khớp 100% với số mẻ đã hiển thị trên ma
-    trận."""
-    conn = get_db()
-    ensure_brand_program_table(conn)
-    shifted_date = production_date_sql_expr("a.end_time")
-    sql = f"""
-        SELECT a.machine, a.batch, a.batch_ref_no, a.capacity_kg, a.start_time, a.end_time,
-               b.shade, b.colour_no, b.dyelot, b.batch_type, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
-        FROM availability_logs a
-        {batch_details_join_sql("a.batch", "a.end_time")}
-        {_BRAND_PROGRAM_JOIN_SQL}
-        WHERE a.end_time IS NOT NULL AND a.end_time != ''
-          AND a.fabric_type IS NOT NULL AND TRIM(a.fabric_type) = TRIM(?)
-          AND (b.batch_type IS NULL OR lower(trim(b.batch_type)) = 'normal')
-          AND {shifted_date} = ?
-        ORDER BY a.machine, a.start_time
-    """
-    rows = conn.execute(sql, (fabric_type, production_date)).fetchall()
-
-    selected_capacities = _parse_capacities(capacities)
-    capacity_filter = {round(value, 2) for value in selected_capacities} if selected_capacities else None
-    selected_brand_programs = _parse_text_filter(brand_programs)
-    brand_program_filter = set(selected_brand_programs) if selected_brand_programs else None
-
-    batches: list[dict[str, Any]] = []
-    for row in rows:
-        if capacity_filter is not None:
-            row_capacity = round(float(row["capacity_kg"] or 0), 2) if row["capacity_kg"] not in (None, "") else None
-            if row_capacity not in capacity_filter:
-                continue
-        if brand_program_filter is not None and str(row["brand_program"] or "").strip() not in brand_program_filter:
-            continue
-        if _classify_color_group(row["shade"], row["colour_no"]) != color_group:
-            continue
-        batches.append({
-            "machine": row["machine"],
-            "batch_no": row["batch_ref_no"] or row["batch"],
-            "dyelot": row["dyelot"],
-            "shade": row["shade"],
-            "colour_no": row["colour_no"],
-            "batch_type": row["batch_type"],
-            "capacity_kg": row["capacity_kg"],
-            "start_time": row["start_time"],
-            "end_time": row["end_time"],
-        })
+    """Danh sách mẻ được đếm vào 1 ô (fabric_type, color_group, kỳ) — `period_key` rỗng = ô
+    Total. Dùng CHUNG `_build_core()` với bảng nên luôn khớp đúng số mẻ trên ma trận."""
+    group_by = group_by if group_by in {"date", "week", "month"} else "date"
+    core = _build_core(date_from, date_to, capacities, brand_programs, tank_types, group_by, require_redye_zero)
+    if core is None:
+        return []
+    batches = [
+        _public_batch(row) for row in core["rows"]
+        if row["fabric_type"] == fabric_type and row["color_group"] == color_group
+        and (not period_key or row["period_key"] == period_key)
+    ]
+    batches.sort(key=lambda b: (b["day"], str(b["machine"]).lower(), str(b["start_time"])))
     return batches
+
+
+def export_matrix_excel(
+    date_from: str | None = None, date_to: str | None = None, capacities: str | list[str] | None = None,
+    brand_programs: str | list[str] | None = None, tank_types: str | list[str] | None = None,
+    group_by: str = "date", require_redye_zero: bool = True,
+) -> bytes:
+    """Sheet "Matrix" (y hệt bảng trên web) + "Batches" (mọi mẻ Normal được đếm) + "Filters"."""
+    group_by = group_by if group_by in {"date", "week", "month"} else "date"
+    data = build_matrix(date_from, date_to, capacities, brand_programs, tank_types, group_by, require_redye_zero)
+    core = _build_core(date_from, date_to, capacities, brand_programs, tank_types, group_by, require_redye_zero)
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="24292F", end_color="24292F", fill_type="solid")
+    bold = Font(bold=True)
+
+    def write_header(sheet: Any, headers: list[str]) -> None:
+        for col, header in enumerate(headers, start=1):
+            cell = sheet.cell(row=1, column=col, value=header)
+            cell.font, cell.fill = header_font, header_fill
+            sheet.column_dimensions[cell.column_letter].width = 14
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Matrix"
+    write_header(sheet, ["Fabric Type", "Color Group", "Target", "Total", *data["periods"]])
+    for row_idx, row in enumerate(data["rows"], start=2):
+        if row["row_type"] == "data":
+            label = (row["fabric_type"], row["color_group"])
+        elif row["row_type"] == "fabric_total":
+            label = (row["fabric_type"], f"Total ({row['fabric_type']})")
+        else:
+            label = ("Grand Total", None)
+        values = [*label, row["target"], row["total"], *(row["values"].get(key) for key in data["period_keys"])]
+        for col, value in enumerate(values, start=1):
+            cell = sheet.cell(row=row_idx, column=col, value=value)
+            if row["row_type"] != "data":
+                cell.font = bold
+    sheet.freeze_panes = "E2"
+
+    batches_sheet = workbook.create_sheet("Batches")
+    write_header(batches_sheet, [label for _, label in _BATCH_FIELDS])
+    batches = sorted((_public_batch(row) for row in (core or {}).get("rows", [])), key=lambda b: (b["day"], str(b["machine"]).lower(), str(b["start_time"])))
+    for row_idx, batch in enumerate(batches, start=2):
+        for col, (key, _) in enumerate(_BATCH_FIELDS, start=1):
+            batches_sheet.cell(row=row_idx, column=col, value=batch[key])
+    batches_sheet.auto_filter.ref = f"A1:{batches_sheet.cell(row=1, column=len(_BATCH_FIELDS)).column_letter}{len(batches) + 1}"
+    batches_sheet.freeze_panes = "A2"
+
+    filters_sheet = workbook.create_sheet("Filters")
+    write_header(filters_sheet, ["Filter", "Value"])
+    filters_sheet.column_dimensions["B"].width = 40
+    filters = [
+        ("From Date", date_from or "All"), ("To Date", date_to or "All"),
+        ("Group By", {"date": "Day", "week": "Week", "month": "Month"}[group_by]),
+        ("Capacity (Kg)", ", ".join(str(value) for value in _parse_capacities(capacities)) or "All"),
+        ("Brand Program", ", ".join(_parse_text_filter(brand_programs)) or "All"),
+        ("Tank Type", ", ".join(_parse_text_filter(tank_types)) or "All"),
+        ("ReDye = 0", "Yes" if require_redye_zero else "No"),
+    ]
+    for row_idx, (label, value) in enumerate(filters, start=2):
+        filters_sheet.cell(row=row_idx, column=1, value=label)
+        filters_sheet.cell(row=row_idx, column=2, value=value)
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()

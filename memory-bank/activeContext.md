@@ -1,6 +1,27 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-06 — **Batch/Day Trend: drill-down danh sách mẻ + Export Excel**
+**Cập nhật lần cuối:** 2026-10-06 (tiếp) — **Fabric/Color Matrix dùng bộ lọc + mặc định giống
+hệt Batch/Day Trend** (người dùng chốt 4 câu: bỏ THẺ "Date Range" (giữ From/To); ReDye = 0 theo
+quy tắc Trend; Week/Month gộp tổng; bỏ filter Fabric Type). Thanh lọc: From/To (mặc định 6 tuần
+gần nhất như Trend), Capacity (mặc định >= 500 lần tải đầu), Brand Program, Tank Type (tra
+`machines.tank_type`), Group By (mặc định Week), ReDye = 0 (bật), Export Excel; bỏ nút "View
+Report" (đổi filter là tải lại). Tham số API đổi sang tên của Trend (`from_date`, `to_date`,
+`capacities` CSV, `brand_programs`, `tank_types`, `group_by`, `require_redye_zero`); JSON đổi
+`days/day_labels/row.days` -> `periods/period_keys/row.values` + `day_count`. Mẻ Normal =
+`classify_batch_badge()` (Dyelot *0, SapLot 1*/3*, ReDye) thay `batch_type = 'Normal'`; dòng
+availability không JOIN được batch_details bị loại. Ô kỳ = tổng mẻ * 24 / tổng giờ tập máy
+(mỗi máy 1 lần/ngày) trên các ngày có mẻ của kỳ. `build_matrix()` tính TRỰC TIẾP raw cho mọi
+dòng qua `_build_core()` (dùng chung với drill-down `get_cell_batches()` route
+`/api/matrix/batches` — thay `/api/day-batches` — và `export_matrix_excel()` route
+`/api/matrix/export`, sheet Matrix/Batches/Filters). Capacity + Tank của Matrix tra Machine
+Master (`machines`, `_machine_capacities()`/`_machine_tank_labels()` của Trend) — KHÔNG dùng
+`availability_logs.capacity_kg` nữa (người dùng yêu cầu cùng ngày); máy chưa khai Capacity bị
+ẩn khi lọc Capacity cụ thể. Lưu ý: DB local Machine Master chỉ 1 máy -> local Matrix gần như
+không có Capacity để lọc. `batch_matrix_daily_summary`
+vẫn được ghi nhưng không còn ai đọc (backlog). Local tháng 9: quy tắc cũ 436 mẻ, mới 378 (ReDye
+bật) / 435 (tắt). Không đổi schema, không rebuild.
+
+**Bản ghi trước:** 2026-10-06 — **Batch/Day Trend: drill-down danh sách mẻ + Export Excel**
 (yêu cầu người dùng, đã chốt qua 6 câu hỏi). Bấm ô loại vải x kỳ hoặc ô Total -> drawer liệt kê
 TẤT CẢ đoạn (mẻ x ngày) góp giờ vào mẫu số (cả CM/Sample/Rework), cột Counted = được đếm vào tử
 số, checkbox "Only Normal"; mẻ qua đêm hiện ở mỗi ngày, chỉ Counted ở ngày kết thúc; cột "Hours

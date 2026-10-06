@@ -1078,8 +1078,16 @@
       (mọi đoạn góp giờ + cờ Counted, lọc "Only Normal") + Export Excel cho 1 ô và cho cả báo
       cáo (Trend / Batches / Filters, khối Check). Không đổi schema, không cần rebuild.
       Test `tests/test_batch_day_trend_drilldown.py`.
+- [x] 2026-10-06 — Fabric/Color Matrix: bộ lọc + mặc định giống hệt Trend (Capacity >= 500
+      mặc định, Brand Program, Tank, Group By Week mặc định, ReDye = 0, 6 tuần gần nhất), bỏ
+      Fabric Type + thẻ Date Range, Normal theo quy tắc Trend, drill-down theo kỳ + ô Total,
+      Export Excel. `build_matrix()` tính trực tiếp từ raw. Không đổi schema.
+      Test `tests/test_batch_matrix_brand_fabric_filters.py` (viết lại), `test_batch_matrix_formula.py`.
 
 ## Backlog (Phase 2+)
+- [ ] `batch_matrix_daily_summary` + `batch_matrix/service.py::recompute_daily()` không còn
+      báo cáo nào đọc (từ 2026-10-06) — cân nhắc gỡ (kèm `tests/verify_rollup_parity.py` phần
+      batch_matrix, vốn so với quy tắc batch_type cũ).
 - [ ] **Chạy 3 migration Supabase còn nợ + `flask rebuild-summaries` trên
       production**: `supabase/migrate_cleaning_summary_run_time.sql` (cột
       `run_time`, 2026-09-24), `supabase/migrate_cleaning_summary_sap_lot.sql`

@@ -4,14 +4,14 @@ modules/dyeing/engines/batch_matrix/routes.py
 Blueprint & Route (API + View) của Engine "batch_matrix".
 
 - `GET /dyeing/batch_matrix/`               -> View trang Ma trận Số mẻ/Máy theo Ngày.
-- `GET /dyeing/batch_matrix/api/matrix?date_from=&date_to=&capacity=...&capacity=...`
-  -> API JSON dựng ma trận (dùng bởi View + widget tóm tắt trên Hub). `date_from`/
-  `date_to` tuỳ chọn — không truyền thì cột ngày tự lấy MIN..MAX production_date thật
-  có trong `availability_logs`.
+- `GET /dyeing/batch_matrix/api/matrix?<filter Trend>` -> API JSON dựng ma trận Fabric/Color.
+  Bộ lọc GIỐNG HỆT tab Trend: from_date, to_date, capacities, brand_programs, tank_types,
+  group_by, require_redye_zero (2026-10-06).
+- `GET /dyeing/batch_matrix/api/matrix/batches?fabric_type=&color_group=&period_key=&<filter>`
+  -> danh sách mẻ của 1 ô ma trận (`period_key` rỗng = ô Total).
+- `GET /dyeing/batch_matrix/api/matrix/export?<filter>` -> .xlsx (Matrix + Batches + Filters).
 - `GET  /dyeing/batch_matrix/api/targets`   -> API JSON danh sách Target đã cấu hình.
 - `POST /dyeing/batch_matrix/api/targets`   -> Set/update 1 Target (fabric_type, color_group).
-- `GET  /dyeing/batch_matrix/api/day-batches?date=&fabric_type=&color_group=&capacity=...`
-  -> API JSON danh sách mẻ THẬT của 1 ô ma trận (drill-down double-check, bấm vào ô ngày trên UI).
 - `GET  /dyeing/batch_matrix/api/batch-day-trend?capacities=&brand_programs=&tank_types=&require_redye_zero=1&from_date=&to_date=&group_by=`
   -> API JSON tab "Batch/Day Trend" (LUÔN 3 dòng Cotton/CVC/Polyester cố định — xem
   `batch_day_trend.py` cho công thức đầy đủ).
@@ -47,28 +47,49 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
     def view() -> Any:
         return render_template("batch_matrix_view.html")
 
+    def _matrix_filters() -> dict[str, Any]:
+        """Bộ lọc tab Matrix — CÙNG tên tham số với tab Trend (xem `_trend_filters()`)."""
+        return {
+            "date_from": request.args.get("from_date") or None,
+            "date_to": request.args.get("to_date") or None,
+            "capacities": request.args.get("capacities") or None,
+            "brand_programs": request.args.get("brand_programs") or None,
+            "tank_types": request.args.get("tank_types") or None,
+            "group_by": request.args.get("group_by", "date"),
+            "require_redye_zero": request.args.get("require_redye_zero", "1") != "0",
+        }
+
     @bp.route("/api/matrix")
     @permission_required("dyeing", "batch_matrix", "view")
     def api_matrix() -> Any:
-        date_from = request.args.get("date_from") or None
-        date_to = request.args.get("date_to") or None
-        capacities = request.args.getlist("capacity") or None
-        fabric_types = request.args.get("fabric_types") or None
-        brand_programs = request.args.get("brand_programs") or None
-        data = service.build_matrix(date_from, date_to, capacities, fabric_types=fabric_types, brand_programs=brand_programs)
-        return jsonify(data)
+        return jsonify(service.build_matrix(**_matrix_filters()))
 
-    @bp.route("/api/day-batches")
+    @bp.route("/api/matrix/batches")
     @permission_required("dyeing", "batch_matrix", "view")
-    def api_day_batches() -> Any:
-        production_date = request.args.get("date") or ""
+    def api_matrix_batches() -> Any:
         fabric_type = request.args.get("fabric_type") or ""
         color_group = request.args.get("color_group") or ""
-        if not production_date or not fabric_type or not color_group:
-            return jsonify({"error": "Missing date/fabric_type/color_group."}), 400
-        capacities = request.args.getlist("capacity") or None
-        brand_programs = request.args.get("brand_programs") or None
-        return jsonify(service.get_day_batches(production_date, fabric_type, color_group, capacities, brand_programs=brand_programs))
+        if not fabric_type or not color_group:
+            return jsonify({"error": "Missing fabric_type/color_group."}), 400
+        return jsonify(service.get_cell_batches(
+            fabric_type, color_group, period_key=request.args.get("period_key") or None, **_matrix_filters(),
+        ))
+
+    @bp.route("/api/matrix/export")
+    @permission_required("dyeing", "batch_matrix", "view")
+    def api_matrix_export() -> Any:
+        filters = _matrix_filters()
+        content = service.export_matrix_excel(**filters)
+        if filters["date_from"] and filters["date_to"]:
+            name_range = f"{filters['date_from']}_to_{filters['date_to']}"
+        else:
+            name_range = datetime.now().strftime("%Y-%m-%d")
+        return send_file(
+            io.BytesIO(content),
+            as_attachment=True,
+            download_name=f"fabric_color_matrix_{name_range}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     def _trend_filters() -> dict[str, Any]:
         """Bộ lọc tab Trend — dùng CHUNG cho bảng, drill-down và Export để luôn khớp nhau."""
