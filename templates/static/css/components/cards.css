@@ -1,0 +1,149 @@
+/* ==========================================================================
+   CARDS — every widget is a variant of the same base card
+   Large rounded corners, subtle shadow, soft border, hover elevation.
+   ========================================================================== */
+
+.card-base {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--card-padding);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  transition: background-color var(--transition), border-color var(--transition),
+              box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+.card-base.is-hoverable:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px) scale(1.01);
+  border-color: var(--border-strong);
+}
+
+.panel {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: var(--card-padding); box-shadow: var(--shadow); overflow: hidden;
+  display: flex; flex-direction: column; min-height: 0;
+  transition: background-color var(--transition), border-color var(--transition);
+}
+.panel-title {
+  font-size: var(--fs-card-title); font-weight: var(--fw-card-title);
+  padding-bottom: var(--space-2); margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.panel-title .count { color: var(--text-secondary); font-weight: 400; }
+.panel-title.with-actions { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ---- panel toolbar (fullscreen / download placeholders) ---- */
+.panel-toolbar { display: flex; align-items: center; gap: 6px; }
+.panel-toolbar .toolbar-btn {
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm); color: var(--text-faint); font-size: 12px;
+  cursor: not-allowed; opacity: .6;
+}
+.panel-toolbar .toolbar-btn:hover { background: var(--surface-hover); }
+
+/* ---- KPI card (Dashboard headline numbers) ---- */
+.kpi-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: var(--card-padding); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: var(--space-2);
+  cursor: pointer; text-align: left;
+  transition: background-color var(--transition), border-color var(--transition-fast),
+              box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+.kpi-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-3px) scale(1.02); border-color: var(--primary); }
+.kpi-card:focus-visible { box-shadow: var(--focus-ring); }
+.kpi-card .kpi-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.kpi-card .kpi-label { font-size: var(--fs-label); font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .04em; }
+.kpi-card .kpi-icon {
+  width: 30px; height: 30px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md); font-size: 14px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  color: var(--text-on-primary);
+  box-shadow: 0 4px 12px -2px color-mix(in srgb, var(--primary) 45%, transparent);
+}
+.kpi-card .kpi-value { font-family: var(--font-num); font-size: var(--fs-kpi); font-weight: var(--fw-kpi); letter-spacing: -0.01em; line-height: 1.1; }
+.kpi-card .kpi-value.danger { color: var(--danger); }
+.kpi-card .kpi-value.warning { color: var(--warning); }
+.kpi-card .kpi-value.success { color: var(--success); }
+.kpi-card .kpi-sub { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.kpi-card .kpi-subtitle { font-size: var(--fs-small); color: var(--text-faint); }
+.kpi-card .kpi-sparkline { height: 40px; margin-top: 2px; }
+.kpi-card .kpi-cta { font-size: var(--fs-small); color: var(--primary); font-weight: 600; margin-top: auto; padding-top: var(--space-1); }
+
+.dashboard-kpis { flex-shrink: 0; }
+.dashboard-kpis .kpi-card { height: 100%; }
+.dashboard-highlight { flex: 1; min-height: 0; }
+.kpi-card--featured .kpi-value { font-size: 38px; }
+.kpi-card--compact { gap: var(--space-1); }
+.kpi-card--compact .kpi-value { font-size: 24px; }
+
+/* ---- RFT mini-stat card (number + sparkline, no axis) ---- */
+.mini-stat-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--space-3); flex: 1; }
+.mini-stat {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: var(--space-3); display: flex; flex-direction: column; gap: 2px;
+}
+.mini-stat .mini-stat-label { font-size: 10.5px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .03em; }
+.mini-stat .mini-stat-value { font-family: var(--font-num); font-size: 18px; font-weight: 700; }
+.mini-stat .mini-stat-spark { height: 30px; margin-top: 2px; }
+@media (max-width: 1180px) { .mini-stat-row { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 640px) { .mini-stat-row { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---- stat sidebar: avg-box placed beside a chart (Overview Batch/Day, %Downtime) ---- */
+.mini-stat-row.stat-sidebar {
+  grid-template-columns: 1fr; width: 168px; flex-shrink: 0; align-content: start;
+}
+.stat-sidebar .mini-stat-value { font-size: 20px; }
+@media (max-width: 900px) {
+  .panel-body[style*="flex-direction:row"] { flex-direction: column !important; }
+  .stat-sidebar { width: 100%; grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ---- trend badge (up/down %) ---- */
+.trend-badge { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-small); font-weight: 700; padding: 2px 8px; border-radius: var(--radius-pill); }
+.trend-badge.up-bad { background: var(--danger-soft); color: var(--danger); }
+.trend-badge.up-good { background: var(--success-soft); color: var(--success); }
+.trend-badge.down-bad { background: var(--danger-soft); color: var(--danger); }
+.trend-badge.down-good { background: var(--success-soft); color: var(--success); }
+.trend-badge.flat { background: var(--border); color: var(--text-secondary); }
+
+/* ---- fabric mini stat chip (Cotton / CVC / Polyester on Dashboard) ---- */
+.fabric-chip-row { display: flex; gap: var(--space-3); flex-wrap: wrap; flex: 1; min-height: 0; }
+.fabric-stat {
+  flex: 1; min-width: 170px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: var(--space-4); display: flex; align-items: center; gap: var(--space-3);
+}
+.fabric-stat .fabric-donut { width: 56px; height: 56px; flex-shrink: 0; }
+.fabric-stat .fabric-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fabric-stat .fabric-name { font-size: var(--fs-label); font-weight: 700; color: var(--text); }
+.fabric-stat .fabric-metric { font-family: var(--font-num); font-size: 20px; font-weight: 700; }
+.fabric-stat .fabric-sub { font-size: var(--fs-small); color: var(--text-faint); }
+
+/* ---- compliance / analysis card (Detail Downtime detail pane) ---- */
+.analysis-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: var(--card-padding); display: flex; flex-direction: column; gap: var(--space-3);
+  box-shadow: var(--shadow);
+}
+.analysis-card .card-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.analysis-card .card-title { font-size: var(--fs-card-title); font-weight: var(--fw-card-title); }
+.analysis-card .card-body { display: grid; grid-template-columns: 180px 1fr; gap: var(--space-4); align-items: start; }
+.analysis-card .card-chart { height: 160px; cursor: pointer; }
+.analysis-card .card-total { text-align: center; font-size: var(--fs-small); color: var(--text-secondary); margin-top: 2px; }
+.analysis-card .card-empty { text-align: center; color: var(--text-faint); font-size: var(--fs-body); padding: 30px 0; }
+.analysis-card .rc-chart { height: 200px; }
+.analysis-card .rc-controls { display: flex; gap: 6px; margin-bottom: 6px; }
+.analysis-card .fail-hint { text-align: center; font-size: var(--fs-small); color: var(--text-faint); margin-top: 4px; cursor: pointer; transition: color var(--transition-fast); }
+.analysis-card .fail-hint:hover { color: var(--danger); }
+@media (max-width: 700px) { .analysis-card .card-body { grid-template-columns: 1fr; } }
+
+.root-cause-block { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: var(--card-padding); box-shadow: var(--shadow); }
+.root-cause-block .rc-title { font-size: var(--fs-body); font-weight: 600; margin-bottom: var(--space-3); }
+.root-cause-block .rc-chart { height: 240px; }
+
+.empty-state { text-align: center; color: var(--text-faint); font-size: var(--fs-body); padding: var(--space-7) 0; }

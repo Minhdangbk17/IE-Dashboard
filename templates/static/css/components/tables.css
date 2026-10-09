@@ -1,0 +1,26 @@
+/* ==========================================================================
+   TABLES — modern enterprise table
+   ========================================================================== */
+
+.table-scroll {
+  max-height: 420px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
+
+thead th {
+  text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-secondary); font-weight: 700;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+}
+
+tbody td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:nth-child(even) { background: var(--surface); }
+tbody tr:hover { background: var(--primary-soft); }
+
+td.num, th.num { font-family: var(--font-num); text-align: right; font-variant-numeric: tabular-nums; }
+
+.empty-row { text-align: center; color: var(--text-faint); padding: var(--space-6) 0; font-size: var(--fs-body); }

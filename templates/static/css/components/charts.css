@@ -1,0 +1,34 @@
+/* ==========================================================================
+   CHART CONTAINERS — analytics cards housing the offline SVG chart engine
+   ========================================================================== */
+
+.chart-sm { width: 100%; height: var(--chart-sm); }
+.chart-md { width: 100%; height: var(--chart-md); }
+.chart-lg { width: 100%; height: var(--chart-lg); }
+.chart-flex { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.chart-flex-plot { flex: 1; min-height: 0; }
+
+.chart-empty {
+  display: flex; align-items: center; justify-content: center; height: 100%;
+  color: var(--text-faint); font-size: var(--fs-body);
+}
+
+/* ---- legend (also carries the "avg" stat inline — see JS: renderLegendWithAvg) ---- */
+.chart-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; padding-top: var(--space-2); }
+.legend-item {
+  display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-small); color: var(--text-secondary);
+  padding: 3px 8px; border-radius: var(--radius-pill);
+  cursor: default;
+  transition: background-color var(--transition-fast);
+}
+.legend-item.is-clickable { cursor: pointer; }
+.legend-item.is-clickable:hover { background: var(--surface-hover); }
+.legend-item.is-muted { opacity: .4; }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.legend-avg { font-family: var(--font-num); font-weight: 700; color: var(--text); }
+
+/* ---- big-number stat folded into the chart header (replaces the old
+   separate "avg row" that duplicated the legend) ---- */
+.chart-stat-row { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.chart-stat { font-family: var(--font-num); font-size: 20px; font-weight: 700; }
+.chart-stat-label { font-size: var(--fs-small); color: var(--text-faint); }

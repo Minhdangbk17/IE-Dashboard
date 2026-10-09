@@ -1,0 +1,111 @@
+/* ==========================================================================
+   LAYOUT — app shell, grid system, split-view, responsive breakpoints
+   ========================================================================== */
+
+.shell {
+  max-width: var(--shell-max-width);
+  margin: 0 auto;
+  padding: var(--shell-padding);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---- generic grid ---- */
+.grid { display: grid; gap: var(--grid-gap); }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+/* ---- bento grid — 12 columns, asymmetric card sizing (featured cards
+   span more columns than secondary ones), matching the reference layout's
+   "not everything is the same size" rhythm ---- */
+.bento-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: var(--grid-gap); align-items: stretch; }
+.span-2 { grid-column: span 2; }
+.span-3 { grid-column: span 3; }
+.span-4 { grid-column: span 4; }
+.span-5 { grid-column: span 5; }
+.span-6 { grid-column: span 6; }
+.span-7 { grid-column: span 7; }
+.span-8 { grid-column: span 8; }
+.span-12 { grid-column: span 12; }
+
+/* ---- app layers (Dashboard / Overview / Detail Downtime / Root Cause) ---- */
+.layers-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; border-radius: var(--radius-lg); }
+.layer {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; gap: var(--space-4);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transform: scale(0.98);
+  transition: opacity var(--transition-slow), transform var(--transition-slow), visibility 0s var(--transition-slow);
+}
+.layer.is-active {
+  opacity: 1; visibility: visible; pointer-events: auto;
+  transform: scale(1);
+  transition: opacity var(--transition-slow), transform var(--transition-slow), visibility 0s;
+}
+/* directional hint: layers deeper in the story zoom in slightly from a hair below 1 */
+.layer[data-depth="0"] { transform-origin: center top; }
+
+/* ---- Detail Downtime — master/detail split view (left list, right detail) ---- */
+.split-view {
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: var(--space-4);
+}
+.split-list {
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding-right: var(--space-1);
+}
+.split-detail { min-width: 0; overflow-y: auto; }
+
+/* ---- Overview — bento grid so 4 panels fit one 100vh screen, sized by importance ---- */
+.overview-grid {
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: var(--space-4);
+}
+
+.section { display: flex; flex-direction: column; gap: var(--space-4); height: 100%; min-height: 0; }
+
+/* ==========================================================================
+   RESPONSIVE
+   ========================================================================== */
+
+/* Laptop */
+@media (max-width: 1440px) {
+  .shell { padding: var(--space-5); }
+}
+
+/* Tablet landscape */
+@media (max-width: 1180px) {
+  .overview-grid { grid-template-columns: repeat(6, 1fr); grid-template-rows: none; }
+  .split-view { grid-template-columns: 220px 1fr; }
+}
+
+/* Tablet */
+@media (max-width: 900px) {
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .bento-grid, .overview-grid { grid-template-columns: 1fr; }
+  .bento-grid > *, .overview-grid > * { grid-column: 1 / -1 !important; }
+  .shell { height: auto; overflow: visible; }
+  .layers-viewport { overflow: visible; }
+  .layer { position: relative; display: none; transform: none; }
+  .layer.is-active { display: flex; }
+  .split-view { grid-template-columns: 1fr; }
+  .split-list { flex-direction: row; overflow-x: auto; overflow-y: visible; max-height: none; }
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  .shell { padding: var(--space-3); gap: var(--space-3); }
+  .filterbar { flex-direction: column; align-items: stretch; }
+  .topbar { flex-wrap: wrap; gap: var(--space-2); }
+  .breadcrumb { flex-wrap: wrap; }
+}

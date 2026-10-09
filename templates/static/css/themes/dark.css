@@ -1,0 +1,68 @@
+/* ==========================================================================
+   DARK THEME — activates via [data-theme="dark"] on <html>.
+   Enable by setting: document.documentElement.dataset.theme = 'dark'
+   ========================================================================== */
+
+[data-theme="dark"] {
+  /* ---- Surfaces ---- */
+  --bg: #08192D;
+  --surface: #10253E;
+  --surface-hover: #15304D;
+  --card: #10253E;
+  --card-hover: #15304D;
+
+  /* ---- Brand ---- */
+  --primary: #25D9FF;
+  --primary-hover: #5CE5FF;
+  --primary-soft: rgba(37, 217, 255, .12);
+  --secondary: #3D7EFF;
+  --secondary-soft: rgba(61, 126, 255, .16);
+
+  /* ---- Status (brightened for dark-surface contrast) ---- */
+  --success: #34D399;
+  --success-soft: rgba(52, 211, 153, .14);
+  --warning: #FBBF24;
+  --warning-soft: rgba(251, 191, 36, .14);
+  --warning-mid: #FB923C;
+  --warning-mid-soft: rgba(251, 146, 60, .14);
+  --danger: #F87171;
+  --danger-soft: rgba(248, 113, 113, .14);
+
+  /* ---- Text ---- */
+  --text: #F5F8FD;
+  --text-secondary: #94A9C7;
+  --text-faint: #5E7290;
+  --text-on-primary: #08192D;
+
+  /* ---- Borders / shadows ---- */
+  --border: rgba(255, 255, 255, .06);
+  --border-strong: rgba(255, 255, 255, .14);
+  --shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  --shadow-hover: 0 16px 36px rgba(0, 0, 0, .55);
+  --focus-ring: 0 0 0 3px rgba(37, 217, 255, .30);
+
+  /* ---- Overlays ---- */
+  --overlay-bg: rgba(2, 8, 20, .65);
+  --overlay-surface: rgba(8, 25, 45, .85);
+  --scrollbar-thumb: #24405F;
+
+  /* ---- Chart palette (series 1-6, used by charts.js) ---- */
+  --chart-1: #25D9FF;
+  --chart-2: #34D399;
+  --chart-3: #FBBF24;
+  --chart-4: #F87171;
+  --chart-5: #A78BFA;
+  --chart-6: #3D7EFF;
+
+  /* ---- Fabric-type series (used by dashboard.js) ---- */
+  --fabric-cotton: #25D9FF;
+  --fabric-cvc: #FBBF24;
+  --fabric-polyester: #34D399;
+
+  /* ---- SVG chart chrome ---- */
+  --grid-line: rgba(255, 255, 255, .08);
+  --axis-text: #94A9C7;
+  --plot-text: #F5F8FD;
+
+  color-scheme: dark;
+}

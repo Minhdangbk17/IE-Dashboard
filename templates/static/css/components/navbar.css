@@ -1,0 +1,56 @@
+/* ==========================================================================
+   NAVBAR — topbar + breadcrumb (replaces the old horizontal slide-nav)
+   ========================================================================== */
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  flex-shrink: 0;
+}
+.topbar .brand { font-size: var(--fs-card-title); font-weight: 800; letter-spacing: .02em; }
+.topbar-actions { display: flex; align-items: center; gap: var(--space-3); }
+
+/* ---- breadcrumb narrative nav: Dashboard > Overview > Detail Downtime > Root Cause ---- */
+.breadcrumb { display: flex; align-items: center; gap: var(--space-2); }
+.breadcrumb-step {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-label); font-weight: 500; color: var(--text-faint);
+  padding: 6px 12px; border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.breadcrumb-step .step-index {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  font-size: 10px; font-weight: 700;
+  background: var(--border); color: var(--text-secondary);
+}
+.breadcrumb-step:hover { color: var(--text); background: var(--surface-hover); }
+.breadcrumb-step.is-done { color: var(--text-secondary); }
+.breadcrumb-step.is-done .step-index { background: var(--success-soft); color: var(--success); }
+.breadcrumb-step.is-active { color: var(--primary); background: var(--primary-soft); }
+.breadcrumb-step.is-active .step-index {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  color: var(--text-on-primary);
+}
+[data-theme="dark"] .breadcrumb-step.is-active { box-shadow: 0 0 0 1px var(--primary-soft), 0 0 16px -2px color-mix(in srgb, var(--primary) 55%, transparent); }
+.breadcrumb-sep { color: var(--text-faint); font-size: 11px; }
+
+/* ---- icon button (admin gear, theme toggle) ---- */
+.icon-btn {
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+  background: var(--surface); color: var(--text-secondary); font-size: 15px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast), border-color var(--transition-fast);
+}
+.icon-btn:hover { background: var(--surface-hover); color: var(--text); transform: translateY(-1px); }
+.icon-btn:active { transform: translateY(0); }
+
+/* ---- theme toggle (sun / moon swap) ---- */
+.theme-toggle .icon-sun, .theme-toggle .icon-moon { display: none; }
+[data-theme="light"] .theme-toggle .icon-sun,
+:root:not([data-theme]) .theme-toggle .icon-sun { display: block; }
+[data-theme="dark"] .theme-toggle .icon-moon { display: block; }

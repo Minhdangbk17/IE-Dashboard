@@ -1,0 +1,15 @@
+/* ==========================================================================
+   TABS — used inside the Admin modal
+   ========================================================================== */
+
+.section-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: var(--space-3); }
+.section-tabs button {
+  font-family: var(--font-ui); font-size: var(--fs-body); font-weight: 600;
+  padding: var(--space-2) var(--space-3); border-bottom: 2px solid transparent;
+  color: var(--text-secondary); margin-bottom: -1px;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+.section-tabs button:hover { color: var(--text); }
+.section-tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.tab-panel.hidden { display: none; }

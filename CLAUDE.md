@@ -81,6 +81,23 @@ khác. Làm theo đúng khuôn mẫu:
   dependency tối giản (`Flask`, `openpyxl`, `click`).
 - Route API trả JSON qua `jsonify()`; route View trả `render_template()`.
 
+## 5.1 Giao diện (UI) — đọc `design/UI_GUIDELINES.md` trước khi sửa
+
+Trước MỌI task đụng tới giao diện (CSS, template HTML, màu, nút, bảng, biểu
+đồ, theme Dark/Light), Claude PHẢI đọc `design/UI_GUIDELINES.md` — nguồn sự
+thật duy nhất về token màu, component, bảng màu nghiệp vụ, quy tắc biểu đồ và
+nhật ký quyết định giao diện.
+- Tuân theo các quyết định ✅; quyết định 💡 chỉ làm khi người dùng duyệt;
+  KHÔNG làm lại những gì đã đánh dấu ❌.
+- Không thêm mã hex mới ngoài `static/css/app.css`; token mới phải có giá trị
+  cho CẢ Dark và Light.
+- Màu nghiệp vụ (loại vải, mã badge ma trận ↔ `BADGE_FILL_COLORS` Excel)
+  không được đổi khi chưa có xác nhận của người dùng.
+- `templates/static/` chỉ là template THAM KHẢO — không link vào `base.html`.
+- Sau khi thay đổi UI: chạy checklist Mục 12 và cập nhật lại
+  `design/UI_GUIDELINES.md` (token/component mới, Nhật ký quyết định, lỗi đã
+  sửa, Changelog).
+
 ## 6. Lệnh thường dùng
 
 ```bash

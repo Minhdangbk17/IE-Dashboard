@@ -1,0 +1,52 @@
+/* ==========================================================================
+   BUTTONS — Primary, Secondary, Ghost, Outline, Danger, Icon, Small/Large
+   ========================================================================== */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: var(--font-ui); font-size: var(--fs-body); font-weight: 600;
+  padding: 8px 16px; min-height: 34px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast),
+              color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.btn:hover { background: var(--surface-hover); transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  border-color: transparent; color: var(--text-on-primary);
+}
+.btn-primary:hover { filter: brightness(1.06); box-shadow: var(--shadow-hover); transform: translateY(-1px); }
+
+.btn-secondary { background: var(--secondary-soft); border-color: transparent; color: var(--secondary); }
+.btn-secondary:hover { background: var(--secondary); color: var(--text-on-primary); }
+
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+.btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+
+.btn-outline { background: transparent; border-color: var(--border-strong); color: var(--text); }
+.btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+
+.btn-danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn-danger:hover { background: var(--danger-soft); }
+
+.btn-icon { width: 34px; height: 34px; padding: 0; border-radius: var(--radius-md); }
+
+.btn-sm { font-size: var(--fs-small); padding: 5px 10px; min-height: 26px; border-radius: var(--radius-sm); }
+.btn-lg { font-size: 14px; padding: 11px 22px; min-height: 42px; }
+
+/* ---- loading state — spinner replaces label, label kept for a11y ---- */
+.btn.is-loading { color: transparent; pointer-events: none; position: relative; }
+.btn.is-loading::after {
+  content: '';
+  position: absolute; width: 14px; height: 14px;
+  border: 2px solid rgba(255, 255, 255, .5); border-top-color: currentColor;
+  border-radius: 50%; animation: spin .7s linear infinite;
+  color: var(--text);
+}
+.btn-primary.is-loading::after { color: var(--text-on-primary); }

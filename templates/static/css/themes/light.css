@@ -1,0 +1,68 @@
+/* ==========================================================================
+   LIGHT THEME (default) — activates when data-theme="light" OR unset.
+   ========================================================================== */
+
+:root,
+[data-theme="light"] {
+  /* ---- Surfaces ---- */
+  --bg: #EEF3FA;
+  --surface: #FFFFFF;
+  --surface-hover: #F4F8FC;
+  --card: #FFFFFF;
+  --card-hover: #F8FBFE;
+
+  /* ---- Brand ---- */
+  --primary: #2F80ED;
+  --primary-hover: #1F6FDB;
+  --primary-soft: #E7F0FE;
+  --secondary: #49C6E5;
+  --secondary-soft: #E3F8FC;
+
+  /* ---- Status ---- */
+  --success: #157A3D;
+  --success-soft: #E9F6EE;
+  --warning: #B3690A;
+  --warning-soft: #FDF1E2;
+  --warning-mid: #A3480A;
+  --warning-mid-soft: #FDE3D0;
+  --danger: #C8291F;
+  --danger-soft: #FBEAE9;
+
+  /* ---- Text ---- */
+  --text: #233044;
+  --text-secondary: #7B8794;
+  --text-faint: #A7B2C2;
+  --text-on-primary: #FFFFFF;
+
+  /* ---- Borders / shadows ---- */
+  --border: #E8EDF5;
+  --border-strong: #D7E1EE;
+  --shadow: 0 4px 14px rgba(0, 0, 0, .05);
+  --shadow-hover: 0 10px 28px rgba(47, 128, 237, .12);
+  --focus-ring: 0 0 0 3px rgba(47, 128, 237, .28);
+
+  /* ---- Overlays ---- */
+  --overlay-bg: rgba(15, 23, 42, .45);
+  --overlay-surface: rgba(255, 255, 255, .85);
+  --scrollbar-thumb: #C7D3E3;
+
+  /* ---- Chart palette (series 1-6, used by charts.js) ---- */
+  --chart-1: #2F80ED;
+  --chart-2: #157A3D;
+  --chart-3: #B3690A;
+  --chart-4: #C8291F;
+  --chart-5: #7C6FE5;
+  --chart-6: #49C6E5;
+
+  /* ---- Fabric-type series (used by dashboard.js) ---- */
+  --fabric-cotton: #2F80ED;
+  --fabric-cvc: #B3690A;
+  --fabric-polyester: #157A3D;
+
+  /* ---- SVG chart chrome ---- */
+  --grid-line: #E8EDF5;
+  --axis-text: #7B8794;
+  --plot-text: #233044;
+
+  color-scheme: light;
+}

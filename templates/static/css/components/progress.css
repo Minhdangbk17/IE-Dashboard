@@ -1,0 +1,19 @@
+/* ==========================================================================
+   PROGRESS / LOADING
+   ========================================================================== */
+
+#globalOverlay {
+  position: fixed; inset: 0; background: var(--overlay-surface); z-index: var(--z-overlay);
+  display: none; align-items: center; justify-content: center;
+}
+#globalOverlay.show { display: flex; }
+
+.spinner {
+  width: 24px; height: 24px; border: 2.5px solid var(--border-strong);
+  border-top-color: var(--primary); border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+
+/* indeterminate top-of-panel progress bar (available for async panel refreshes) */
+.progress-bar { height: 3px; width: 100%; background: var(--border); border-radius: var(--radius-pill); overflow: hidden; }
+.progress-bar .progress-fill { height: 100%; width: 40%; background: var(--primary); border-radius: var(--radius-pill); animation: progressSlide 1.1s ease-in-out infinite; }

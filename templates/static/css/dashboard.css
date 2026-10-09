@@ -1,0 +1,357 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --bg: #ffffff;
+  --bg-subtle: #f6f6f7;
+  --border: #e2e2e5;
+  --border-strong: #c7c7cc;
+  --text: #17171a;
+  --text-mute: #6b6b72;
+  --text-faint: #a3a3aa;
+  --accent: #2952e3;
+  --accent-bg: #eef1fd;
+  --red: #c8291f;
+  --red-bg: #fbeae9;
+  --amber: #b3690a;
+  --amber-bg: #fdf1e2;
+  --green: #157a3d;
+  --green-bg: #e9f6ee;
+
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-num: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --chart-sm: 220px;
+  --chart-md: 280px;
+  --chart-lg: 340px;
+
+  --radius: 3px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-subtle);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { margin: 0; font-weight: 600; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+/* ---- layout shell ---- */
+.shell { max-width: 1440px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.topbar .brand { font-weight: 700; font-size: 14px; letter-spacing: .02em; }
+.topbar nav { display: flex; gap: 4px; }
+.topbar nav a {
+  color: var(--text-mute); font-size: 12.5px; font-weight: 500; padding: 6px 10px; border-radius: var(--radius);
+}
+.topbar nav a:hover { text-decoration: none; background: var(--bg-subtle); color: var(--text); }
+.topbar nav a.active { color: var(--accent); background: var(--accent-bg); }
+
+/* ---- filter bar ---- */
+.filterbar {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 12px;
+  padding: 12px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 11px; color: var(--text-mute); font-weight: 500; }
+.field input, .field select {
+  font-family: var(--font-ui); font-size: 12.5px; color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 6px 8px; background: var(--bg);
+  min-height: 30px;
+}
+.field input:focus, .field select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.field-grow { flex: 1; min-width: 220px; }
+
+.btn {
+  font-family: var(--font-ui); font-size: 12.5px; font-weight: 500; padding: 7px 14px;
+  border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--bg); color: var(--text);
+  cursor: pointer; min-height: 30px;
+}
+.btn:hover { background: var(--bg-subtle); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: #1f41b8; }
+.btn-danger { color: var(--red); border-color: var(--red); }
+.btn-danger:hover { background: var(--red-bg); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.multiselect { position: relative; }
+.multiselect-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; width: max(220px, 100%);
+  max-height: 240px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,.08);
+}
+.multiselect-panel label { display: flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12.5px; cursor: pointer; }
+.multiselect-panel label:hover { background: var(--bg-subtle); }
+.multiselect-search { width: 100%; border: none; border-bottom: 1px solid var(--border); padding: 7px 10px; font-size: 12.5px; }
+.multiselect-search:focus { outline: none; }
+
+/* ---- material filter warning ---- */
+.approx-banner {
+  display: none; align-items: center; gap: 8px; padding: 7px 12px; font-size: 12px;
+  background: var(--amber-bg); color: var(--amber); border: 1px solid #f0d19b; border-radius: var(--radius);
+}
+.approx-banner.show { display: flex; }
+
+/* ---- panel / card ---- */
+.panel { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.panel-title { font-size: 13px; font-weight: 600; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.panel-title .count { color: var(--text-mute); font-weight: 400; }
+
+.grid { display: grid; gap: 12px; }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+
+.chart-sm { width: 100%; height: var(--chart-sm); }
+.chart-md { width: 100%; height: var(--chart-md); }
+.chart-lg { width: 100%; height: var(--chart-lg); }
+
+/* ---- KPI ---- */
+.kpi { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; }
+.kpi-label { font-size: 11px; color: var(--text-mute); font-weight: 500; }
+.kpi-value { font-family: var(--font-num); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kpi-value.red { color: var(--red); }
+.kpi-value.amber { color: var(--amber); }
+.kpi-value.green { color: var(--green); }
+
+/* ---- status dot ---- */
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+.dot.red { background: var(--red); }
+.dot.amber { background: var(--amber); }
+.dot.green { background: var(--green); }
+
+/* ---- table ---- */
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+thead th {
+  text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-mute);
+  font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg);
+}
+tbody td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr:hover { background: var(--bg-subtle); }
+td.num, th.num { font-family: var(--font-num); text-align: right; font-variant-numeric: tabular-nums; }
+.table-scroll { max-height: 420px; overflow-y: auto; }
+.empty-row { text-align: center; color: var(--text-faint); padding: 28px 0; font-size: 12.5px; }
+
+/* severity badges for downtime exceeding standard */
+.badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; }
+.badge-150 { background: var(--amber-bg); color: var(--amber); }
+.badge-300 { background: #fde3d0; color: #a3480a; }
+.badge-400 { background: var(--red-bg); color: var(--red); }
+
+/* ---- form ---- */
+.form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.form-row .field { min-width: 160px; }
+textarea {
+  font-family: var(--font-ui); font-size: 12.5px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+  padding: 8px; width: 100%; resize: vertical;
+}
+
+/* ---- modal ---- */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(15,15,17,.45); display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-overlay.show { display: flex; }
+.modal { background: var(--bg); border-radius: var(--radius); width: 100%; max-width: 420px; border: 1px solid var(--border); }
+.modal-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.modal-head h3 { font-size: 13px; }
+.modal-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.modal-foot { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+.modal-close { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--text-mute); line-height: 1; }
+
+/* ---- toast ---- */
+#toastStack { position: fixed; top: 16px; right: 16px; z-index: 200; display: flex; flex-direction: column; gap: 6px; }
+.toast { background: var(--text); color: #fff; font-size: 12.5px; padding: 8px 14px; border-radius: var(--radius); }
+.toast.error { background: var(--red); }
+
+/* ---- overlay ---- */
+#globalOverlay { position: fixed; inset: 0; background: rgba(255,255,255,.85); z-index: 150; display: none; align-items: center; justify-content: center; }
+#globalOverlay.show { display: flex; }
+.spinner { width: 22px; height: 22px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.section-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.section-tabs button {
+  font-family: var(--font-ui); font-size: 12.5px; font-weight: 500; padding: 8px 12px; background: none; border: none;
+  border-bottom: 2px solid transparent; color: var(--text-mute); cursor: pointer; margin-bottom: -1px;
+}
+.section-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-panel.hidden { display: none; }
+
+.hint { font-size: 11.5px; color: var(--text-faint); }
+
+.chip {
+  font-family: var(--font-ui); font-size: 12px; padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--bg); color: var(--text); cursor: pointer;
+}
+.chip:hover { background: var(--bg-subtle); }
+.chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---- checkbox chip (downtime type toggle) ---- */
+.chip-check {
+  display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding: 6px 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; background: var(--bg);
+}
+.chip-check:hover { background: var(--bg-subtle); }
+.chip-check.selected { border-color: var(--accent); background: var(--accent-bg); }
+.chip-check input { accent-color: var(--accent); }
+
+/* ---- standards table input ---- */
+.std-input {
+  font-family: var(--font-num); font-size: 12.5px; width: 90px; text-align: right;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 5px 7px; background: var(--bg);
+}
+.std-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.btn-sm { font-size: 11.5px; padding: 4px 9px; min-height: 24px; }
+
+.link-inline { font-size: 12px; }
+
+/* ---- SVG chart legend / empty state (offline chart engine) ---- */
+.chart-legend { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: center; padding-top: 6px; }
+.legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-mute); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.chart-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); font-size: 12.5px; }
+.chart-flex { display: flex; flex-direction: column; height: 100%; }
+.chart-flex-plot { flex: 1; min-height: 0; }
+
+/* ---- compliance detail card (per downtime type) ---- */
+.compliance-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+.compliance-card .card-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.compliance-card .card-chart { height: 120px; }
+.compliance-card .card-total { text-align: center; font-size: 11px; color: var(--text-mute); margin-top: 2px; }
+.compliance-card .card-empty { text-align: center; color: var(--text-faint); font-size: 12px; padding: 44px 0; }
+
+/* ---- panel title with inline actions (e.g. Top Downtime granularity) ---- */
+.panel-title.with-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.granularity-group { display: flex; gap: 6px; }
+
+/* ==========================================================================
+   SLIDE NAVIGATION (CEO presentation mode)
+   ========================================================================== */
+.slide-nav { display: flex; gap: 2px; }
+.slide-nav button {
+  font-family: var(--font-ui); font-size: 12.5px; font-weight: 500; padding: 7px 14px;
+  border: 1px solid transparent; border-radius: var(--radius); background: none; color: var(--text-mute); cursor: pointer;
+}
+.slide-nav button:hover { background: var(--bg-subtle); color: var(--text); }
+.slide-nav button.active { color: var(--accent); background: var(--accent-bg); font-weight: 600; }
+
+.icon-btn {
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--bg); cursor: pointer; font-size: 15px;
+}
+.icon-btn:hover { background: var(--bg-subtle); }
+
+.slides-viewport { overflow: hidden; border-radius: var(--radius); }
+.slides-track { display: flex; width: 300%; transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1); }
+.slide { width: calc(100% / 3); flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
+
+/* ---- fly-in animation for panels within the active slide ---- */
+@keyframes flyIn {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fly-in { animation: flyIn 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+
+/* ---- clickable Fail region on compliance cards ---- */
+.compliance-card .card-chart { cursor: pointer; }
+.compliance-card .fail-hint { text-align: center; font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+.compliance-card .fail-hint:hover { color: var(--red); }
+
+/* ---- root cause per-type block ---- */
+.root-cause-block { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.root-cause-block .rc-title { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; }
+.root-cause-block .rc-chart { height: 220px; }
+
+.view-toggle { display: flex; gap: 6px; }
+
+/* ==========================================================================
+   ADDED — Capacity multi-select, merged Detail Downtime Analysis card,
+   per-card Root Cause toggle, inline Note editing
+   ========================================================================== */
+
+/* Capacity toggle button reuses .btn; panel reuses .multiselect-panel */
+#capacityPanel { min-width: 160px; }
+
+/* ---- merged analysis card (doughnut + root cause, own toggle) ---- */
+.analysis-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.analysis-card .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.analysis-card .card-title { font-size: 12.5px; font-weight: 600; }
+.analysis-card .card-body { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: start; }
+.analysis-card .card-body-single { display: block; }
+.analysis-card .card-chart { height: 140px; }
+.analysis-card .card-total { text-align: center; font-size: 11px; color: var(--text-mute); margin-top: 2px; }
+.analysis-card .card-empty { text-align: center; color: var(--text-faint); font-size: 12px; padding: 30px 0; }
+.analysis-card .rc-chart { height: 160px; }
+.analysis-card .rc-controls { display: flex; gap: 6px; margin-bottom: 6px; }
+@media (max-width: 700px) { .analysis-card .card-body { grid-template-columns: 1fr; } }
+
+/* ---- Root Cause buttons (one per cause, opens whole-range Case Detail) ---- */
+.root-cause-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.root-cause-buttons .btn { font-size: 12px; }
+
+/* ==========================================================================
+   LAYER / SPLIT-VIEW LAYOUT — previously only set inline (overflow-y:auto
+   on #layer-detail AND overflow-y:auto again on #standardTypeDetail
+   inside a fixed-height, overflow:hidden .split-view). That produced two
+   independent nested scroll areas on the Detail Downtime page ("kéo xuống
+   rất mệt") and clipped Standard Achievement content that grew taller
+   than the fixed box ("bị che"). Rule here: ONE scroll container per
+   layer (the page/section itself) -- the rail (.split-list) stays visible
+   via position:sticky instead of its own scrollbar, and .split-detail
+   grows to its natural content height (no overflow:hidden clipping).
+   ========================================================================== */
+.layer { display: flex; flex-direction: column; gap: 12px; }
+.layer.hidden { display: none; }
+
+.split-view {
+  display: flex; align-items: flex-start; gap: 16px;
+  /* was: overflow:hidden + fixed min-height -- both removed so content is
+     never clipped and the section grows to fit Standard Achievement. */
+}
+.split-list {
+  flex: 0 0 220px; display: flex; flex-direction: column; gap: 4px;
+  position: sticky; top: 8px; align-self: flex-start;
+}
+.split-detail { flex: 1; min-width: 0; }
+@media (max-width: 900px) {
+  .split-view { flex-direction: column; }
+  .split-list { position: static; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; }
+}
+
+/* rail item (downtime-type list on the left of Standard Achievement) */
+.rail-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; text-align: left; font-family: var(--font-ui); font-size: 12.5px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); color: var(--text); cursor: pointer;
+}
+.rail-item:hover { background: var(--bg-subtle); }
+.rail-item.is-active { border-color: var(--accent); background: var(--accent-bg); }
+.rail-meta { display: flex; align-items: center; gap: 6px; }
+.rail-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.rail-badge { font-size: 10.5px; color: var(--text-mute); white-space: nowrap; }
+
+/* combined Standard Achievement chart (stacked bar, real height + trend
+   line on a secondary axis, in ONE chart -- see charts.js renderStackedTrendCombo) */
+.combo-chart { height: 320px; }
+
+/* ---- inline Note editing in Case Detail table ---- */
+.note-cell { display: flex; align-items: center; gap: 6px; }
+.note-input { font-family: var(--font-ui); font-size: 12px; flex: 1; min-width: 120px; border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 4px 6px; background: var(--bg); }
+.note-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.note-save-btn { font-size: 11px; padding: 3px 8px; min-height: 22px; }

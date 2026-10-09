@@ -1,0 +1,31 @@
+/* ==========================================================================
+   TYPOGRAPHY — hierarchy per the design spec
+   Dashboard Title 28/800 · Section Title 20/700 · Card Title 14/600
+   Body 13 · Small Label 12 · KPI Number 34/700
+   ========================================================================== */
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-base);
+}
+
+.text-dashboard-title { font-size: var(--fs-dashboard-title); font-weight: var(--fw-dashboard-title); letter-spacing: -0.01em; }
+.text-section-title { font-size: var(--fs-section-title); font-weight: var(--fw-section-title); letter-spacing: -0.005em; }
+.text-card-title { font-size: var(--fs-card-title); font-weight: var(--fw-card-title); }
+.text-body { font-size: var(--fs-body); font-weight: 400; }
+.text-label { font-size: var(--fs-label); font-weight: 500; color: var(--text-secondary); }
+.text-kpi { font-size: var(--fs-kpi); font-weight: var(--fw-kpi); letter-spacing: -0.01em; }
+
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  font-size: var(--fs-small);
+  color: var(--text-faint);
+}
+
+.text-secondary { color: var(--text-secondary); }
+.text-muted { color: var(--text-faint); }
