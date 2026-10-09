@@ -61,6 +61,20 @@
   RFT chỉ đọc công đoạn `DG*` (lọc ở read time).
 - `dye_nc_reports` — NC Report (nạp hằng ngày, UPSERT khoá `nc_no`). RFT chỉ tính NC công đoạn
   `DG*`, Defect "khác màu", Closed, Corrective không "MA" (lọc ở read time).
+- RFT đọc thêm `batch_details.dyestuff_correction` (TEXT trên Postgres — ép số ở Python):
+  > 0 -> ReworkCount = Adjustment (cùng TotalCorrectionCnt > 0).
+- `knitting_machine_daily` — file "Stop Reason Analysis by Machine" cấp máy, 1 dòng = máy x
+  production_date (Efficiency, Available/Run/Total Stop, # Rev, Act.Speed, # Total Production,
+  period_start/end từ tên file). `knitting_stop_details` — 1 dòng = máy x mã dừng x production_date
+  (Stop Time/Count, % Loss, Avg, Stop Color ARGB int). Import thay thế cả ngày
+  (`modules/knitting/engines/downtime/service.py`). `knitting_stop_category_map` (stop_code PK ->
+  category, admin ghi đè) + `knitting_downtime_targets` (category PK, before_pct, target_pct — seed
+  bảng người dùng); báo cáo ở `report.py`.
+- `knitting_piece_rolls` — Piece Produced report, 1 dòng = 1 cuộn (PK roll_no, UPSERT): machine_code,
+  job_id, greige_id, available/running/stopped (phút), record_start/record_end (ngày ISO, không giờ).
+  `knitting_greige_programs` (PK greige_code -> program, program_key chuẩn hoá) +
+  `knitting_core_programs` (PK program_key) — từ Knitting program.xlsx, import thay thế toàn bộ.
+  Program của máy-ngày tính ở read time (`programs.py`).
 - `rft_targets` — Target RFT khoá `(category, fabric_type)`; 5 category: Lab to Bulk / Bulk to
   Bulk / 2nd Batch (mức tối thiểu), Rework / Adjustment (mức tối đa).
 - `batch_details` — chi tiết mẻ nhuộm (import Batch Detail). **Khoá đã đổi

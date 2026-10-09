@@ -13,6 +13,14 @@
       5 máy, downtime ngẫu nhiên, import_logs mẫu).
 - [x] Domain `dyeing`: Hub Aggregator + Engine `oee`, `downtime`, `excel_import`.
 - [x] Domain `knitting`: scaffold tối giản (Engine `oee` stub).
+- [x] (2026-10-09) Engine `knitting.downtime` — khung sườn: import CSV "Stop Reason Analysis by
+      Machine" (Production Date từ tên file, thay thế cả ngày), bảng `knitting_machine_daily` +
+      `knitting_stop_details`, trang KPI/bảng cơ bản. Test `tests/test_knitting_downtime_import.py`.
+- [x] (2026-10-09) Knitting Downtime: báo cáo % Downtime 13 nhóm x Day/Week/Month (Plan PRD =
+      Available), Before/Target sửa inline (admin), Stop Code Mapping, drill-down, Export Excel, import
+      nhiều file. Đối chiếu khớp bảng người dùng 01–08/10.
+- [x] (2026-10-09) Knitting Downtime: bộ lọc Program / Core program — import Piece Produced report
+      (Greige ID theo máy-ngày) + Knitting program.xlsx (Greige -> Program, Core).
 - [x] UI Primer CSS + Dark Mode + Sidebar động theo role.
 - [x] Modal Import Excel: Drag&Drop, Progress Bar, Preview Table, báo lỗi
       theo dòng.
@@ -1083,7 +1091,6 @@
       Fabric Type + thẻ Date Range, Normal theo quy tắc Trend, drill-down theo kỳ + ô Total,
       Export Excel. `build_matrix()` tính trực tiếp từ raw. Không đổi schema.
       Test `tests/test_batch_matrix_brand_fabric_filters.py` (viết lại), `test_batch_matrix_formula.py`.
-
 - [x] 2026-10-08 — **Viết lại báo cáo RFT** theo công thức Excel người dùng: nguồn `batch_details`
       (Dyelot đuôi 0) + 2 nguồn nạp hằng ngày từ file thô (`dye_production_ops` Production Report
       DG, `dye_nc_reports` NC Report — `core/rft_sources_importer.py`, lọc ở read time). 5 tab
@@ -1102,6 +1109,27 @@
       5 tab.
 - [ ] Hub Dashboard: sparkline 4 ô RFT chưa có đường Target nét đứt (quy tắc biểu đồ Mục 7.2) —
       cần chọn Target nào cho ô gộp mọi loại vải.
+- [ ] **[NỢ KỸ THUẬT — tạm hoãn theo yêu cầu người dùng, 2026-10-07] FabricType rỗng chỉ
+      được tự gán cho mẻ WA; mẻ rỗng khác phải do người dùng nhập bổ sung.** Hiện
+      `core/batch_source.py::load_resolved_batches()` bước 3 tự gán FabricType của mẻ kế tiếp
+      cùng máy cho MỌI mẻ rỗng/"Unknown" -> mẻ Normal/Rework thiếu dữ liệu bị gán âm thầm.
+      - Cách hiểu đề xuất (CHƯA được người dùng xác nhận): mẻ trống mà CHÍNH NÓ là WA thì lấy
+        FabricType của mẻ kế tiếp cùng máy. Tháng 8 có 436/436 mẻ WA trống loại vải. Các mẻ
+        trống còn lại thì người dùng phải nhập. Cách hiểu thay thế: "mẻ ngay sau là WA" — sẽ
+        bắt nhập tay khoảng 420 mẻ WA, nên kém hợp lý.
+      - Số liệu file tháng 8 (3418 mẻ, 677 mẻ trống): 436 WA được tự gán, 241 mẻ phải nhập tay
+        (133 Rework/khác, 99 Sample, 9 Normal).
+      - Câu hỏi còn mở: (1) WA đứng trước một mẻ cũng trống (64 ca) -> lan truyền sau khi
+        người dùng nhập? (2) mẻ WA cuối máy (3 ca) giữ "Unknown"? (3) `CL*` có được trống như
+        WA không? (4) Sample có được miễn nhập không? Nếu miễn thì còn 142 mẻ phải nhập.
+        (5) Mẻ thiếu bị loại khỏi báo cáo + hiện cảnh báo (đề xuất), hay chặn import?
+      - Thiết kế dự kiến: bảng riêng `batch_fabric_overrides` khoá `(dyelot, machine,
+        start_time)`. Lý do: `sync_batch_details()` dùng ON CONFLICT DO UPDATE, sẽ ghi đè giá
+        trị nhập tay khi import lại. Ghép override khi đọc trong `load_resolved_batches()`
+        (giống Idle Entry). Màn hình nhập "Missing Fabric Type" trong `manual_entry`, có link
+        từ kết quả import. Nhập xong phải recompute ngày của mẻ đó + 1 ngày liền trước. Cập nhật
+        `EngineMetadata` (data_sources/data_sinks). Sau deploy phải `flask rebuild-summaries`.
+        Ảnh hưởng CẢ Batch/Day Trend lẫn Batch Per Day by Machine.
 - [ ] `batch_matrix_daily_summary` + `batch_matrix/service.py::recompute_daily()` không còn
       báo cáo nào đọc (từ 2026-10-06) — cân nhắc gỡ (kèm `tests/verify_rollup_parity.py` phần
       batch_matrix, vốn so với quy tắc batch_type cũ).
@@ -1144,6 +1172,13 @@
       trong công thức OEE (hiện giả định 100%).
 - [ ] Triển khai đầy đủ Engine cho Domain `knitting` (hiệu suất dệt, định
       mức tiêu hao sợi...).
+- [ ] `knitting.downtime`: xác nhận mã thật của No Material / MC Adjustment / Cleaning (Scheduled) /
+      Drop stitch / Bad Material khi có file tháng 10 (hiện map theo từ khoá mô tả); quyết định có
+      làm tròn kiểu Excel (2 lần) không; tháng Oct 16.6% vs 16.86%; ô KPI trên Hub Knitting.
+- [ ] Knitting Program: xác nhận Core có tính biến thể (Graphic Tee-20S/1 Heather/Recycle, Airism -Trim,
+      Washed Boxy trim 1/2) không; 20 Greige có 2 Program khác hẳn (đang lấy dòng cuối). Máy-ngày không
+      có cuộn / Greige ngoài danh mục: Program để trống (người dùng chốt 2026-10-09).
+- [ ] Sửa `tests/verify_rollup_parity.py` (`KeyError: 'days'` — build_matrix đổi sang `periods`).
 - [ ] Kết nối trực tiếp PLC/IoT thay vì phụ thuộc hoàn toàn vào Excel Import.
 - [ ] Multi-factory sync: đồng bộ dữ liệu giữa CETVN, CETBD, RTVL, EG.
 - [ ] Nâng cấp Authentication: JWT/SSO, phân quyền chi tiết hơn theo xưởng.

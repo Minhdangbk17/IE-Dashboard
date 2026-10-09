@@ -17,6 +17,16 @@ Phase 1 mới scaffold tối giản. Nghiệp vụ tương tự Nhuộm nhưng c
 khác (hiệu suất dệt theo mũi/phút, định mức tiêu hao sợi...) — sẽ triển khai
 đầy đủ ở Phase 2 theo đúng khuôn mẫu kiến trúc của Nhuộm.
 
+**Downtime Dệt (2026-10-09, khung sườn)**: hệ thống giám sát máy dệt xuất hằng ngày file CSV
+"CET-Stop Reason Analysis by Machine - <từ> - <đến>.csv" — Production Date nằm trong tên file
+(07:00 -> 07:00). Mỗi dòng = 1 máy (KO*/KT*, spec, kiểu dệt, hiệu suất máy/công nhân, giờ
+Available/Run/Stop, số vòng, tốc độ, sản lượng) x 1 mã dừng (Doffing, Yarn Broken, Safe Door...).
+Người dùng import trên trang Knitting > Downtime (tab Import Data, nhiều file 1 lần); import lại cùng
+ngày thay thế ngày đó. Báo cáo: % Downtime = thời gian dừng theo 13 nhóm / Plan PRD (= cột Available),
+theo Ngày / Tuần / Tháng, so với "Before" (mức trước cải tiến) và Target năm 2026; vượt Target = đỏ.
+Lọc theo Program / Core program: máy đang dệt Greige nào (file "Piece Produced report", 1 dòng = 1 cuộn,
+xuất theo tháng) -> Program (file "Knitting program.xlsx", có bảng Core program 4 dòng).
+
 ## Quy trình Import Excel (chi tiết)
 1. Người dùng vào Hub xưởng, bấm nút **"Import Data"** → mở Modal.
 2. Chọn loại dữ liệu (Telemetry hoặc Downtime) → có thể tải **file mẫu**

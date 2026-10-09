@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Downtime - Knitting{% endblock %}
+{% block extra_head %}<style>
+    .kd-dropdown { position: relative; min-width: 190px; }
+    .kd-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-xl); max-height: 320px; overflow-y: auto; }
+    .kd-menu[hidden] { display: none; }
+    .kd-menu .form-control { width: 100%; margin-bottom: 6px; }
+    .kd-option { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; white-space: nowrap; }
+    .kd-option:hover { background: var(--bg-surface-raised); }
+    .kd-table td, .kd-table th { white-space: nowrap; }
+    .kd-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .kd-table .ref { color: var(--text-secondary); }
+    .kd-table tr.total-row th, .kd-table tr.total-row td { font-weight: 600; border-top: 1px solid var(--border-default); }
+    .kd-table tr.plan-row th, .kd-table tr.plan-row td { color: var(--text-secondary); }
+    .kd-table td.ratio-warning { background: var(--danger-bg); color: var(--danger); }
+    .kd-chart-panel { height: 340px; }
+    .kd-page[hidden] { display: none; }
+    .target-edit { width: 64px; }
+    .kd-upload-list { max-height: 240px; overflow: auto; }
+    /* K-01: .btn-group active dùng #fff cứng -> không đọc được ở Light; vá cục bộ bằng token. */
+    #kd-unit .btn.is-active { background: var(--gradient-primary); color: var(--text-on-accent); border-color: transparent; }
+</style>{% endblock %}
+{% block content %}
+{% set can_import = current_user_can('knitting', 'downtime', 'edit') %}
+{% set is_admin = CURRENT_USER and CURRENT_USER.role == 'admin' %}
+<div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
+    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Knitting / Reports</p><h2 class="mt-0">Downtime performance</h2></div>
+    <a class="btn btn-sm" href="{{ url_for('knitting.hub') }}">&larr; Back to Knitting Hub</a>
+</div>
+
+<section class="Box p-3 mb-3" aria-label="Report filters">
+    <div class="d-flex flex-wrap flex-items-end" style="gap:12px">
+        <div class="form-group mb-0"><label for="kd-from">From Date</label><input id="kd-from" class="form-control" type="date"></div>
+        <div class="form-group mb-0"><label for="kd-to">To Date</label><input id="kd-to" class="form-control" type="date"></div>
+        <div class="form-group mb-0"><label for="kd-group-by">Group By</label>
+            <select id="kd-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
+        <div class="form-group mb-0 kd-dropdown">
+            <label for="kd-machine-toggle">M/c Code</label>
+            <button id="kd-machine-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All machines</button>
+            <div id="kd-machine-menu" class="kd-menu" hidden></div>
+        </div>
+        <div class="form-group mb-0 kd-dropdown">
+            <label for="kd-structure-toggle">Knitting Structure</label>
+            <button id="kd-structure-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All structures</button>
+            <div id="kd-structure-menu" class="kd-menu" hidden></div>
+        </div>
+        <div class="form-group mb-0 kd-dropdown">
+            <label for="kd-program-toggle">Program</label>
+            <button id="kd-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All programs</button>
+            <div id="kd-program-menu" class="kd-menu" hidden></div>
+        </div>
+        <div class="form-group mb-0"><label for="kd-core-only">Core program</label><label class="kd-option" style="padding:8px 0"><input id="kd-core-only" type="checkbox"> Core only</label></div>
+        <div class="form-group mb-0"><label>Unit</label><div class="BtnGroup" id="kd-unit" role="group" aria-label="Display unit">
+            <button type="button" class="btn btn-sm BtnGroup-item is-active" data-unit="pct" aria-pressed="true">Percentage (%)</button>
+            <button type="button" class="btn btn-sm BtnGroup-item" data-unit="time" aria-pressed="false">Stop time</button>
+        </div></div>
+        <a id="kd-export" class="btn" href="#">Export Excel</a>
+    </div>
+</section>
+
+<nav class="page-tabs mb-3" id="kd-tabs" aria-label="Downtime report pages">
+    <button class="page-tab is-active" type="button" data-page="overview">Overview</button>
+    <button class="page-tab" type="button" data-page="mapping">Stop Code Mapping</button>
+    <button class="page-tab" type="button" data-page="import">Import Data</button>
+</nav>
+
+<section class="kd-page" data-page="overview">
+    <p id="kd-error" class="flash flash-error mb-3" hidden></p>
+    <p id="kd-unmapped" class="flash flash-warn mb-3" hidden></p>
+    <div id="kd-empty" class="Box blankslate mb-3" hidden><p class="color-fg-muted mb-0">No knitting stop data in this range. Import files in the <strong>Import Data</strong> tab.</p></div>
+    <div id="kd-report">
+        <div class="Box p-3 mb-3">
+            <div class="d-flex flex-justify-between flex-items-center flex-wrap mb-2" style="gap:8px">
+                <h3 class="mt-0 mb-0">Downtime trend</h3>
+                <div class="kd-dropdown" style="min-width:230px">
+                    <button id="kd-series-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">Total</button>
+                    <div id="kd-series-menu" class="kd-menu" hidden></div>
+                </div>
+            </div>
+            <p class="f6 color-fg-muted mt-0 mb-2">Total plus up to 3 categories. Dashed lines are targets.</p>
+            <div class="kd-chart-panel"><canvas id="kd-chart" aria-label="Downtime trend chart"></canvas></div>
+        </div>
+        <div class="Box p-3" style="overflow-x:auto;">
+            <table class="preview-table kd-table" id="kd-pivot">
+                <thead><tr id="kd-pivot-head"></tr></thead>
+                <tbody></tbody>
+            </table>
+            <p class="f6 color-fg-muted mt-2 mb-0">% = stop time of the category / Plan PRD (sum of Available of all filtered machines) in the period. Red = above target. Click a cell to see the stops behind it.{% if is_admin %} Click Before / Target to edit.{% endif %}</p>
+        </div>
+    </div>
+</section>
+
+<section class="kd-page" data-page="mapping" hidden>
+    <div class="Box p-3" style="overflow-x:auto;">
+        <p class="f6 color-fg-muted mt-0">Category of each stop code (applied when reading, no re-import needed). Source: <strong>default</strong> = agreed list, <strong>rule</strong> = matched by description keyword, <strong>manual</strong> = set by admin.</p>
+        <table class="preview-table kd-table">
+            <thead><tr><th>Stop Code</th><th>Description</th><th>Category</th><th>Source</th><th class="num">Stop Time</th><th class="num">Records</th><th>First date</th><th>Last date</th></tr></thead>
+            <tbody id="kd-mapping"></tbody>
+        </table>
+    </div>
+</section>
+
+<section class="kd-page" data-page="import" hidden>
+    {% if can_import %}
+    <div class="Box p-3 mb-3">
+        <form id="kd-import-form" class="d-flex flex-items-end flex-wrap" style="gap:12px">
+            <div class="form-group mb-0">
+                <label for="kd-file">Stop Reason / Piece Produced (.csv) or Knitting program (.xlsx) — multiple files allowed</label>
+                <input id="kd-file" class="form-control" type="file" accept=".csv,.xlsx" multiple required>
+            </div>
+            <button id="kd-import-btn" class="btn btn-primary" type="submit">Import</button>
+        </form>
+        <p class="f6 color-fg-muted mt-2 mb-0">File type is detected automatically. <strong>Stop Reason</strong>: production date from the file name (07:00 &rarr; 07:00), re-importing a day replaces that day. <strong>Piece Produced</strong>: rolls are added or updated by Roll No (Greige ID decides the program). <strong>Knitting program</strong>: replaces the whole Greige &rarr; Program list and the Core program list.</p>
+        <div id="kd-import-result" class="kd-upload-list mt-2"></div>
+    </div>
+    {% endif %}
+    <div class="Box p-3 mb-3">
+        <h3 class="Box-title mt-0">Program sources</h3>
+        <p class="f6 mb-1" id="kd-sources-rolls">--</p>
+        <p class="f6 mb-0" id="kd-sources-programs">--</p>
+    </div>
+    <div class="Box" style="overflow-x:auto;">
+        <div class="Box-header"><h3 class="Box-title">Imported days</h3></div>
+        <table class="preview-table kd-table">
+            <thead><tr><th>Production Date</th><th>Period</th><th class="num">Machines</th><th>File</th><th>Imported by</th><th>Imported at</th></tr></thead>
+            <tbody id="kd-days"></tbody>
+        </table>
+    </div>
+</section>
+
+<div id="kd-drawer" class="drawer-overlay" aria-hidden="true">
+    <div class="drawer-panel" role="dialog" aria-labelledby="kd-drawer-title">
+        <div class="drawer-header d-flex flex-justify-between flex-items-center">
+            <div><h3 class="Box-title mb-0" id="kd-drawer-title">Stops</h3><p class="f6 color-fg-muted mb-0" id="kd-drawer-meta"></p></div>
+            <button class="btn btn-sm" id="kd-drawer-close" type="button">Close</button>
+        </div>
+        <div class="drawer-body" id="kd-drawer-body"><div class="drawer-empty">Loading...</div></div>
+    </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+    window.KD_API = "{{ url_for('knitting.downtime.view') }}api/";
+    window.KD_IS_ADMIN = {{ "true" if is_admin else "false" }};
+    window.KD_CATEGORIES = {{ categories | list | tojson }};
+</script>
+<script src="{{ url_for('knitting.downtime.static', filename='knitting_downtime.js') }}"></script>
+{% endblock %}

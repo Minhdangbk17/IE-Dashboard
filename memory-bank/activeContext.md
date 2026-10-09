@@ -1,6 +1,72 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-08 — **Viết lại hoàn toàn báo cáo Right First Time (RFT)**
+**Cập nhật lần cuối:** 2026-10-09 (tiếp 2) — **Knitting Downtime: bộ lọc Program + Core program.**
+File Stop Reason KHÔNG có Greige -> người dùng import thêm 2 nguồn (cùng ô Import, tự nhận loại file
+theo header — `program_importer.detect_file_type()`): (1) "CET-Piece Produced report - <từ> - <đến>.csv"
+(1 dòng = 1 CUỘN, Roll No duy nhất, UPSERT `knitting_piece_rolls`; Record Start/End CHỈ có ngày; cột
+Available/Running/Stopped là PHÚT — Σ Available/máy-ngày ≈ 1418); "cột Greige ID quyết định program"
+(người dùng chốt). (2) "Knitting program.xlsx" -> `knitting_greige_programs` (A Greige code SAP, B
+Program; Greige trùng -> dòng CUỐI, 20 Greige có Program khác hẳn nhau báo warning) +
+`knitting_core_programs` (F="Core program", G=tên — 4 program; cột H/I người dùng nói KHÔNG liên quan);
+import = thay thế toàn bộ. Tên Program so khớp theo `normalize_program()` (bỏ NBSP, gộp khoảng trắng,
+viết thường — "GEL"/"Gel" là 1). Core so khớp ĐÚNG 4 tên (biến thể Heather/Recycle/-Trim/trim 1 KHÔNG
+tính là core — người dùng chưa trả lời câu hỏi này, mình chọn đúng tên). Quy tắc máy-ngày -> Program
+(`programs.py`, đo trên file tháng 7): cuộn phủ mọi ngày Record Start..End (982/1302 máy-ngày; chỉ
+Record End: 880); nhiều Greige/ngày (17) -> Greige có nhiều phút Available nhất (Available cuộn chia
+đều số ngày phủ); không cuộn nào phủ HOẶC Greige ngoài danh mục -> Program ĐỂ TRỐNG (người dùng chốt
+"không có thì để trống"; lọc qua mục "(Blank)"), KHÔNG kéo Greige ngày trước (9/12 khoảng trống ngắn
+đổi Greige 2 đầu). Ngày lịch coi là
+production_date (file không có giờ). Lọc giữ nguyên máy-ngày ở CẢ tử lẫn mẫu (Available). UI: dropdown
+Program (có ô tìm, giá trị gửi API phân tách "|" vì tên có dấu phẩy) + checkbox Core only; drawer + Excel
+Data thêm Greige ID/Program; tab Import có khối "Program sources". Test thêm phần 6 (91 kiểm tra tổng).
+**Deploy: chạy lại `supabase/migrate_knitting_downtime.sql`** (thêm 3 bảng).
+
+**Bản ghi trước:** 2026-10-09 (tiếp) — **Knitting Downtime: báo cáo % Downtime theo bảng người dùng
+chốt** (`modules/knitting/engines/downtime/report.py`). 13 nhóm theo thứ tự: Doffing + Cleaning, Yarn
+Broken, No Material, Loading/Unloading Yarn, Needle Broken, MC Part Broken, MC Adjustment, Needle
+Cleaning, Safe Door, MC Set Up, Cleaning (Scheduled), Drop stitch (dòng RIÊNG, VẪN cộng Total), Others.
+**Plan PRD = cột Available** (người dùng chốt) -> % = Σ Stop Time nhóm / Σ Available mọi máy-ngày trong
+kỳ+bộ lọc; gộp Week/Month cộng tử+mẫu (KHÔNG trung bình %). Tuần ISO T2->CN, nhãn "W40-Oct" = tháng của
+thứ Năm; ngày "01-Oct"; tháng "Oct" (thêm "-yy" nếu khoảng lọc vắt 2 năm). Mapping mã -> nhóm: ghi đè
+admin (`knitting_stop_category_map`) > `DEFAULT_CODE_MAP` (người dùng xác nhận: 10/257/11 Doffing +
+Cleaning; 259/258/3 Yarn Broken; 9; 1; 2; 6; 12; 256; Others = 18, 14 Waiting Tool, 25 "19 Ready to
+run", 17 Quality Issue, 271 Shift Change) > từ khoá mô tả (No Material, Bad Material -> Others,
+Adjust, Scheduled, Drop stitch... — mã thật của các nhóm này CHƯA thấy trong file mẫu) > "Unmapped"
+(dòng cảnh báo, vẫn vào Total). Before/Target theo nhóm ở `knitting_downtime_targets` (seed bảng người
+dùng, Total = tổng các nhóm 25.6% / 16.3%), admin sửa inline. Trang theo khuôn Dyeing: filter bar NGOÀI
+tab (From/To mặc định 6 tuần tính từ ngày mới nhất đã import, Group By Day/Week/Month mặc định Week, M/c
+Code có ô tìm, Knitting Structure, Unit %/Stop time, Export Excel); tab Overview (line Total + tối đa 3
+nhóm, Target nét đứt; pivot Before/Target/kỳ/Total + dòng Plan PRD; ô > Target tô đỏ; bấm ô -> drawer
+máy x mã dừng, tổng khớp ô; cột Total = cả khoảng lọc), Stop Code Mapping (admin đổi nhóm), Import Data
+(chọn NHIỀU file, upload tuần tự — người dùng sẽ upload lại dữ liệu cũ từ tháng 4). **Đối chiếu**: dựng
+lại pivot 01–08/10 người dùng gửi -> khớp bảng % theo ngày mọi ô, W41 = 17.0%. Lưu ý hiển thị: Excel
+người dùng làm tròn 2 LẦN (0.01% rồi 0.1%) nên 7/112 ô web (làm tròn 1 lần từ giá trị thật) lệch 0.1 —
+CHƯA đổi cách làm tròn, chờ người dùng quyết; Others 01-Oct lệch vì bảng cũ chưa gộp Bad Material.
+Tháng Oct trong bảng người dùng 16.6% ≠ Σ/Σ 01–08/10 = 16.86% (lượt trước báo nhầm 16.1%) — chờ xác
+nhận. Test 54 kiểm tra; Playwright 2 theme + mobile; vá K-01 cục bộ cho nút Unit bằng token.
+**Deploy: chạy lại `supabase/migrate_knitting_downtime.sql`** (idempotent, thêm 2 bảng + seed).
+
+**Bản ghi trước:** 2026-10-09 — **Bắt đầu Hub Knitting: khung sườn Engine `knitting.downtime`**
+(người dùng sẽ mô tả chức năng báo cáo sau — CHƯA làm chỉ số/biểu đồ nghiệp vụ nào). Nguồn: file CSV
+"CET-Stop Reason Analysis by Machine - dd-mm-yyyy 07;00;00 - dd-mm-yyyy 07;00;00.csv" (fixture
+`tests/fixtures/sample_imports/`). **Production Date lấy từ TÊN FILE** (không có trong nội dung):
+khoảng phải đúng 07:00 -> 07:00 hôm sau, khác thì từ chối (1 ca/nhiều ngày sẽ ghi đè sai cả ngày);
+nhận hậu tố "(1)"; route dùng tên file gốc, KHÔNG `secure_filename` (sẽ mất `;`). File: header 2
+dòng (dòng nhóm + dòng tên cột, tìm dòng có "M/c Code"), mỗi dòng = máy x mã dừng, cột cấp máy lặp
+lại -> tách 2 bảng `knitting_machine_daily` (UNIQUE production_date+machine_code) và
+`knitting_stop_details` (UNIQUE production_date+machine_code+stop_code). Import = THAY THẾ toàn bộ
+ngày đó (DELETE + INSERT, không UPSERT — mã dừng mất ở bản xuất lại phải mất trong DB). Stop Color
+là ARGB có dấu (.NET, -65536 = #FF0000) -> `importer.argb_to_hex()`. **Đơn vị cột Times
+(Available/Run/Stop, VD 85.57) CHƯA xác nhận** — lưu nguyên, chưa quy đổi; Efficiency là tỉ lệ
+(Run/Available). Trang `/knitting/downtime/`: form import (chỉ hiện khi có quyền `edit`), From/To
+(mặc định ngày mới nhất), 4 KPI, bảng Stops by Reason + Machines, danh sách ngày đã import — hiệu
+suất gộp = tổng Run / tổng Available. Không có rollup, không có biểu đồ (chờ mô tả + Target).
+Test `tests/test_knitting_downtime_import.py` (33 kiểm tra) + chạy thật qua Flask test client (DB
+tạm): Auto-loader nạp `knitting: ['downtime', 'oee']`, Graphify có node + 2 bảng. **Deploy: chạy
+`supabase/migrate_knitting_downtime.sql`.** Lưu ý: `tests/verify_rollup_parity.py` đang lỗi
+`KeyError: 'days'` từ trước (build_matrix đổi sang `periods` 2026-10-06) — chưa sửa.
+
+**Bản ghi trước:** 2026-10-08 — **Viết lại hoàn toàn báo cáo Right First Time (RFT)**
 theo công thức Excel người dùng cung cấp. Bỏ hẳn file "RFT report.xlsx" + bảng `rft_dye_results` +
 `core/rft_importer.py` (người dùng duyệt bỏ dữ liệu cũ). Nguồn mới: `batch_details` (mẻ gốc =
 Dyelot đuôi "0", KHÔNG lọc ReDye, mỗi lần chạy = 1 mẻ, ngày = production_date theo EndTime) + 2
@@ -12,7 +78,7 @@ Closed + Corrective không "MA". Cột tính (`rft/service.py`): STAGE (FormulaC
 Bulk, 08/09 -> Bulk to Bulk, còn lại 2nd Batch), MachineGroup (số trong MachineGroup >= 500 ->
 ">=500kg"), NewBatch (Dyelot +1 ký tự cuối theo dãy 0-9 rồi A-Z: …9 -> …A, …A -> …B — người dùng chốt 2026-10-09, khác Excel vốn ra …10), DyeingRFT (NG nếu có NC hoặc TotalCorrectionCnt > 0),
 ReworkCount (Rework nếu NewBatch có trong DG hoặc Dyelot có trong NC; Adjustment nếu
-TotalCorrectionCnt > 0; còn lại OK). Mẻ có thể đổi OK -> Rework khi DG/NC ngày sau được nạp (đúng
+TotalCorrectionCnt > 0 hoặc DyestuffCorrection > 0 — bổ sung 2026-10-09; còn lại OK). Mẻ có thể đổi OK -> Rework khi DG/NC ngày sau được nạp (đúng
 ý đồ). Màn hình GIỮ NGUYÊN bố cục, 5 tab: Lab to Bulk / Bulk to Bulk / 2nd Batch (RFT rate, Target
 TỐI THIỂU) + Rework / Adjustment (chỉ máy >=500kg, Target TỐI ĐA — người dùng yêu cầu). Thêm dòng
 Total vào bảng, ô tô xanh/đỏ theo Target, Capacity lấy từ MachineGroup (data-driven, mặc định tất
@@ -2333,7 +2399,7 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
   chặn luồng, nhưng vẫn là hằng số gây hiểu nhầm nếu đọc code) — nên dọn lại
   cho khớp thực tế khi có dịp.
 - Bổ sung dữ liệu chất lượng (QC) để tính Quality thực tế trong OEE.
-- Triển khai đầy đủ Engine cho Domain `knitting`.
+- Triển khai đầy đủ Engine cho Domain `knitting` — đã có khung `downtime` (2026-10-09), chờ người dùng mô tả báo cáo.
 
 ## Câu hỏi mở / Rủi ro
 - `batch_matrix`: 9.3% dòng (46/493, sau lọc FabricType) rơi vào nhóm "Không
