@@ -1,8 +1,10 @@
 """
-modules/knitting/engines/downtime/service.py
+modules/knitting/engines/excel_import/service.py
 -----------------------------------------------
-Engine Downtime xưởng Dệt — tầng dữ liệu: bảng + import file "Stop Reason Analysis by Machine"
-theo ngày sản xuất + danh sách ngày đã import. Báo cáo % Downtime ở `report.py`.
+Engine Excel Import xưởng Dệt — tầng dữ liệu DÙNG CHUNG của Domain knitting: bảng + import 3 loại
+file (Stop Reason Analysis by Machine / Piece Produced report / Knitting program) + lịch sử import.
+Import gọi từ Modal trên Knitting Hub (giống Dyeing). Báo cáo đọc lại các bảng này (VD
+`modules/knitting/engines/downtime/report.py`).
 
 Bảng (SQLite tự tạo; Postgres tạo qua `supabase/migrate_knitting_downtime.sql`):
 - `knitting_machine_daily`      — 1 dòng = 1 máy x 1 production_date (Efficiency, Times, Rev, Output).
@@ -11,7 +13,7 @@ Bảng (SQLite tự tạo; Postgres tạo qua `supabase/migrate_knitting_downtim
   trong `report.py`); áp ở READ TIME nên đổi nhóm không phải import lại.
 - `knitting_downtime_targets`   — Before / Target % theo nhóm (seed theo bảng người dùng 2026-10-09).
 - `knitting_piece_rolls`        — file "Piece Produced report", 1 dòng = 1 cuộn (khoá Roll No, UPSERT):
-  nguồn biết máy nào dệt Greige ID nào ngày nào (bộ lọc Program, xem `programs.py`).
+  nguồn biết máy nào dệt Greige ID nào ngày nào (bộ lọc Program, xem `downtime/programs.py`).
 - `knitting_greige_programs` / `knitting_core_programs` — file "Knitting program.xlsx": Greige ->
   Program + danh sách Core program (import = thay thế toàn bộ).
 
@@ -338,5 +340,49 @@ def list_imported_days(conn: Any, limit: int = 60) -> list[dict[str, Any]]:
         LIMIT ?
         """,
         (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Điều phối import theo loại file + lịch sử (Modal Import trên Knitting Hub)
+# ---------------------------------------------------------------------------
+
+DATA_TYPES: dict[str, str] = {
+    "stop_reason": FILE_TYPE,
+    "piece_produced": PIECE_FILE_TYPE,
+    "program": PROGRAM_FILE_TYPE,
+}
+KNITTING_FILE_TYPES = tuple(DATA_TYPES.values())
+
+
+def import_file(conn: Any, file_bytes: bytes, filename: str, data_type: str, imported_by: str | None) -> dict[str, Any]:
+    """`data_type` = "auto" (nhận theo đuôi + header) hoặc 1 khoá của `DATA_TYPES`."""
+    from .program_importer import detect_file_type
+
+    if data_type in (None, "", "auto"):
+        file_type = detect_file_type(filename, file_bytes)
+    elif data_type in DATA_TYPES:
+        file_type = DATA_TYPES[data_type]
+    else:
+        raise ValueError(f"Data Type không hợp lệ: {data_type}")
+    if file_type == FILE_TYPE:
+        return import_stop_reason_file(conn, file_bytes, filename, imported_by)
+    if file_type == PIECE_FILE_TYPE:
+        return import_piece_produced_file(conn, file_bytes, filename, imported_by)
+    return import_program_file(conn, file_bytes, filename, imported_by)
+
+
+def list_recent_imports(conn: Any, limit: int = 30) -> list[dict[str, Any]]:
+    ensure_tables(conn)
+    _ensure_import_logs_table(conn)
+    placeholders = ",".join("?" for _ in KNITTING_FILE_TYPES)
+    rows = conn.execute(
+        f"""
+        SELECT id, file_name, file_type, imported_by, imported_at, status, total_rows, imported_rows, error_rows, error_detail
+        FROM import_logs WHERE file_type IN ({placeholders})
+        ORDER BY id DESC LIMIT ?
+        """,
+        (*KNITTING_FILE_TYPES, limit),
     ).fetchall()
     return [dict(row) for row in rows]

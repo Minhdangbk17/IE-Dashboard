@@ -1,5 +1,5 @@
-/* Knitting Downtime — filter bar dùng chung cho mọi tab, pivot % Downtime, biểu đồ, drill-down,
-   Stop Code Mapping, import nhiều file. */
+/* Knitting Downtime — cùng bố cục Dyeing Downtime: filter bar dùng chung cho mọi tab; mỗi tab biểu đồ
+   ở trên, bảng chi tiết ở dưới; bấm ô -> drawer chi tiết THEO NGÀY (rồi máy-ngày, mã dừng). */
 (function () {
     "use strict";
     const API = window.KD_API;
@@ -12,14 +12,19 @@
     const fmtPct = (v) => (v === null || v === undefined) ? "-" : `${Number(v).toFixed(1)}%`;
     const fmtNum = (v, d = 2) => (v === null || v === undefined) ? "-" : Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
     const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const isOver = (v, target) => target !== null && target !== undefined && v !== null && v !== undefined && v > target + 1e-9;
 
     let unit = "pct";
     let report = null;
-    let chart = null;
-    let extraSeries = [];
     let requestSeq = 0;
+    const charts = {};
 
-    // ------------------------------------------------------------------ multi-select
+    // ------------------------------------------------------------------ dropdowns
+    function closeOnOutside(toggle, menu) {
+        toggle.addEventListener("click", (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; toggle.setAttribute("aria-expanded", String(!menu.hidden)); });
+        document.addEventListener("click", (e) => { if (!toggle.parentElement.contains(e.target)) { menu.hidden = true; toggle.setAttribute("aria-expanded", "false"); } });
+    }
+
     function makeMultiSelect(toggleId, menuId, allLabel, onChange, searchable) {
         const toggle = $(toggleId);
         const menu = $(menuId);
@@ -47,8 +52,7 @@
                 render(); updateLabel(); onChange();
             }));
         }
-        toggle.addEventListener("click", (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; toggle.setAttribute("aria-expanded", String(!menu.hidden)); });
-        document.addEventListener("click", (e) => { if (!toggle.parentElement.contains(e.target)) { menu.hidden = true; toggle.setAttribute("aria-expanded", "false"); } });
+        closeOnOutside(toggle, menu);
         updateLabel();
         return {
             setOptions(values) { options = values; [...selected].forEach((v) => { if (!values.includes(v)) selected.delete(v); }); render(); updateLabel(); },
@@ -56,9 +60,34 @@
         };
     }
 
+    // Chọn tối đa MAX_EXTRA_SERIES nhóm vẽ thêm cạnh Total (quy tắc line chart: <= 4 đường).
+    function makeSeriesSelector(toggleId, menuId, onChange) {
+        const toggle = $(toggleId);
+        const menu = $(menuId);
+        let picked = [];
+        function render() {
+            toggle.textContent = picked.length ? `Total + ${picked.length} categories` : "Total";
+            menu.innerHTML = `<label class="kd-option"><input type="checkbox" checked disabled> Total</label><div class="border-top my-1"></div>`
+                + CATEGORIES.map((c) => {
+                    const checked = picked.includes(c);
+                    const disabled = !checked && picked.length >= MAX_EXTRA_SERIES;
+                    return `<label class="kd-option"><input type="checkbox" value="${esc(c)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}> ${esc(c)}</label>`;
+                }).join("");
+            menu.querySelectorAll("input[value]").forEach((box) => box.addEventListener("change", () => {
+                picked = box.checked ? [...picked, box.value] : picked.filter((c) => c !== box.value);
+                render(); onChange();
+            }));
+        }
+        closeOnOutside(toggle, menu);
+        render();
+        return { picked: () => picked };
+    }
+
     const machineFilter = makeMultiSelect("kd-machine-toggle", "kd-machine-menu", "All machines", scheduleLoad, true);
     const structureFilter = makeMultiSelect("kd-structure-toggle", "kd-structure-menu", "All structures", scheduleLoad, false);
     const programFilter = makeMultiSelect("kd-program-toggle", "kd-program-menu", "All programs", scheduleLoad, true);
+    const downtimeSeries = makeSeriesSelector("kd-series-toggle", "kd-series-menu", () => renderDowntimeChart());
+    const achievementSeries = makeSeriesSelector("kd-ach-toggle", "kd-ach-menu", () => renderAchievementChart());
     $("kd-core-only").addEventListener("change", scheduleLoad);
 
     function filterParams() {
@@ -71,7 +100,7 @@
         return p;
     }
 
-    // ------------------------------------------------------------------ load + pivot
+    // ------------------------------------------------------------------ load
     let loadTimer = null;
     function scheduleLoad() { clearTimeout(loadTimer); loadTimer = setTimeout(loadReport, 250); }
 
@@ -88,30 +117,47 @@
         report = data;
         const empty = !data.period_keys.length;
         $("kd-empty").hidden = !empty;
-        $("kd-report").hidden = empty;
+        document.querySelectorAll(".kd-page[data-page=overview], .kd-page[data-page=achievement]").forEach((page) => {
+            page.classList.toggle("d-none", empty);
+        });
         $("kd-unmapped").hidden = !data.unmapped_codes.length;
         $("kd-unmapped").innerHTML = data.unmapped_codes.length
             ? `Stop codes without a category (counted in Total as "Unmapped"): ${data.unmapped_codes.map((c) => `<strong>${esc(c.stop_code)}</strong> ${esc(c.stop_description)}`).join(", ")}. Set them in Stop Code Mapping.`
             : "";
-        if (!empty) { renderPivot(); renderChart(); }
+        if (empty) return;
+        renderKpis();
+        renderPivot();
+        renderAchievementTable();
+        renderDowntimeChart();
+        renderAchievementChart();
     }
 
-    function cellValue(row, index) { return unit === "pct" ? row.pct[index] : row.stop_time[index]; }
-    function fmtCell(v) { return unit === "pct" ? fmtPct(v) : fmtNum(v); }
-    function over(row, v) { return unit === "pct" && row.target !== null && v !== null && v > row.target + 1e-9; }
+    function renderKpis() {
+        const k = report.kpis;
+        $("kpi-plan").textContent = fmtNum(k.plan, 0);
+        $("kpi-machine-days").textContent = fmtNum(k.machine_days, 0);
+        $("kpi-downtime").textContent = fmtNum(k.downtime, 0);
+        $("kpi-rate").textContent = fmtPct(k.downtime_pct);
+        $("kpi-rate").className = isOver(k.downtime_pct, k.target_pct) ? "kpi-bad" : "kpi-good";
+        $("kpi-target").textContent = fmtPct(k.target_pct);
+        $("kpi-achievement").textContent = fmtPct(k.achievement_pct);
+    }
 
+    // ------------------------------------------------------------------ Overview pivot
     function renderPivot() {
         const head = $("kd-pivot-head");
         head.innerHTML = `<th>Downtime ${unit === "pct" ? "(%)" : "(stop time)"}</th><th class="num">Before</th><th class="num">Target</th>`
             + report.periods.map((p) => `<th class="num">${esc(p)}</th>`).join("") + `<th class="num">Total</th>`;
-        const body = $("kd-pivot").querySelector("tbody");
+        const value = (row, i) => (unit === "pct" ? row.pct[i] : row.stop_time[i]);
+        const fmtCell = (v) => (unit === "pct" ? fmtPct(v) : fmtNum(v));
+        const over = (row, v) => unit === "pct" && isOver(v, row.target);
         const rowHtml = (row, isTotal) => {
             const refCell = (field) => {
                 const editable = IS_ADMIN && !isTotal && row.category !== "Unmapped";
                 return `<td class="num ref${editable ? " cell-clickable kd-target" : ""}" ${editable ? `tabindex="0" data-field="${field}" data-category="${esc(row.category)}"` : ""}>${fmtPct(row[field])}</td>`;
             };
             const cells = report.period_keys.map((key, i) => {
-                const v = cellValue(row, i);
+                const v = value(row, i);
                 return `<td class="num cell-clickable${over(row, v) ? " ratio-warning" : ""}" tabindex="0" data-period="${key}" data-category="${esc(row.category)}">${fmtCell(v)}</td>`;
             }).join("");
             const total = unit === "pct" ? row.total_pct : row.total_stop_time;
@@ -119,21 +165,14 @@
                 + `<td class="num cell-clickable${over(row, total) ? " ratio-warning" : ""}" tabindex="0" data-period="ALL" data-category="${esc(row.category)}"><strong>${fmtCell(total)}</strong></td></tr>`;
         };
         const planRow = `<tr class="plan-row"><th>Plan PRD (Available)</th><td></td><td></td>${report.available.map((v) => `<td class="num">${fmtNum(v)}</td>`).join("")}<td class="num">${fmtNum(report.total_available)}</td></tr>`;
-        body.innerHTML = report.rows.map((r) => rowHtml(r, false)).join("") + rowHtml(report.total_row, true) + planRow;
+        $("kd-pivot").querySelector("tbody").innerHTML = report.rows.map((r) => rowHtml(r, false)).join("") + rowHtml(report.total_row, true) + planRow;
     }
 
     $("kd-pivot").addEventListener("click", (e) => {
         const target = e.target.closest(".kd-target");
         if (target) { editTarget(target); return; }
         const cell = e.target.closest("td[data-period]");
-        if (cell) openDrawer(cell.dataset.period, cell.dataset.category);
-    });
-    $("kd-pivot").addEventListener("keydown", (e) => {
-        if (e.key !== "Enter" && e.key !== " ") return;
-        const cell = e.target.closest("td.cell-clickable");
-        if (!cell || cell.querySelector("input")) return;
-        e.preventDefault();
-        cell.click();
+        if (cell) openDrawer(cell.dataset.period, cell.dataset.category, "downtime");
     });
 
     function editTarget(cell) {
@@ -156,7 +195,7 @@
                 payload[field === "before" ? "before_pct" : "target_pct"] = input.value === "" ? null : Number(input.value);
                 const res = await fetch(`${API}targets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
                 if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.error || "Save failed"); }
-                await loadReport();
+                await loadReport(); // Target đổi -> Achievement cũng đổi, tải lại toàn bộ
             } else {
                 renderPivot();
             }
@@ -165,8 +204,35 @@
         input.addEventListener("blur", () => finish(true));
     }
 
-    // ------------------------------------------------------------------ chart
+    // ------------------------------------------------------------------ Achievement table
+    function renderAchievementTable() {
+        $("kd-ach-head").innerHTML = `<th>Category</th><th class="num">Target</th>` + report.periods.map((p) => `<th class="num">${esc(p)}</th>`).join("") + `<th class="num">Total</th>`;
+        const rowHtml = (row, isTotal) => {
+            const cells = report.period_keys.map((key, i) => {
+                const title = row.evaluated[i] ? `${row.passed[i]} / ${row.evaluated[i]} machine-days` : "No machine-day evaluated";
+                return `<td class="num cell-clickable" tabindex="0" title="${title}" data-period="${key}" data-category="${esc(row.category)}">${row.values[i] === null ? "N/A" : fmtPct(row.values[i])}</td>`;
+            }).join("");
+            return `<tr class="${isTotal ? "total-row" : ""}"><th>${esc(row.category)}</th><td class="num ref">${fmtPct(row.target)}</td>${cells}`
+                + `<td class="num cell-clickable" tabindex="0" title="${row.total_passed} / ${row.total_evaluated} machine-days" data-period="ALL" data-category="${esc(row.category)}"><strong>${row.rate_pct === null ? "N/A" : fmtPct(row.rate_pct)}</strong></td></tr>`;
+        };
+        $("kd-ach-table").querySelector("tbody").innerHTML = report.achievement.rows.map((r) => rowHtml(r, false)).join("") + rowHtml(report.achievement.total_row, true);
+    }
+
+    $("kd-ach-table").addEventListener("click", (e) => {
+        const cell = e.target.closest("td[data-period]");
+        if (cell) openDrawer(cell.dataset.period, cell.dataset.category, "achievement");
+    });
+    document.querySelectorAll("#kd-pivot, #kd-ach-table").forEach((table) => table.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        const cell = e.target.closest("td.cell-clickable");
+        if (!cell || cell.querySelector("input")) return;
+        e.preventDefault();
+        cell.click();
+    }));
+
+    // ------------------------------------------------------------------ charts
     function token(name, fallback) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback; }
+    function palette() { return [token("--accent", "#2862d7"), token("--accent-purple", "#625fff"), token("--success", "#3fb950"), token("--warning", "#d29922")]; }
 
     const valueLabels = {
         id: "kdValueLabels",
@@ -188,23 +254,12 @@
         },
     };
 
-    function renderChart() {
-        if (!report || typeof Chart === "undefined") return;
-        const palette = [token("--accent", "#2862d7"), token("--accent-purple", "#625fff"), token("--success", "#3fb950"), token("--warning", "#d29922")];
+    function drawLineChart(id, datasets, yOptions) {
+        if (typeof Chart === "undefined") return;
         const axis = token("--text-secondary", "#666");
         const grid = token("--border-subtle", "#ddd");
-        const fewPoints = report.periods.length <= 12;
-        const series = [report.total_row, ...extraSeries.map((c) => report.rows.find((r) => r.category === c)).filter(Boolean)];
-        const datasets = [];
-        series.forEach((row, i) => {
-            const color = palette[i % palette.length];
-            datasets.push({ label: row.category, data: row.pct, borderColor: color, backgroundColor: color, tension: 0.2, pointRadius: 3, showLabels: fewPoints && i === 0 });
-            if (row.target !== null && row.target !== undefined) {
-                datasets.push({ label: `${row.category} target`, data: report.periods.map(() => row.target), borderColor: color, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, isTargetLine: true });
-            }
-        });
-        if (chart) chart.destroy();
-        chart = new Chart($("kd-chart"), {
+        if (charts[id]) charts[id].destroy();
+        charts[id] = new Chart($(id), {
             type: "line",
             data: { labels: report.periods, datasets },
             plugins: [valueLabels],
@@ -213,48 +268,61 @@
                 interaction: { mode: "index", intersect: false },
                 scales: {
                     x: { ticks: { color: axis }, grid: { color: grid } },
-                    y: { beginAtZero: true, grace: "10%", ticks: { color: axis, callback: (v) => `${v}%` }, grid: { color: grid } },
+                    y: { beginAtZero: true, grace: "10%", ticks: { color: axis, callback: (v) => `${v}%` }, grid: { color: grid }, ...yOptions },
                 },
                 plugins: {
-                    legend: { labels: { color: axis, boxWidth: 12 } },
+                    legend: { position: "bottom", labels: { color: axis, boxWidth: 12, usePointStyle: true } },
                     tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y === null ? "-" : ctx.parsed.y.toFixed(2) + "%"}` } },
                 },
             },
         });
     }
 
-    (function initSeriesSelector() {
-        const toggle = $("kd-series-toggle");
-        const menu = $("kd-series-menu");
-        function updateLabel() { toggle.textContent = extraSeries.length ? `Total + ${extraSeries.length} categories` : "Total"; }
-        function render() {
-            menu.innerHTML = `<label class="kd-option"><input type="checkbox" checked disabled> Total</label><div class="border-top my-1"></div>`
-                + CATEGORIES.map((c) => {
-                    const checked = extraSeries.includes(c);
-                    const disabled = !checked && extraSeries.length >= MAX_EXTRA_SERIES;
-                    return `<label class="kd-option"><input type="checkbox" value="${esc(c)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}> ${esc(c)}</label>`;
-                }).join("");
-            menu.querySelectorAll("input[value]").forEach((box) => box.addEventListener("change", () => {
-                if (box.checked) extraSeries.push(box.value); else extraSeries = extraSeries.filter((c) => c !== box.value);
-                render(); updateLabel(); renderChart();
-            }));
-        }
-        toggle.addEventListener("click", (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; toggle.setAttribute("aria-expanded", String(!menu.hidden)); });
-        document.addEventListener("click", (e) => { if (!toggle.parentElement.contains(e.target)) menu.hidden = true; });
-        render();
-    })();
-    document.addEventListener("colormodechange", renderChart);
+    function renderDowntimeChart() {
+        if (!report || !report.period_keys.length) return;
+        const fewPoints = report.periods.length <= 12;
+        const rows = [report.total_row, ...downtimeSeries.picked().map((c) => report.rows.find((r) => r.category === c)).filter(Boolean)];
+        const colors = palette();
+        const datasets = [];
+        rows.forEach((row, i) => {
+            const color = colors[i % colors.length];
+            datasets.push({ label: row.category, data: row.pct, borderColor: color, backgroundColor: color, tension: 0.2, pointRadius: 3, spanGaps: true, showLabels: fewPoints && i === 0 });
+            if (row.target !== null && row.target !== undefined) {
+                datasets.push({ label: `${row.category} target`, data: report.periods.map(() => row.target), borderColor: color, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, isTargetLine: true });
+            }
+        });
+        drawLineChart("kd-chart", datasets, { title: { display: true, text: "Downtime (%)", color: token("--text-secondary", "#666") } });
+    }
 
-    // ------------------------------------------------------------------ drill-down
+    function renderAchievementChart() {
+        if (!report || !report.period_keys.length) return;
+        const fewPoints = report.periods.length <= 12;
+        const ach = report.achievement;
+        const rows = [ach.total_row, ...achievementSeries.picked().map((c) => ach.rows.find((r) => r.category === c)).filter(Boolean)];
+        const colors = palette();
+        const datasets = rows.map((row, i) => ({
+            label: row.category, data: row.values, borderColor: colors[i % colors.length], backgroundColor: colors[i % colors.length],
+            tension: 0.2, pointRadius: 3, spanGaps: true, showLabels: fewPoints && i === 0,
+        }));
+        drawLineChart("kd-ach-chart", datasets, { max: 100, grace: 0, title: { display: true, text: "Achievement (%)", color: token("--text-secondary", "#666") } });
+    }
+    document.addEventListener("colormodechange", () => { renderDowntimeChart(); renderAchievementChart(); });
+
+    // ------------------------------------------------------------------ drill-down (chi tiết hằng ngày)
     const drawer = $("kd-drawer");
+    let detail = null;
+    let detailDay = null;
+    let detailMode = "downtime";
     function closeDrawer() { drawer.classList.remove("is-open"); drawer.setAttribute("aria-hidden", "true"); }
     $("kd-drawer-close").addEventListener("click", closeDrawer);
     drawer.addEventListener("click", (e) => { if (e.target === drawer) closeDrawer(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 
-    async function openDrawer(period, category) {
+    async function openDrawer(period, category, mode) {
+        detailMode = mode;
+        detailDay = null;
         const label = period === "ALL" ? "Total" : report.periods[report.period_keys.indexOf(period)];
-        $("kd-drawer-title").textContent = `${category} — ${label}`;
+        $("kd-drawer-title").textContent = `${category} — ${label}${mode === "achievement" ? " (Standard Achievement)" : ""}`;
         $("kd-drawer-meta").textContent = "";
         $("kd-drawer-body").innerHTML = `<div class="drawer-empty">Loading...</div>`;
         drawer.classList.add("is-open");
@@ -265,11 +333,50 @@
         const res = await fetch(`${API}cell?${params}`);
         const data = await res.json();
         if (!res.ok) { $("kd-drawer-body").innerHTML = `<div class="drawer-empty">${esc(data.error || "Load failed")}</div>`; return; }
-        $("kd-drawer-meta").textContent = `${data.from_date} → ${data.to_date} · Stop time ${fmtNum(data.stop_time)} / Plan PRD ${fmtNum(data.available)} (${data.machine_days} machine-days) = ${fmtPct(data.pct)} · ${data.rows.length} rows`;
-        const showCategory = category === "Total";
-        $("kd-drawer-body").innerHTML = data.rows.length ? `<table class="preview-table kd-table"><thead><tr><th>Production Date</th><th>M/c Code</th><th>Structure</th><th>Stop Code</th><th>Description</th>${showCategory ? "<th>Category</th>" : ""}<th>Program</th><th class="num">Stop Time</th><th class="num">Stop #</th></tr></thead><tbody>`
-            + data.rows.map((r) => `<tr><td>${esc(r.production_date)}</td><td>${esc(r.machine_code)}</td><td>${esc(r.knitting_structure)}</td><td>${esc(r.stop_code)}</td><td>${esc(r.stop_description)}</td>${showCategory ? `<td>${esc(r.category)}</td>` : ""}<td title="${esc(r.greige_id || "")}">${esc(r.program)}</td><td class="num">${fmtNum(r.stop_time)}</td><td class="num">${fmtNum(r.stop_count, 0)}</td></tr>`).join("")
-            + `</tbody></table>` : `<div class="drawer-empty">No stops in this cell.</div>`;
+        detail = data;
+        $("kd-drawer-meta").textContent = `${data.from_date} → ${data.to_date} · Stop ${fmtNum(data.stop_time)} / Plan PRD ${fmtNum(data.available)} = ${fmtPct(data.pct)} (target ${fmtPct(data.target)})`
+            + ` · Achievement ${fmtPct(data.achievement_pct)} (${data.passed}/${data.evaluated} machine-days)`;
+        renderDrawer();
+    }
+
+    function renderDrawer() {
+        const d = detail;
+        const showCategory = d.category === "Total";
+        const dailyRows = d.daily.map((day) => `<tr class="cell-clickable${detailDay === day.production_date ? " is-selected" : ""}" tabindex="0" data-day="${day.production_date}">`
+            + `<td>${esc(day.production_date)}</td><td class="num">${fmtNum(day.available)}</td><td class="num">${fmtNum(day.stop_time)}</td>`
+            + `<td class="num${isOver(day.pct, d.target) ? " ratio-warning" : ""}">${fmtPct(day.pct)}</td><td class="num">${day.machines}</td>`
+            + `<td class="num">${day.passed} / ${day.evaluated}</td><td class="num">${day.achievement_pct === null ? "N/A" : fmtPct(day.achievement_pct)}</td></tr>`).join("");
+        const inDay = (r) => !detailDay || r.production_date === detailDay;
+        let machineDays = d.machine_day_rows.filter(inDay);
+        machineDays = detailMode === "achievement"
+            ? machineDays.sort((a, b) => (a.achieved === b.achieved ? (b.pct ?? -1) - (a.pct ?? -1) : a.achieved === false ? -1 : 1))
+            : machineDays.sort((a, b) => b.stop_time - a.stop_time);
+        const status = (ok) => ok === null ? `<span class="Label Label--secondary">N/A</span>` : ok ? `<span class="Label">Achieved</span>` : `<span class="Label Label--danger">Not achieved</span>`;
+        const stops = d.rows.filter(inDay);
+        $("kd-drawer-body").innerHTML = `
+            <div class="kd-drawer-section"><h4>Daily detail${detailDay ? ` <button class="btn btn-sm ml-2" type="button" id="kd-all-days">Show all days</button>` : ""}</h4>
+                <p class="f6 color-fg-muted mt-0 mb-2">Click a day to see its machines and stop codes.</p>
+                <div style="overflow-x:auto"><table class="preview-table kd-table" id="kd-daily"><thead><tr><th>Production Date</th><th class="num">Plan PRD</th><th class="num">Stop Time</th><th class="num">Downtime %</th><th class="num">Machines</th><th class="num">Achieved</th><th class="num">Achievement</th></tr></thead><tbody>${dailyRows}</tbody></table></div>
+            </div>
+            <div class="kd-drawer-section"><h4>Machine-days${detailDay ? ` — ${esc(detailDay)}` : ""} (${machineDays.length})</h4>
+                <div style="overflow-x:auto"><table class="preview-table kd-table"><thead><tr><th>Production Date</th><th>M/c Code</th><th>Structure</th><th>Program</th><th class="num">Plan PRD</th><th class="num">Stop Time</th><th class="num">Downtime %</th><th>vs Target</th></tr></thead><tbody>`
+            + (machineDays.map((m) => `<tr><td>${esc(m.production_date)}</td><td>${esc(m.machine_code)}</td><td>${esc(m.knitting_structure)}</td><td title="${esc(m.greige_id || "")}">${esc(m.program)}</td>`
+                + `<td class="num">${fmtNum(m.available)}</td><td class="num">${fmtNum(m.stop_time)}</td><td class="num${isOver(m.pct, d.target) ? " ratio-warning" : ""}">${fmtPct(m.pct)}</td><td>${status(m.achieved)}</td></tr>`).join("")
+                || `<tr><td colspan="8" class="color-fg-muted">No machine-days.</td></tr>`)
+            + `</tbody></table></div></div>
+            <div class="kd-drawer-section"><h4>Stops${detailDay ? ` — ${esc(detailDay)}` : ""} (${stops.length})</h4>
+                <div style="overflow-x:auto"><table class="preview-table kd-table"><thead><tr><th>Production Date</th><th>M/c Code</th><th>Stop Code</th><th>Description</th>${showCategory ? "<th>Category</th>" : ""}<th class="num">Stop Time</th><th class="num">Stop #</th></tr></thead><tbody>`
+            + (stops.map((r) => `<tr><td>${esc(r.production_date)}</td><td>${esc(r.machine_code)}</td><td>${esc(r.stop_code)}</td><td>${esc(r.stop_description)}</td>${showCategory ? `<td>${esc(r.category)}</td>` : ""}`
+                + `<td class="num">${fmtNum(r.stop_time)}</td><td class="num">${fmtNum(r.stop_count, 0)}</td></tr>`).join("")
+                || `<tr><td colspan="7" class="color-fg-muted">No stops.</td></tr>`)
+            + `</tbody></table></div></div>`;
+        const pick = (row) => { detailDay = detailDay === row.dataset.day ? null : row.dataset.day; renderDrawer(); };
+        $("kd-daily").querySelectorAll("tr[data-day]").forEach((row) => {
+            row.addEventListener("click", () => pick(row));
+            row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(row); } });
+        });
+        const all = $("kd-all-days");
+        if (all) all.addEventListener("click", () => { detailDay = null; renderDrawer(); });
     }
 
     // ------------------------------------------------------------------ Stop Code Mapping
@@ -289,75 +396,10 @@
                 + `<td class="num">${fmtNum(r.stop_time)}</td><td class="num">${r.records}</td><td>${esc(r.first_date)}</td><td>${esc(r.last_date)}</td></tr>`;
         }).join("") || `<tr><td colspan="8" class="color-fg-muted">No stop codes imported yet.</td></tr>`;
         body.querySelectorAll(".kd-map-select").forEach((select) => select.addEventListener("change", async () => {
-            const res = await fetch(`${API}stop-codes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stop_code: select.dataset.code, category: select.value || null }) });
-            if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.error || "Save failed"); }
+            const res2 = await fetch(`${API}stop-codes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stop_code: select.dataset.code, category: select.value || null }) });
+            if (!res2.ok) { const err = await res2.json().catch(() => ({})); alert(err.error || "Save failed"); }
             await Promise.all([loadMapping(), loadReport()]);
         }));
-    }
-
-    // ------------------------------------------------------------------ import + days
-    async function loadDays() {
-        const res = await fetch(`${API}days`);
-        const data = await res.json();
-        $("kd-days").innerHTML = (data.days || []).map((d) => `<tr><td>${esc(d.production_date)}</td><td>${esc(d.period_start)} → ${esc(d.period_end)}</td>`
-            + `<td class="num">${d.machines}</td><td>${esc(d.file_name)}</td><td>${esc(d.imported_by)}</td><td>${esc(d.imported_at)}</td></tr>`).join("")
-            || `<tr><td colspan="6" class="color-fg-muted">No imports yet.</td></tr>`;
-        const s = data.sources;
-        $("kd-sources-rolls").innerHTML = s.rolls
-            ? `<strong>Piece Produced:</strong> ${fmtNum(s.rolls, 0)} rolls, ${s.roll_machines} machines, Record End ${esc(s.rolls_from)} → ${esc(s.rolls_to)}`
-            : `<strong>Piece Produced:</strong> not imported — Program is blank for every machine-day (filter "(Blank)").`;
-        $("kd-sources-programs").innerHTML = s.greige_codes
-            ? `<strong>Knitting program:</strong> ${s.greige_codes} Greige codes, ${s.programs} programs. Core: ${s.core_programs.map(esc).join(", ") || "-"}`
-            : `<strong>Knitting program:</strong> not imported.`;
-    }
-
-    const form = $("kd-import-form");
-    if (form) {
-        form.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const files = [...$("kd-file").files].sort((a, b) => a.name.localeCompare(b.name));
-            if (!files.length) return;
-            const list = $("kd-import-result");
-            list.innerHTML = "";
-            $("kd-import-btn").disabled = true;
-            let ok = 0;
-            for (const [i, file] of files.entries()) {
-                const line = document.createElement("p");
-                line.className = "flash mb-1";
-                line.textContent = `(${i + 1}/${files.length}) ${file.name} — uploading...`;
-                list.prepend(line);
-                const body = new FormData();
-                body.append("file", file, file.name);
-                try {
-                    const res = await fetch(`${API}import`, { method: "POST", body });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || "Import failed");
-                    ok += 1;
-                    const notes = [...data.errors.map((er) => `Row ${er.row}: ${er.error}`), ...data.warnings];
-                    line.className = `flash flash-${data.status === "completed" && !data.warnings.length ? "success" : "warn"} mb-1`;
-                    let summary;
-                    if (data.file_type === "KNITTING_PIECE_PRODUCED") {
-                        summary = `Piece Produced: ${fmtNum(data.rolls, 0)} rolls, ${data.machines} machines, Record End ${esc(data.date_from)} → ${esc(data.date_to)}`;
-                    } else if (data.file_type === "KNITTING_PROGRAM") {
-                        summary = `Knitting program: ${data.greige_codes} Greige codes, ${data.programs} programs, core: ${data.core_programs.map(esc).join(", ")}`;
-                    } else {
-                        summary = `<strong>${esc(data.production_date)}</strong>: ${data.machines} machines, ${data.stops} stop rows${data.replaced_existing ? " (replaced)" : ""}`;
-                    }
-                    line.innerHTML = `${esc(file.name)} → ${summary}` + (notes.length ? "<br>" + notes.slice(0, 5).map(esc).join("<br>") + (notes.length > 5 ? `<br>… ${notes.length - 5} more` : "") : "");
-                } catch (err) {
-                    line.className = "flash flash-error mb-1";
-                    line.textContent = `${file.name}: ${err.message || err}`;
-                }
-            }
-            $("kd-import-btn").disabled = false;
-            form.reset();
-            const summary = document.createElement("p");
-            summary.className = "f6 text-bold mb-1";
-            summary.textContent = `Done: ${ok}/${files.length} file(s) imported.`;
-            list.prepend(summary);
-            await initFilters(false);
-            await Promise.all([loadDays(), loadReport()]);
-        });
     }
 
     // ------------------------------------------------------------------ tabs + init
@@ -366,32 +408,30 @@
         tabs.forEach((t) => t.classList.toggle("is-active", t === tab));
         document.querySelectorAll(".kd-page").forEach((page) => { page.hidden = page.dataset.page !== tab.dataset.page; });
         if (tab.dataset.page === "mapping") loadMapping();
-        if (tab.dataset.page === "import") loadDays();
-        if (tab.dataset.page === "overview") renderChart();
+        if (tab.dataset.page === "overview" && charts["kd-chart"]) charts["kd-chart"].resize();
+        if (tab.dataset.page === "achievement" && charts["kd-ach-chart"]) charts["kd-ach-chart"].resize();
     }));
 
     document.querySelectorAll("#kd-unit .btn").forEach((btn) => btn.addEventListener("click", () => {
         unit = btn.dataset.unit;
         document.querySelectorAll("#kd-unit .btn").forEach((b) => { b.classList.toggle("is-active", b === btn); b.setAttribute("aria-pressed", String(b === btn)); });
-        if (report) renderPivot();
+        if (report && report.period_keys.length) renderPivot();
     }));
     ["kd-from", "kd-to", "kd-group-by"].forEach((id) => $(id).addEventListener("change", scheduleLoad));
 
-    async function initFilters(setDates) {
+    async function initFilters() {
         const res = await fetch(`${API}filters`);
         const data = await res.json();
         machineFilter.setOptions(data.machines);
         structureFilter.setOptions(data.structures);
         programFilter.setOptions(data.programs);
-        if (setDates || !$("kd-from").value) {
-            // Giống Dyeing: 6 tuần (từ Thứ Hai 5 tuần trước), tính theo ngày mới nhất đã import.
-            const end = data.latest_date ? new Date(`${data.latest_date}T00:00:00`) : new Date();
-            const start = new Date(end);
-            start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - 5 * 7);
-            $("kd-from").value = isoDate(start);
-            $("kd-to").value = isoDate(end);
-        }
+        // Giống Dyeing: 6 tuần (từ Thứ Hai 5 tuần trước), tính theo ngày mới nhất đã import.
+        const end = data.latest_date ? new Date(`${data.latest_date}T00:00:00`) : new Date();
+        const start = new Date(end);
+        start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - 5 * 7);
+        $("kd-from").value = isoDate(start);
+        $("kd-to").value = isoDate(end);
     }
 
-    initFilters(true).then(loadReport);
+    initFilters().then(loadReport);
 })();

@@ -1,19 +1,72 @@
 {% extends "base.html" %}
 {% block title %}Knitting Hub{% endblock %}
+{% block extra_head %}<style>
+    .kh-dashboard { min-height: 60vh; display: flex; align-items: center; justify-content: center; }
+    .kh-modal { position: fixed; top: 6vh; left: 50%; transform: translateX(-50%); width: min(94vw, 720px); max-height: 88vh; display: flex; flex-direction: column; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-xl); z-index: 151; }
+    .kh-modal .Box-body { overflow: auto; }
+    .kh-results p { margin: 0 0 4px; }
+    .kh-table td, .kh-table th { white-space: nowrap; }
+    .kh-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .kh-table td.kh-file { white-space: normal; word-break: break-word; min-width: 220px; }
+    .btn-icon-svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 6px; flex-shrink: 0; }
+</style>{% endblock %}
 {% block content %}
-<h2>Knitting Hub</h2>
-<p class="color-fg-muted">
-    Knitting reports. Import the daily "Stop Reason Analysis by Machine" CSV from the Downtime page.
-</p>
-<div class="d-flex flex-wrap" style="gap:16px;">
-    {% for e in engines %}
-    <div class="widget-card" style="flex:1; min-width:240px;">
-        <h3>{{ e.name }}</h3>
-        <p class="f6 color-fg-muted">{{ e.description }}</p>
-        <a class="btn btn-sm" href="{{ url_for('knitting.' + e.name + '.view') }}">Open &rarr;</a>
-    </div>
-    {% else %}
-    <p class="color-fg-muted">No Engine loaded for this Domain yet.</p>
-    {% endfor %}
+<div class="d-flex flex-justify-between flex-items-center mb-3">
+    <h2>Knitting Hub</h2>
+    {% if can_import %}
+    <button class="btn btn-primary" id="kh-open-import" type="button"><svg class="btn-icon-svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10.5v-8"></path><path d="M4.5 5.5 8 2l3.5 3.5"></path><path d="M2 11.5v1.75c0 .414.336.75.75.75h10.5a.75.75 0 0 0 .75-.75V11.5"></path></svg>Import Data</button>
+    {% endif %}
 </div>
+
+<!-- Dashboard Knitting: để TRỐNG có chủ đích (người dùng sẽ thiết kế sau, 2026-10-09). -->
+<section class="Box kh-dashboard" aria-label="Knitting dashboard">
+    <div class="blankslate"><p class="color-fg-muted mb-0">Knitting dashboard — to be designed.</p></div>
+</section>
+
+{% if can_import %}
+<div id="kh-import" class="drawer-overlay" aria-hidden="true"
+    data-import-url="{{ url_for('knitting.excel_import.api_import') }}"
+    data-status-url="{{ url_for('knitting.excel_import.api_status') }}">
+    <div class="kh-modal" role="dialog" aria-labelledby="kh-import-title">
+        <div class="Box-header d-flex flex-justify-between flex-items-center">
+            <h3 class="Box-title" id="kh-import-title">Import Knitting Data</h3>
+            <button class="btn btn-sm" id="kh-close-import" type="button">Close</button>
+        </div>
+        <div class="Box-body">
+            <div class="form-group">
+                <label for="kh-data-type">Data Type</label>
+                <select class="form-select input-block" id="kh-data-type">
+                    <option value="auto" selected>Auto-detect</option>
+                    <option value="stop_reason">Stop Reason Analysis by Machine (.csv, daily)</option>
+                    <option value="piece_produced">Piece Produced report (.csv)</option>
+                    <option value="program">Knitting program (.xlsx)</option>
+                </select>
+            </div>
+            <div class="dropzone" id="kh-dropzone" tabindex="0" role="button" aria-label="Choose files to import">
+                <p class="m-0">Drag &amp; drop <strong>.csv / .xlsx</strong> files here, or click to browse</p>
+                <p class="dropzone-hint">Several files at once are imported one by one. Stop Reason: production date from the file name (07:00 &rarr; 07:00), re-importing a day replaces it. Piece Produced: rolls upserted by Roll No. Knitting program: replaces the Greige &rarr; Program and Core lists.</p>
+                <input type="file" id="kh-file-input" accept=".csv,.xlsx" multiple hidden>
+            </div>
+            <div class="progress-bar-track mt-3 d-none" id="kh-progress-track"><div class="progress-bar-fill" id="kh-progress-fill"></div></div>
+            <p class="f6 color-fg-muted mt-1 d-none" id="kh-progress-label"></p>
+            <div id="kh-results" class="kh-results mt-3"></div>
+
+            <h4 class="mt-3 mb-1">Data status</h4>
+            <p class="f6 mb-1" id="kh-status-stop">--</p>
+            <p class="f6 mb-1" id="kh-status-rolls">--</p>
+            <p class="f6 mb-2" id="kh-status-programs">--</p>
+            <div style="overflow-x:auto;">
+                <table class="preview-table kh-table">
+                    <thead><tr><th>Imported at</th><th>File</th><th>Type</th><th>Status</th><th class="num">Rows</th><th>By</th></tr></thead>
+                    <tbody id="kh-history"></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="Box-footer d-flex flex-justify-end" style="gap:8px;">
+            <button class="btn" id="kh-cancel-import" type="button">Close</button>
+        </div>
+    </div>
+</div>
+<script src="{{ url_for('knitting.excel_import.static', filename='knitting_import.js') }}"></script>
+{% endif %}
 {% endblock %}

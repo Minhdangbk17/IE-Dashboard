@@ -602,9 +602,10 @@ cố định.
 - **Phân loại action theo route hiện có** (đã audit toàn bộ, không suy đoán; cập nhật
   2026-09-11 sau khi `dyeing.downtime` có route ghi thật đầu tiên):
   - CHỈ có `view` (không có chức năng sửa/xoá thật để gate): `dyeing.oee`, `knitting.oee`.
-  - `knitting.downtime` (2026-10-09): `view` + `edit` (POST `/api/import` = edit; form import ẩn
-    khi thiếu quyền edit). Sửa Target (`/api/targets`) và Stop Code Mapping (`/api/stop-codes`
-    POST) = `role_required("admin")` giống Target của `dyeing.downtime`.
+  - `knitting.downtime` (2026-10-09): chỉ `view` cho mọi route đọc; sửa Target (`/api/targets`) và
+    Stop Code Mapping (`/api/stop-codes` POST) = `role_required("admin")` giống Target của
+    `dyeing.downtime`. Import đã chuyển sang `knitting.excel_import` (`view` = status, `edit` = import;
+    nút Import Data trên Hub ẩn khi thiếu quyền edit).
   - Có `view` + `edit` (không có route xoá): `dyeing.batch_matrix` (POST `/api/targets`
     = edit), `dyeing.manual_entry` (lưu mẻ nhập tay = edit), `dyeing.reports` (import
     Batch Detail = edit), **`dyeing.downtime`** (POST `/api/case-notes/<id>` — lưu

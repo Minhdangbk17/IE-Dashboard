@@ -21,6 +21,9 @@
       nhiều file. Đối chiếu khớp bảng người dùng 01–08/10.
 - [x] (2026-10-09) Knitting Downtime: bộ lọc Program / Core program — import Piece Produced report
       (Greige ID theo máy-ngày) + Knitting program.xlsx (Greige -> Program, Core).
+- [x] (2026-10-09) Knitting thiết kế lại theo Dyeing: Engine `knitting.excel_import` + modal Import trên
+      Hub, Dashboard Hub để trống, trang Downtime 3 tab (Overview / Standard Achievement Breakdown / Stop
+      Code Mapping), biểu đồ trên - bảng dưới, drill-down chi tiết hằng ngày, Excel thêm Achievement.
 - [x] UI Primer CSS + Dark Mode + Sidebar động theo role.
 - [x] Modal Import Excel: Drag&Drop, Progress Bar, Preview Table, báo lỗi
       theo dòng.
@@ -1178,6 +1181,8 @@
 - [ ] Knitting Program: xác nhận Core có tính biến thể (Graphic Tee-20S/1 Heather/Recycle, Airism -Trim,
       Washed Boxy trim 1/2) không; 20 Greige có 2 Program khác hẳn (đang lấy dòng cuối). Máy-ngày không
       có cuộn / Greige ngoài danh mục: Program để trống (người dùng chốt 2026-10-09).
+- [ ] Knitting Hub: thiết kế Dashboard (người dùng sẽ bàn). Biểu đồ Achievement chưa có đường Target
+      (chưa có mức % achievement mục tiêu — quy tắc UI 7.2 yêu cầu đề xuất, không tự bịa).
 - [ ] Sửa `tests/verify_rollup_parity.py` (`KeyError: 'days'` — build_matrix đổi sang `periods`).
 - [ ] Kết nối trực tiếp PLC/IoT thay vì phụ thuộc hoàn toàn vào Excel Import.
 - [ ] Multi-factory sync: đồng bộ dữ liệu giữa CETVN, CETBD, RTVL, EG.

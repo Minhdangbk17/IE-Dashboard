@@ -74,7 +74,8 @@
   job_id, greige_id, available/running/stopped (phút), record_start/record_end (ngày ISO, không giờ).
   `knitting_greige_programs` (PK greige_code -> program, program_key chuẩn hoá) +
   `knitting_core_programs` (PK program_key) — từ Knitting program.xlsx, import thay thế toàn bộ.
-  Program của máy-ngày tính ở read time (`programs.py`).
+  Program của máy-ngày tính ở read time (`downtime/programs.py`). Mọi bảng `knitting_*` dữ liệu nguồn
+  do Engine `knitting.excel_import` tạo/ghi (`excel_import/service.py::ensure_tables()`).
 - `rft_targets` — Target RFT khoá `(category, fabric_type)`; 5 category: Lab to Bulk / Bulk to
   Bulk / 2nd Batch (mức tối thiểu), Rework / Adjustment (mức tối đa).
 - `batch_details` — chi tiết mẻ nhuộm (import Batch Detail). **Khoá đã đổi

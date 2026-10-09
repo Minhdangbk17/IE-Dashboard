@@ -1,12 +1,9 @@
 """
 modules/knitting/__init__.py
 -------------------------------
-Domain Container "knitting" (Dệt) — Phase 1 chỉ scaffold tối giản để CHỨNG
-MINH kiến trúc Auto-loader hoạt động đúng với NHIỀU Domain cùng lúc (không
-chỉ riêng "dyeing"). Cấu trúc và convention giống hệt `modules/dyeing/`.
-
-Ở các Phase sau, domain này sẽ có đầy đủ Engine riêng (vd: `knitting_efficiency`,
-`yarn_consumption`, ...) theo đúng khuôn mẫu của `modules/dyeing/engines/oee`.
+Domain Container "knitting" (Dệt) — cấu trúc và convention giống hệt `modules/dyeing/`:
+Hub (dashboard + Modal Import) + Engine `excel_import` (ẩn khỏi menu, chỉ phục vụ Modal) +
+các Engine báo cáo (`downtime`, `oee` stub).
 """
 from __future__ import annotations
 
@@ -54,6 +51,7 @@ def register(app: Flask) -> None:
             engine_name=e.name,
         )
         for e in engines_loaded
+        if e.name != "excel_import"  # excel_import chỉ dùng qua Modal trên Hub, không có trang riêng
     ]
     register_menu(
         label="Knitting",

@@ -20,6 +20,10 @@ file mẫu như No Material / MC Adjustment / Cleaning (Scheduled) / Drop stitch
 
 Bộ lọc Program / Core program: Program của từng máy-ngày tính ở `programs.py` (từ Piece Produced
 report + danh mục Greige -> Program); lọc giữ NGUYÊN máy-ngày (cả tử Stop Time lẫn mẫu Available).
+
+Standard Achievement (người dùng chốt 2026-10-09): % máy-ngày có % Downtime của nhóm (Stop Time nhóm
+/ Available của CHÍNH máy-ngày đó) <= Target nhóm; dòng Total so tổng Stop với Target Total (16.3%).
+Máy-ngày Available = 0 không được đánh giá. KPI "Standard Achievement" = dòng Total.
 """
 from __future__ import annotations
 
@@ -33,7 +37,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from . import programs as program_lookup
-from .service import ensure_tables
+from modules.knitting.engines.excel_import.service import ensure_tables
 
 CATEGORIES: tuple[str, ...] = (
     "Doffing + Cleaning",
@@ -298,14 +302,6 @@ def list_filter_options(conn: Any) -> dict[str, list[str]]:
     return {"machines": machines, "structures": structures, "latest_date": latest, **program_lookup.list_program_options(conn)}
 
 
-def _program_filter(conn: Any, filters: dict[str, Any]) -> tuple[set[str] | None, dict[tuple[str, str], dict[str, Any]]]:
-    """(tập khoá Program được giữ hoặc None, bảng Program theo máy-ngày — chỉ tính khi cần lọc)."""
-    allowed = program_lookup.allowed_program_keys(conn, filters["programs"], filters["core_only"])
-    if allowed is None:
-        return None, {}
-    return allowed, program_lookup.machine_day_programs(conn, filters["from_date"], filters["to_date"], filters["machines"] or None)
-
-
 def _keep(allowed: set[str] | None, mapping: dict[tuple[str, str], dict[str, Any]], day: str, machine: str) -> bool:
     return allowed is None or program_lookup.program_of(mapping, day, machine)["program_key"] in allowed
 
@@ -319,46 +315,99 @@ def _pct(stop: float, available: float) -> float | None:
     return stop / available * 100 if available else None
 
 
-def build_report(conn: Any, filters: dict[str, Any]) -> dict[str, Any]:
-    _ensure_seeded(conn)
-    group_by = filters["group_by"]
-    where, params = _machine_where(filters)
-    allowed, mapping = _program_filter(conn, filters)
+def _achieved(stop: float, available: float, target: float | None) -> bool | None:
+    """Standard Achievement (người dùng chốt 2026-10-09): máy-ngày ĐẠT nếu % Downtime của nhóm
+    (Stop Time nhóm / Available của chính máy-ngày đó) <= Target nhóm. None = không đánh giá
+    (Available = 0 hoặc nhóm chưa có Target)."""
+    if not available or target is None:
+        return None
+    return stop / available * 100 <= target + 1e-9
 
-    available_by_period: dict[str, float] = defaultdict(float)
+
+def _load_machine_days(conn: Any, filters: dict[str, Any], with_programs: bool = False) -> dict[str, Any]:
+    """Nguồn DUY NHẤT cho pivot / achievement / drill-down / export: mọi máy-ngày (sau mọi bộ lọc)
+    kèm Stop Time theo nhóm + danh sách dòng dừng thô. `with_programs` = luôn gắn Program (drill-down,
+    export) kể cả khi không lọc theo Program."""
+    where, params = _machine_where(filters)
+    allowed = program_lookup.allowed_program_keys(conn, filters["programs"], filters["core_only"])
+    mapping = (
+        program_lookup.machine_day_programs(conn, filters["from_date"], filters["to_date"], filters["machines"] or None)
+        if allowed is not None or with_programs else {}
+    )
+    machine_days: dict[tuple[str, str], dict[str, Any]] = {}
     for row in conn.execute(
-        f"SELECT m.production_date AS d, m.machine_code, m.available_time FROM knitting_machine_daily m WHERE {where}",
+        f"SELECT m.production_date AS d, m.machine_code, m.knitting_structure, m.available_time FROM knitting_machine_daily m WHERE {where}",
         params,
     ):
-        if _keep(allowed, mapping, row["d"], row["machine_code"]):
-            available_by_period[period_key(date.fromisoformat(row["d"]), group_by)] += row["available_time"] or 0
+        if not _keep(allowed, mapping, row["d"], row["machine_code"]):
+            continue
+        program = program_lookup.program_of(mapping, row["d"], row["machine_code"]) if mapping or with_programs else None
+        machine_days[(row["d"], row["machine_code"])] = {
+            "production_date": row["d"], "machine_code": row["machine_code"], "knitting_structure": row["knitting_structure"],
+            "available": row["available_time"] or 0.0, "stops": defaultdict(float),
+            "program": program["program"] if program else None, "greige_id": program["greige_id"] if program else None,
+        }
 
     overrides = _overrides(conn)
-    stop_by_cell: dict[tuple[str, str], float] = defaultdict(float)
+    stop_rows: list[dict[str, Any]] = []
     unmapped_codes: dict[str, str] = {}
     for row in conn.execute(
         f"""
-        SELECT s.production_date AS d, s.machine_code, s.stop_code, s.stop_description, s.stop_time
+        SELECT s.production_date AS d, s.machine_code, s.stop_code, s.stop_description, s.stop_time, s.stop_count
         FROM knitting_stop_details s
         JOIN knitting_machine_daily m ON m.production_date = s.production_date AND m.machine_code = s.machine_code
         WHERE {where}
         """,
         params,
     ):
-        if not _keep(allowed, mapping, row["d"], row["machine_code"]):
+        md = machine_days.get((row["d"], row["machine_code"]))
+        if md is None:
             continue
         category, _source = resolve_category(row["stop_code"], row["stop_description"], overrides)
         if category == UNMAPPED:
             unmapped_codes[row["stop_code"]] = row["stop_description"] or ""
-        stop_by_cell[(category, period_key(date.fromisoformat(row["d"]), group_by))] += row["stop_time"] or 0
+        md["stops"][category] += row["stop_time"] or 0
+        stop_rows.append({
+            "production_date": row["d"], "machine_code": row["machine_code"], "knitting_structure": md["knitting_structure"],
+            "stop_code": row["stop_code"], "stop_description": row["stop_description"], "category": category,
+            "stop_time": row["stop_time"], "stop_count": row["stop_count"], "program": md["program"], "greige_id": md["greige_id"],
+        })
+    return {"machine_days": machine_days, "stop_rows": stop_rows, "unmapped_codes": unmapped_codes}
+
+
+def build_report(conn: Any, filters: dict[str, Any]) -> dict[str, Any]:
+    _ensure_seeded(conn)
+    group_by = filters["group_by"]
+    loaded = _load_machine_days(conn, filters)
+    targets = load_targets(conn)
+    total_target = sum(t["target"] or 0 for c, t in targets.items() if c in CATEGORIES)
+    total_before = sum(t["before"] or 0 for c, t in targets.items() if c in CATEGORIES)
+    categories = list(CATEGORIES) + ([UNMAPPED] if loaded["unmapped_codes"] else [])
+
+    available_by_period: dict[str, float] = defaultdict(float)
+    stop_by_cell: dict[tuple[str, str], float] = defaultdict(float)
+    # (nhóm | Total, kỳ) -> [số máy-ngày được đánh giá, số máy-ngày đạt]
+    achievement: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
+    for md in loaded["machine_days"].values():
+        key = period_key(date.fromisoformat(md["production_date"]), group_by)
+        available_by_period[key] += md["available"]
+        for category, stop in md["stops"].items():
+            stop_by_cell[(category, key)] += stop
+        for category in CATEGORIES:
+            ok = _achieved(md["stops"].get(category, 0.0), md["available"], targets.get(category, {}).get("target"))
+            if ok is not None:
+                achievement[(category, key)][0] += 1
+                achievement[(category, key)][1] += int(ok)
+        ok = _achieved(sum(md["stops"].values()), md["available"], total_target)
+        if ok is not None:
+            achievement[(TOTAL, key)][0] += 1
+            achievement[(TOTAL, key)][1] += int(ok)
 
     keys = sorted(available_by_period)
     years = {period_range(key, group_by)[0].year for key in keys} | {period_range(key, group_by)[1].year for key in keys}
     labels = [_period_label(key, group_by, len(years) > 1) for key in keys]
     total_available = sum(available_by_period.values())
-    targets = load_targets(conn)
 
-    categories = list(CATEGORIES) + ([UNMAPPED] if unmapped_codes else [])
     rows = []
     for category in categories:
         times = [stop_by_cell.get((category, key), 0.0) for key in keys]
@@ -373,14 +422,26 @@ def build_report(conn: Any, filters: dict[str, Any]) -> dict[str, Any]:
         })
     total_times = [sum(row["stop_time"][i] for row in rows) for i in range(len(keys))]
     total_row = {
-        "category": TOTAL,
-        "before": sum(t["before"] or 0 for c, t in targets.items() if c in CATEGORIES),
-        "target": sum(t["target"] or 0 for c, t in targets.items() if c in CATEGORIES),
+        "category": TOTAL, "before": total_before, "target": total_target,
         "stop_time": total_times,
         "pct": [_pct(t, available_by_period[key]) for t, key in zip(total_times, keys)],
         "total_stop_time": sum(total_times),
         "total_pct": _pct(sum(total_times), total_available),
     }
+
+    def achievement_row(category: str, target: float | None) -> dict[str, Any]:
+        counts = [achievement.get((category, key), [0, 0]) for key in keys]
+        evaluated, passed = sum(c[0] for c in counts), sum(c[1] for c in counts)
+        return {
+            "category": category, "target": target,
+            "values": [c[1] / c[0] * 100 if c[0] else None for c in counts],
+            "evaluated": [c[0] for c in counts], "passed": [c[1] for c in counts],
+            "total_evaluated": evaluated, "total_passed": passed,
+            "rate_pct": passed / evaluated * 100 if evaluated else None,
+        }
+
+    achievement_rows = [achievement_row(c, targets.get(c, {}).get("target")) for c in CATEGORIES]
+    achievement_total = achievement_row(TOTAL, total_target)
     return {
         "filters": filters,
         "period_keys": keys,
@@ -389,13 +450,24 @@ def build_report(conn: Any, filters: dict[str, Any]) -> dict[str, Any]:
         "total_row": total_row,
         "available": [available_by_period[key] for key in keys],
         "total_available": total_available,
-        "unmapped_codes": [{"stop_code": code, "stop_description": desc} for code, desc in sorted(unmapped_codes.items())],
+        "achievement": {"rows": achievement_rows, "total_row": achievement_total},
+        "kpis": {
+            "plan": total_available,
+            "downtime": total_row["total_stop_time"],
+            "downtime_pct": total_row["total_pct"],
+            "target_pct": total_target,
+            "machine_days": len(loaded["machine_days"]),
+            "achievement_pct": achievement_total["rate_pct"],
+        },
+        "unmapped_codes": [{"stop_code": code, "stop_description": desc} for code, desc in sorted(loaded["unmapped_codes"].items())],
     }
 
 
 def get_cell_details(conn: Any, filters: dict[str, Any], period: str, category: str) -> dict[str, Any]:
-    """Các dòng (ngày x máy x mã dừng) tạo nên 1 ô — tổng Stop Time PHẢI khớp ô đó.
-    `category` = "Total" -> mọi nhóm; `period` = "ALL" -> cột Total (cả khoảng lọc)."""
+    """Chi tiết 1 ô (dùng chung tab Downtime và Achievement): bảng THEO NGÀY (Plan, Stop Time, %,
+    số máy-ngày đạt Target), bảng máy-ngày (%, Đạt/Không) và các dòng dừng (máy x mã dừng).
+    Tổng Stop Time của `rows` PHẢI khớp ô. `category` = "Total" -> mọi nhóm; `period` = "ALL" ->
+    cột Total (cả khoảng lọc)."""
     if category not in CATEGORIES + (UNMAPPED, TOTAL):
         raise ValueError(f"Nhóm không hợp lệ: {category}")
     if period == "ALL":
@@ -411,43 +483,56 @@ def get_cell_details(conn: Any, filters: dict[str, Any], period: str, category: 
         "to_date": min(end.isoformat(), filters["to_date"]),
     }
     ensure_tables(conn)
-    where, params = _machine_where(cell_filters)
-    allowed = program_lookup.allowed_program_keys(conn, filters["programs"], filters["core_only"])
-    mapping = program_lookup.machine_day_programs(conn, cell_filters["from_date"], cell_filters["to_date"], filters["machines"] or None)
-    machine_days = [
-        row for row in conn.execute(f"SELECT m.production_date AS d, m.machine_code, m.available_time FROM knitting_machine_daily m WHERE {where}", params)
-        if _keep(allowed, mapping, row["d"], row["machine_code"])
-    ]
-    available = {"a": sum(r["available_time"] or 0 for r in machine_days), "n": len(machine_days)}
-    overrides = _overrides(conn)
-    rows = []
-    for row in conn.execute(
-        f"""
-        SELECT s.production_date, s.machine_code, m.knitting_structure, s.stop_code, s.stop_description,
-               s.stop_time, s.stop_count
-        FROM knitting_stop_details s
-        JOIN knitting_machine_daily m ON m.production_date = s.production_date AND m.machine_code = s.machine_code
-        WHERE {where}
-        ORDER BY s.stop_time DESC, s.production_date, s.machine_code
-        """,
-        params,
-    ):
-        if not _keep(allowed, mapping, row["production_date"], row["machine_code"]):
-            continue
-        row_category, _ = resolve_category(row["stop_code"], row["stop_description"], overrides)
-        if category == TOTAL or row_category == category:
-            program = program_lookup.program_of(mapping, row["production_date"], row["machine_code"])
-            rows.append({**dict(row), "category": row_category, "program": program["program"], "greige_id": program["greige_id"]})
+    _ensure_seeded(conn)
+    targets = load_targets(conn)
+    total_target = sum(t["target"] or 0 for c, t in targets.items() if c in CATEGORIES)
+    target = total_target if category == TOTAL else targets.get(category, {}).get("target")
+    loaded = _load_machine_days(conn, cell_filters, with_programs=True)
+
+    def stop_of(md: dict[str, Any]) -> float:
+        return sum(md["stops"].values()) if category == TOTAL else md["stops"].get(category, 0.0)
+
+    machine_days = []
+    daily: dict[str, dict[str, Any]] = {}
+    for md in sorted(loaded["machine_days"].values(), key=lambda m: (m["production_date"], m["machine_code"])):
+        stop = stop_of(md)
+        ok = _achieved(stop, md["available"], target) if category != UNMAPPED else None
+        machine_days.append({
+            "production_date": md["production_date"], "machine_code": md["machine_code"],
+            "knitting_structure": md["knitting_structure"], "program": md["program"], "greige_id": md["greige_id"],
+            "available": md["available"], "stop_time": stop, "pct": _pct(stop, md["available"]), "achieved": ok,
+        })
+        day = daily.setdefault(md["production_date"], {"production_date": md["production_date"], "available": 0.0, "stop_time": 0.0, "machines": 0, "evaluated": 0, "passed": 0})
+        day["available"] += md["available"]
+        day["stop_time"] += stop
+        day["machines"] += 1
+        if ok is not None:
+            day["evaluated"] += 1
+            day["passed"] += int(ok)
+    for day in daily.values():
+        day["pct"] = _pct(day["stop_time"], day["available"])
+        day["achievement_pct"] = day["passed"] / day["evaluated"] * 100 if day["evaluated"] else None
+    rows = [r for r in loaded["stop_rows"] if category == TOTAL or r["category"] == category]
+    rows.sort(key=lambda r: (-(r["stop_time"] or 0), r["production_date"], r["machine_code"]))
+    available = sum(md["available"] for md in machine_days)
     stop_total = sum(r["stop_time"] or 0 for r in rows)
+    evaluated = sum(d["evaluated"] for d in daily.values())
+    passed = sum(d["passed"] for d in daily.values())
     return {
         "period": period,
         "category": category,
+        "target": target,
         "from_date": cell_filters["from_date"],
         "to_date": cell_filters["to_date"],
-        "available": available["a"] or 0,
-        "machine_days": available["n"] or 0,
+        "available": available,
+        "machine_days": len(machine_days),
         "stop_time": stop_total,
-        "pct": _pct(stop_total, available["a"] or 0),
+        "pct": _pct(stop_total, available),
+        "achievement_pct": passed / evaluated * 100 if evaluated else None,
+        "evaluated": evaluated,
+        "passed": passed,
+        "daily": [daily[d] for d in sorted(daily)],
+        "machine_day_rows": machine_days,
         "rows": rows,
     }
 
@@ -497,35 +582,38 @@ def _write_pivot(sheet: Any, report: dict[str, Any], as_pct: bool) -> None:
     sheet.freeze_panes = "D2"
 
 
+def _write_achievement(sheet: Any, report: dict[str, Any]) -> None:
+    _write_header(sheet, ["Standard Achievement (%)", "Target", *report["periods"], "Total", "Machine-days evaluated"])
+    for row in report["achievement"]["rows"] + [report["achievement"]["total_row"]]:
+        sheet.append([
+            row["category"], None if row["target"] is None else row["target"] / 100,
+            *[None if v is None else v / 100 for v in row["values"]],
+            None if row["rate_pct"] is None else row["rate_pct"] / 100, row["total_evaluated"],
+        ])
+        for col in range(2, sheet.max_column):
+            sheet.cell(row=sheet.max_row, column=col).number_format = "0.0%"
+        if row["category"] == TOTAL:
+            sheet.cell(row=sheet.max_row, column=1).font = _BOLD
+    sheet.column_dimensions["A"].width = 26
+    for col in range(2, sheet.max_column + 1):
+        sheet.column_dimensions[get_column_letter(col)].width = 11
+    sheet.freeze_panes = "C2"
+
+
 def export_excel(conn: Any, filters: dict[str, Any]) -> bytes:
     report = build_report(conn, filters)
     workbook = Workbook()
     _write_pivot(workbook.active, report, as_pct=True)
     workbook.active.title = "Downtime %"
     _write_pivot(workbook.create_sheet("Stop Time"), report, as_pct=False)
+    _write_achievement(workbook.create_sheet("Achievement"), report)
 
     data = workbook.create_sheet("Data")
     _write_header(data, ["Production Date", "M/c Code", "Knitting Structure", "Greige ID", "Program", "Stop Code", "Stop Description", "Category", "Stop Time", "Stop #"])
-    overrides = _overrides(conn)
-    where, params = _machine_where(filters)
-    allowed = program_lookup.allowed_program_keys(conn, filters["programs"], filters["core_only"])
-    mapping = program_lookup.machine_day_programs(conn, filters["from_date"], filters["to_date"], filters["machines"] or None)
-    for row in conn.execute(
-        f"""
-        SELECT s.production_date, s.machine_code, m.knitting_structure, s.stop_code, s.stop_description, s.stop_time, s.stop_count
-        FROM knitting_stop_details s
-        JOIN knitting_machine_daily m ON m.production_date = s.production_date AND m.machine_code = s.machine_code
-        WHERE {where}
-        ORDER BY s.production_date, s.machine_code, s.stop_code
-        """,
-        params,
-    ):
-        if not _keep(allowed, mapping, row["production_date"], row["machine_code"]):
-            continue
-        category, _ = resolve_category(row["stop_code"], row["stop_description"], overrides)
-        program = program_lookup.program_of(mapping, row["production_date"], row["machine_code"])
-        data.append([row["production_date"], row["machine_code"], row["knitting_structure"], program["greige_id"], program["program"],
-                     row["stop_code"], row["stop_description"], category, row["stop_time"], row["stop_count"]])
+    loaded = _load_machine_days(conn, filters, with_programs=True)
+    for row in sorted(loaded["stop_rows"], key=lambda r: (r["production_date"], r["machine_code"], r["stop_code"])):
+        data.append([row["production_date"], row["machine_code"], row["knitting_structure"], row["greige_id"], row["program"],
+                     row["stop_code"], row["stop_description"], row["category"], row["stop_time"], row["stop_count"]])
     if data.max_row > 1:
         data.auto_filter.ref = data.dimensions
     data.freeze_panes = "A2"
@@ -541,13 +629,14 @@ def export_excel(conn: Any, filters: dict[str, Any]) -> bytes:
         ("Knitting Structure", ", ".join(filters["structures"]) or "All"),
         ("Program", " | ".join(filters["programs"]) or "All"),
         ("Core program only", "Yes" if filters["core_only"] else "No"),
-        ("Program rule", "Program of a machine-day = Greige ID of Piece Produced rolls covering that day (most Available minutes); no roll or Greige not in program list = blank"),
         ("Formula", "% = Σ Stop Time of category / Σ Available (Plan PRD) of all filtered machine-days in the period"),
+        ("Standard Achievement", "% of machine-days whose downtime % of the category (stop / Available of that machine-day) <= category Target; Total row uses the total Target"),
+        ("Program rule", "Program of a machine-day = Greige ID of Piece Produced rolls covering that day (most Available minutes); no roll or Greige not in program list = blank"),
         ("Exported at", datetime.now().strftime("%Y-%m-%d %H:%M")),
     ):
         info.append([label, value])
-    info.column_dimensions["A"].width = 20
-    info.column_dimensions["B"].width = 90
+    info.column_dimensions["A"].width = 22
+    info.column_dimensions["B"].width = 110
 
     buffer = io.BytesIO()
     workbook.save(buffer)

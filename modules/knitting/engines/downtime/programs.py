@@ -22,8 +22,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-from .program_importer import normalize_program
-from .service import ensure_tables
+from modules.knitting.engines.excel_import.program_importer import normalize_program
+from modules.knitting.engines.excel_import.service import ensure_tables
 
 BLANK_OPTION = "(Blank)"  # mục lọc cho máy-ngày không có Program; KHÔNG phải tên hiển thị
 BLANK_KEY = ""

@@ -1,31 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Downtime - Knitting{% endblock %}
 {% block extra_head %}<style>
-    .kd-dropdown { position: relative; min-width: 190px; }
+    .kd-dropdown { position: relative; min-width: 180px; }
     .kd-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-xl); max-height: 320px; overflow-y: auto; }
+    .kd-menu.kd-menu-right { left: auto; right: 0; }
     .kd-menu[hidden] { display: none; }
     .kd-menu .form-control { width: 100%; margin-bottom: 6px; }
     .kd-option { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; white-space: nowrap; }
     .kd-option:hover { background: var(--bg-surface-raised); }
+    .kd-kpis { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
+    .kd-kpis .widget-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+    .kd-kpis strong { font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .kd-kpis .kpi-bad { color: var(--danger); }
+    .kd-kpis .kpi-good { color: var(--success); }
+    .kd-chart-panel { height: 360px; }
     .kd-table td, .kd-table th { white-space: nowrap; }
     .kd-table .num { text-align: right; font-variant-numeric: tabular-nums; }
     .kd-table .ref { color: var(--text-secondary); }
     .kd-table tr.total-row th, .kd-table tr.total-row td { font-weight: 600; border-top: 1px solid var(--border-default); }
     .kd-table tr.plan-row th, .kd-table tr.plan-row td { color: var(--text-secondary); }
     .kd-table td.ratio-warning { background: var(--danger-bg); color: var(--danger); }
-    .kd-chart-panel { height: 340px; }
+    .kd-table tr.is-selected td, .kd-table tr.is-selected th { background: var(--accent-wash-bg); }
     .kd-page[hidden] { display: none; }
     .target-edit { width: 64px; }
-    .kd-upload-list { max-height: 240px; overflow: auto; }
     /* K-01: .btn-group active dùng #fff cứng -> không đọc được ở Light; vá cục bộ bằng token. */
-    #kd-unit .btn.is-active { background: var(--gradient-primary); color: var(--text-on-accent); border-color: transparent; }
+    .BtnGroup .btn.is-active { background: var(--gradient-primary); color: var(--text-on-accent); border-color: transparent; }
+    .kd-drawer-section { padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); }
+    .kd-drawer-section h4 { margin: 0 0 8px; }
+    @media (max-width: 1050px) { .kd-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
 </style>{% endblock %}
 {% block content %}
-{% set can_import = current_user_can('knitting', 'downtime', 'edit') %}
 {% set is_admin = CURRENT_USER and CURRENT_USER.role == 'admin' %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
-    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Knitting / Reports</p><h2 class="mt-0">Downtime performance</h2></div>
-    <a class="btn btn-sm" href="{{ url_for('knitting.hub') }}">&larr; Back to Knitting Hub</a>
+    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Knitting / Availability</p><h2 class="mt-0">Downtime performance</h2></div>
+    <a class="btn btn-sm" href="{{ url_for('knitting.hub') }}">&larr; Back to Hub</a>
 </div>
 
 <section class="Box p-3 mb-3" aria-label="Report filters">
@@ -60,33 +68,59 @@
 
 <nav class="page-tabs mb-3" id="kd-tabs" aria-label="Downtime report pages">
     <button class="page-tab is-active" type="button" data-page="overview">Overview</button>
+    <button class="page-tab" type="button" data-page="achievement">Standard Achievement Breakdown</button>
     <button class="page-tab" type="button" data-page="mapping">Stop Code Mapping</button>
-    <button class="page-tab" type="button" data-page="import">Import Data</button>
 </nav>
 
+<p id="kd-error" class="flash flash-error mb-3" hidden></p>
+<p id="kd-unmapped" class="flash flash-warn mb-3" hidden></p>
+<div id="kd-empty" class="Box blankslate mb-3" hidden><p class="color-fg-muted mb-0">No knitting stop data in this range. Import files with <strong>Import Data</strong> on the <a href="{{ url_for('knitting.hub') }}">Knitting Hub</a>.</p></div>
+
 <section class="kd-page" data-page="overview">
-    <p id="kd-error" class="flash flash-error mb-3" hidden></p>
-    <p id="kd-unmapped" class="flash flash-warn mb-3" hidden></p>
-    <div id="kd-empty" class="Box blankslate mb-3" hidden><p class="color-fg-muted mb-0">No knitting stop data in this range. Import files in the <strong>Import Data</strong> tab.</p></div>
-    <div id="kd-report">
-        <div class="Box p-3 mb-3">
-            <div class="d-flex flex-justify-between flex-items-center flex-wrap mb-2" style="gap:8px">
-                <h3 class="mt-0 mb-0">Downtime trend</h3>
-                <div class="kd-dropdown" style="min-width:230px">
-                    <button id="kd-series-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">Total</button>
-                    <div id="kd-series-menu" class="kd-menu" hidden></div>
-                </div>
+    <div class="kd-kpis mb-4">
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL PLAN PRD</span><strong id="kpi-plan">--</strong><span class="f6 color-fg-muted">Σ Available, <span id="kpi-machine-days">--</span> machine-days</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL DOWNTIME</span><strong id="kpi-downtime">--</strong><span class="f6 color-fg-muted">Σ stop time</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">DOWNTIME RATE</span><strong id="kpi-rate">--%</strong><span class="f6 color-fg-muted">target <span id="kpi-target">--</span></span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">STANDARD ACHIEVEMENT</span><strong id="kpi-achievement">--%</strong><span class="f6 color-fg-muted">machine-days within total target</span></div>
+    </div>
+    <div class="Box p-3 mb-4">
+        <div class="d-flex flex-justify-between flex-items-center flex-wrap mb-2" style="gap:8px">
+            <h3 class="mt-0 mb-0">Downtime by category</h3>
+            <div class="kd-dropdown" style="min-width:230px">
+                <button id="kd-series-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">Total</button>
+                <div id="kd-series-menu" class="kd-menu kd-menu-right" hidden></div>
             </div>
-            <p class="f6 color-fg-muted mt-0 mb-2">Total plus up to 3 categories. Dashed lines are targets.</p>
-            <div class="kd-chart-panel"><canvas id="kd-chart" aria-label="Downtime trend chart"></canvas></div>
         </div>
-        <div class="Box p-3" style="overflow-x:auto;">
-            <table class="preview-table kd-table" id="kd-pivot">
-                <thead><tr id="kd-pivot-head"></tr></thead>
-                <tbody></tbody>
-            </table>
-            <p class="f6 color-fg-muted mt-2 mb-0">% = stop time of the category / Plan PRD (sum of Available of all filtered machines) in the period. Red = above target. Click a cell to see the stops behind it.{% if is_admin %} Click Before / Target to edit.{% endif %}</p>
+        <p class="f6 color-fg-muted mt-0 mb-2">Total plus up to 3 categories. Dashed lines are targets.</p>
+        <div class="kd-chart-panel"><canvas id="kd-chart" aria-label="Downtime rate chart"></canvas></div>
+    </div>
+    <div class="Box p-3" style="overflow-x:auto;">
+        <table class="preview-table kd-table" id="kd-pivot">
+            <thead><tr id="kd-pivot-head"></tr></thead>
+            <tbody></tbody>
+        </table>
+        <p class="f6 color-fg-muted mt-2 mb-0">% = stop time of the category / Plan PRD (Σ Available of filtered machines) in the period. Red = above target. Click a cell for the daily detail.{% if is_admin %} Click Before / Target to edit.{% endif %}</p>
+    </div>
+</section>
+
+<section class="kd-page" data-page="achievement" hidden>
+    <div class="Box p-3 mb-4">
+        <div class="d-flex flex-justify-between flex-items-center flex-wrap mb-2" style="gap:8px">
+            <h3 class="mt-0 mb-0">Standard Achievement Breakdown</h3>
+            <div class="kd-dropdown" style="min-width:230px">
+                <button id="kd-ach-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">Total</button>
+                <div id="kd-ach-menu" class="kd-menu kd-menu-right" hidden></div>
+            </div>
         </div>
+        <p class="f6 color-fg-muted mt-0 mb-2">% of machine-days whose downtime % of the category is within its target. Total plus up to 3 categories.</p>
+        <div class="kd-chart-panel"><canvas id="kd-ach-chart" aria-label="Standard achievement chart"></canvas></div>
+    </div>
+    <div class="Box p-3" style="overflow-x:auto;">
+        <table class="preview-table kd-table" id="kd-ach-table">
+            <thead><tr id="kd-ach-head"></tr></thead>
+            <tbody></tbody>
+        </table>
+        <p class="f6 color-fg-muted mt-2 mb-0">A machine-day achieves the standard when (stop time of the category / its Available) &le; target. Total row compares all stops with the total target. Machine-days with Available = 0 are not evaluated. Click a cell for the daily detail.</p>
     </div>
 </section>
 
@@ -100,38 +134,10 @@
     </div>
 </section>
 
-<section class="kd-page" data-page="import" hidden>
-    {% if can_import %}
-    <div class="Box p-3 mb-3">
-        <form id="kd-import-form" class="d-flex flex-items-end flex-wrap" style="gap:12px">
-            <div class="form-group mb-0">
-                <label for="kd-file">Stop Reason / Piece Produced (.csv) or Knitting program (.xlsx) — multiple files allowed</label>
-                <input id="kd-file" class="form-control" type="file" accept=".csv,.xlsx" multiple required>
-            </div>
-            <button id="kd-import-btn" class="btn btn-primary" type="submit">Import</button>
-        </form>
-        <p class="f6 color-fg-muted mt-2 mb-0">File type is detected automatically. <strong>Stop Reason</strong>: production date from the file name (07:00 &rarr; 07:00), re-importing a day replaces that day. <strong>Piece Produced</strong>: rolls are added or updated by Roll No (Greige ID decides the program). <strong>Knitting program</strong>: replaces the whole Greige &rarr; Program list and the Core program list.</p>
-        <div id="kd-import-result" class="kd-upload-list mt-2"></div>
-    </div>
-    {% endif %}
-    <div class="Box p-3 mb-3">
-        <h3 class="Box-title mt-0">Program sources</h3>
-        <p class="f6 mb-1" id="kd-sources-rolls">--</p>
-        <p class="f6 mb-0" id="kd-sources-programs">--</p>
-    </div>
-    <div class="Box" style="overflow-x:auto;">
-        <div class="Box-header"><h3 class="Box-title">Imported days</h3></div>
-        <table class="preview-table kd-table">
-            <thead><tr><th>Production Date</th><th>Period</th><th class="num">Machines</th><th>File</th><th>Imported by</th><th>Imported at</th></tr></thead>
-            <tbody id="kd-days"></tbody>
-        </table>
-    </div>
-</section>
-
 <div id="kd-drawer" class="drawer-overlay" aria-hidden="true">
     <div class="drawer-panel" role="dialog" aria-labelledby="kd-drawer-title">
         <div class="drawer-header d-flex flex-justify-between flex-items-center">
-            <div><h3 class="Box-title mb-0" id="kd-drawer-title">Stops</h3><p class="f6 color-fg-muted mb-0" id="kd-drawer-meta"></p></div>
+            <div><h3 class="Box-title mb-0" id="kd-drawer-title">Detail</h3><p class="f6 color-fg-muted mb-0" id="kd-drawer-meta"></p></div>
             <button class="btn btn-sm" id="kd-drawer-close" type="button">Close</button>
         </div>
         <div class="drawer-body" id="kd-drawer-body"><div class="drawer-empty">Loading...</div></div>

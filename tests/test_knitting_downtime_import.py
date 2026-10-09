@@ -36,8 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from openpyxl import load_workbook  # noqa: E402
 
-from modules.knitting.engines.downtime import importer, programs, report, service  # noqa: E402
-from modules.knitting.engines.downtime import program_importer  # noqa: E402
+from modules.knitting.engines.downtime import programs, report  # noqa: E402
+from modules.knitting.engines.excel_import import importer, program_importer, service  # noqa: E402
 
 SAMPLE_DIR = Path(__file__).resolve().parent / "fixtures" / "sample_imports"
 PROGRAM_FIXTURE = SAMPLE_DIR / "Copy of Knitting program.xlsx"
@@ -199,7 +199,7 @@ def main() -> int:
         _expect_error("From > To", lambda: report.normalize_filters("2026-09-15", "2026-09-14", "date"), failures)
 
         wb = load_workbook(io.BytesIO(report.export_excel(conn, f)))
-        _check("Excel sheets", wb.sheetnames, ["Downtime %", "Stop Time", "Data", "Filters"], failures)
+        _check("Excel sheets", wb.sheetnames, ["Downtime %", "Stop Time", "Achievement", "Data", "Filters"], failures)
         _check("Excel Data rows (sau thay thế)", wb["Data"].max_row - 1, 237, failures)
         _check("Excel Total %", round(wb["Downtime %"].cell(row=15, column=4).value, 9), round(stop_sum / avail_sum, 9), failures)
     finally:
@@ -348,6 +348,30 @@ def main() -> int:
         data_rows = list(wb["Data"].iter_rows(values_only=True))
         _check("Excel Data có cột Program", data_rows[0][4], "Program", failures)
         _check("Excel Data lọc Core only", sorted({r[1] for r in data_rows[1:]}), ["M1"], failures)
+
+        print("7. Standard Achievement (% Downtime máy-ngày <= Target) + chi tiết theo ngày")
+        # Mỗi máy-ngày dừng Doffing 10; Target Doffing + Cleaning 5.5%:
+        # M1 10/100 = 10% (KHÔNG đạt), M2 5%, M3 2.5%, M4 1.25% (đạt) -> 3/4 = 75% mỗi ngày.
+        rep7 = report.build_report(conn, report.normalize_filters("2026-07-01", "2026-07-02", "date"))
+        doff = next(r for r in rep7["achievement"]["rows"] if r["category"] == "Doffing + Cleaning")
+        _check("Achievement Doffing theo ngày", doff["values"], [75.0, 75.0], failures)
+        _check("Achievement Doffing tổng", (doff["total_evaluated"], doff["total_passed"], doff["rate_pct"]), (8, 6, 75.0), failures)
+        safe = next(r for r in rep7["achievement"]["rows"] if r["category"] == "Safe Door")
+        _check("nhóm không dừng -> 0% <= Target -> đạt", safe["rate_pct"], 100.0, failures)
+        _check("Total so Target 16.3% (M1 10% vẫn đạt)", rep7["achievement"]["total_row"]["rate_pct"], 100.0, failures)
+        _check("KPI achievement = dòng Total", rep7["kpis"]["achievement_pct"], 100.0, failures)
+        _check("KPI downtime %", round(rep7["kpis"]["downtime_pct"], 6), round(80 / 3000 * 100, 6), failures)
+        cell7 = report.get_cell_details(conn, report.normalize_filters("2026-07-01", "2026-07-02", "week"), "ALL", "Doffing + Cleaning")
+        _check("drill: 2 dòng ngày", [d["production_date"] for d in cell7["daily"]], ["2026-07-01", "2026-07-02"], failures)
+        _check("drill: ngày 01 Plan / Stop / %", (cell7["daily"][0]["available"], cell7["daily"][0]["stop_time"], round(cell7["daily"][0]["pct"], 6)), (1500, 40, round(40 / 1500 * 100, 6)), failures)
+        _check("drill: ngày 01 đạt 3/4", (cell7["daily"][0]["evaluated"], cell7["daily"][0]["passed"]), (4, 3), failures)
+        _check("drill: máy-ngày không đạt", [(m["production_date"], m["machine_code"]) for m in cell7["machine_day_rows"] if m["achieved"] is False],
+               [("2026-07-01", "M1"), ("2026-07-02", "M1")], failures)
+        _check("drill: tổng achievement", cell7["achievement_pct"], 75.0, failures)
+        _check("drill: Σ ngày = Σ dòng dừng", sum(d["stop_time"] for d in cell7["daily"]), sum(r["stop_time"] for r in cell7["rows"]), failures)
+        wb7 = load_workbook(io.BytesIO(report.export_excel(conn, report.normalize_filters("2026-07-01", "2026-07-02", "date"))))
+        ach = {r[0]: r for r in wb7["Achievement"].iter_rows(min_row=2, values_only=True)}
+        _check("Excel Achievement Doffing", ach["Doffing + Cleaning"][2:4], (0.75, 0.75), failures)
     finally:
         conn.close()
         os.unlink(tmp.name)

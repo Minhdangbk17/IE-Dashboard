@@ -1,4 +1,5 @@
-"""modules/knitting/engines/downtime/routes.py — View + API của Engine Downtime xưởng Dệt."""
+"""modules/knitting/engines/downtime/routes.py — View + API báo cáo Downtime xưởng Dệt (import nằm ở
+Engine `excel_import`, gọi từ Modal trên Knitting Hub)."""
 from __future__ import annotations
 
 import io
@@ -7,17 +8,12 @@ from typing import TYPE_CHECKING, Any
 from flask import Blueprint, jsonify, render_template, request, send_file
 
 from core.auth import get_current_user, permission_required, role_required
-from core.database import DatabaseError, get_db
+from core.database import get_db
 
-from . import report, service
-from .importer import FILE_TYPE as STOP_FILE_TYPE
-from .program_importer import PIECE_FILE_TYPE, detect_file_type
+from . import report
 
 if TYPE_CHECKING:
     from core.engine_base import BaseEngine
-
-_ALLOWED_EXTENSIONS = (".csv", ".xlsx", ".xlsm")
-
 
 def _username() -> str | None:
     user = get_current_user()
@@ -106,35 +102,5 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         except (TypeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"ok": True})
-
-    @bp.route("/api/days")
-    @permission_required("knitting", "downtime", "view")
-    def api_days() -> Any:
-        conn = get_db()
-        return jsonify({"days": service.list_imported_days(conn), "sources": service.get_program_sources(conn)})
-
-    @bp.route("/api/import", methods=["POST"])
-    @permission_required("knitting", "downtime", "edit")
-    def api_import() -> Any:
-        upload = request.files.get("file")
-        if upload is None or not upload.filename:
-            return jsonify({"error": "Chưa chọn file."}), 400
-        if not upload.filename.lower().endswith(_ALLOWED_EXTENSIONS):
-            return jsonify({"error": "Chỉ nhận .csv (Stop Reason / Piece Produced) hoặc .xlsx (Knitting program)."}), 400
-        content = upload.read()
-        try:
-            # Dùng tên file GỐC (không secure_filename) — Production Date của Stop Reason nằm trong tên file.
-            file_type = detect_file_type(upload.filename, content)
-            if file_type == STOP_FILE_TYPE:
-                result = service.import_stop_reason_file(get_db(), content, upload.filename, _username())
-            elif file_type == PIECE_FILE_TYPE:
-                result = service.import_piece_produced_file(get_db(), content, upload.filename, _username())
-            else:
-                result = service.import_program_file(get_db(), content, upload.filename, _username())
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-        except DatabaseError as exc:
-            return jsonify({"error": f"Lỗi database: {exc}"}), 500
-        return jsonify(result)
 
     return bp

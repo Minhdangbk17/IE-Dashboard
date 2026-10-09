@@ -1,6 +1,25 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-09 (tiếp 2) — **Knitting Downtime: bộ lọc Program + Core program.**
+**Cập nhật lần cuối:** 2026-10-09 (tiếp 3) — **Knitting: thiết kế lại theo khuôn Dyeing.**
+(1) **Import ra Hub**: Engine mới `knitting.excel_import` (ẩn khỏi menu như `dyeing.excel_import`) sở hữu
+tầng dữ liệu dùng chung — `importer.py`, `program_importer.py`, `service.py` đã `git mv` từ `downtime/`
+sang `excel_import/`; route `POST /knitting/excel_import/api/import` (form `data_type`: auto /
+stop_reason / piece_produced / program, quyền `knitting.excel_import` edit) + `GET /api/status` (ngày
+đã import, nguồn Program, 30 lần import gần nhất). Knitting Hub: nút Import Data -> modal (Data Type,
+dropzone nhiều file tải tuần tự, progress, Data status + lịch sử). Trang Downtime KHÔNG còn tab Import.
+(2) **Dashboard Knitting để TRỐNG** (blankslate "to be designed") — người dùng sẽ bàn sau.
+(3) **Trang Downtime cùng bố cục Dyeing**: filter bar ngoài tab; tab Overview (4 KPI: Plan PRD, Downtime,
+Downtime Rate vs Target, Standard Achievement; biểu đồ line ở trên; pivot Before/Target/kỳ/Total ở dưới),
+tab **Standard Achievement Breakdown** (người dùng chốt: máy-ngày ĐẠT nếu Stop Time nhóm / Available
+CỦA CHÍNH máy-ngày đó <= Target nhóm; dòng Total so tổng Stop với Target Total 16.3%; Available = 0
+không đánh giá; nhóm không dừng = 0% -> đạt; KPI = dòng Total; KHÔNG có bảng Standard riêng — đổi
+Target đổi luôn Achievement), tab Stop Code Mapping. Bấm ô (cả 2 tab) -> drawer **chi tiết hằng ngày**:
+bảng theo ngày (Plan, Stop, %, máy, đạt/đánh giá) -> bấm 1 ngày lọc bảng máy-ngày (Program, % , Achieved)
++ bảng mã dừng. Backend: `report._load_machine_days()` là nguồn DUY NHẤT cho pivot / achievement /
+drill-down / export (tránh lệch số); Excel thêm sheet Achievement. Không thêm bảng DB -> KHÔNG cần SQL
+mới. Lưu ý quyền: operator cần được cấp thêm `knitting.excel_import` (edit) để thấy nút Import.
+
+**Bản ghi trước:** 2026-10-09 (tiếp 2) — **Knitting Downtime: bộ lọc Program + Core program.**
 File Stop Reason KHÔNG có Greige -> người dùng import thêm 2 nguồn (cùng ô Import, tự nhận loại file
 theo header — `program_importer.detect_file_type()`): (1) "CET-Piece Produced report - <từ> - <đến>.csv"
 (1 dòng = 1 CUỘN, Roll No duy nhất, UPSERT `knitting_piece_rolls`; Record Start/End CHỈ có ngày; cột
