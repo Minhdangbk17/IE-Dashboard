@@ -38,7 +38,7 @@ from core.rft_sources_importer import (  # noqa: E402
 )
 from modules.dyeing.engines.rft.service import (  # noqa: E402
     classify_stage, export_rft_excel, get_rft_pivot_data, is_counted_nc, load_rft_rows,
-    machine_group_label, next_batch,
+    machine_group_label, next_batch, rework_count,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sample_imports"
@@ -78,23 +78,23 @@ def _init_batch_details(db_path: str) -> int:
     """`batch_details` tối giản (đủ cột service đọc) + nạp 57 mẻ của file Batch mẫu."""
     headers, rows = _batch_sheet_rows()
     index = {name: headers.index(name) for name in (
-        "Dyelot", "Machine", "MachineGroup", "FormulaCode", "TotalCorrectionCnt", "FabricType",
+        "Dyelot", "Machine", "MachineGroup", "FormulaCode", "TotalCorrectionCnt", "DyestuffCorrrection", "FabricType",
         "GreigeCode", "Customer", "StartTime", "EndTime",
     )}
     conn = sqlite3.connect(db_path)
     conn.execute("""
         CREATE TABLE batch_details (
             id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, machine TEXT, machine_group TEXT,
-            formula_code TEXT, total_correction_cnt INTEGER NOT NULL DEFAULT 0, fabric_type TEXT,
+            formula_code TEXT, total_correction_cnt INTEGER NOT NULL DEFAULT 0, dyestuff_correction TEXT, fabric_type TEXT,
             greige_code TEXT, customer TEXT, start_time TEXT, end_time TEXT
         )
     """)
     for row in rows:
         conn.execute(
-            "INSERT INTO batch_details (dyelot, machine, machine_group, formula_code, total_correction_cnt, fabric_type, greige_code, customer, start_time, end_time) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO batch_details (dyelot, machine, machine_group, formula_code, total_correction_cnt, dyestuff_correction, fabric_type, greige_code, customer, start_time, end_time) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 row[index["Dyelot"]], row[index["Machine"]], row[index["MachineGroup"]], row[index["FormulaCode"]],
-                int(row[index["TotalCorrectionCnt"]] or 0), row[index["FabricType"]], row[index["GreigeCode"]],
+                int(row[index["TotalCorrectionCnt"]] or 0), row[index["DyestuffCorrrection"]], row[index["FabricType"]], row[index["GreigeCode"]],
                 row[index["Customer"]], _parse_batch_datetime(row[index["StartTime"]]), _parse_batch_datetime(row[index["EndTime"]]),
             ),
         )
@@ -113,6 +113,12 @@ def _scenario_formulas(failures: list[str]) -> None:
         _check(f"classify_stage({code!r})", classify_stage(code), expected, failures)
     for group, expected in (("G600", ">=500kg"), ("G500", ">=500kg"), ("C1600", ">=500kg"), ("G300", "Small Machine"), ("C100", "Small Machine"), (None, None), ("", None)):
         _check(f"machine_group_label({group!r})", machine_group_label(group), expected, failures)
+    for args, expected in (
+        ((False, False, 0, 0), "OK"), ((False, False, 3, 0), "Adjustment"),
+        ((False, False, 0, 2), "Adjustment"), ((False, False, None, "2"), "Adjustment"),
+        ((False, False, 0, ""), "OK"), ((True, False, 0, 5), "Rework"), ((False, True, 1, 1), "Rework"),
+    ):
+        _check(f"rework_count{args}", rework_count(*args), expected, failures)
     for dyelot, expected in (
         ("C260708660", "C260708661"), ("C260612221", "C260612222"), ("C260612228", "C260612229"),
         ("C260612229", "C26061222A"), ("C26061222A", "C26061222B"), ("c26061222b", "C26061222C"),

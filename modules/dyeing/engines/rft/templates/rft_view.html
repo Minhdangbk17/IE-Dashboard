@@ -68,7 +68,7 @@
     {% if is_stage %}
     <p class="f6 color-fg-muted mb-3">DyeingRFT = NG when the batch has a dyeing NC (colour difference, closed, not MA) or TotalCorrectionCnt &gt; 0.</p>
     {% else %}
-    <p class="f6 color-fg-muted mb-3">Only machines with MachineGroup &ge;500kg are counted. Rework = the next batch (Dyelot + 1) went back to a DG dyeing operation, or the batch has a dyeing NC; Adjustment = TotalCorrectionCnt &gt; 0.</p>
+    <p class="f6 color-fg-muted mb-3">Only machines with MachineGroup &ge;500kg are counted. Rework = the next batch (Dyelot + 1) went back to a DG dyeing operation, or the batch has a dyeing NC; Adjustment = TotalCorrectionCnt &gt; 0 or DyestuffCorrection &gt; 0.</p>
     <p class="f6 color-fg-muted mb-3 rft-unknown-group" hidden></p>
     {% endif %}
 

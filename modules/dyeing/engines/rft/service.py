@@ -16,7 +16,7 @@ Các cột tính — đúng công thức Excel người dùng cung cấp (đã �
   …9 -> …A, …A -> …B — người dùng chốt, khác công thức Excel vốn ra "…10").
 - DyeingRFT: NG nếu Dyelot có trong NC (đã lọc) HOẶC TotalCorrectionCnt > 0, ngược lại OK.
 - ReworkCount: Rework nếu NewBatch có trong DG HOẶC Dyelot có trong NC; ngược lại Adjustment nếu
-  TotalCorrectionCnt > 0; còn lại OK.
+  TotalCorrectionCnt > 0 HOẶC DyestuffCorrection > 0 (bổ sung 2026-10-09); còn lại OK.
 Lọc nguồn tra cứu (áp ở read time): DG = công đoạn bắt đầu "DG"; NC = công đoạn bắt đầu "DG",
 Defect chứa "khác màu", Status Closed, Corrective không bắt đầu "MA".
 
@@ -121,10 +121,14 @@ def dyeing_rft(in_nc: bool, total_correction_cnt: Any) -> str:
     return "NG" if in_nc or _correction_count(total_correction_cnt) > 0 else "OK"
 
 
-def rework_count(new_batch_in_dg: bool, in_nc: bool, total_correction_cnt: Any) -> str:
+def rework_count(new_batch_in_dg: bool, in_nc: bool, total_correction_cnt: Any, dyestuff_correction: Any = 0) -> str:
+    """Rework nếu mẻ làm lại qua DG hoặc có NC; Adjustment nếu TotalCorrectionCnt > 0 hoặc
+    DyestuffCorrection > 0 (`dyestuff_correction` là TEXT trên Postgres — ép số ở Python)."""
     if new_batch_in_dg or in_nc:
         return "Rework"
-    return "Adjustment" if _correction_count(total_correction_cnt) > 0 else "OK"
+    if _correction_count(total_correction_cnt) > 0 or _correction_count(dyestuff_correction) > 0:
+        return "Adjustment"
+    return "OK"
 
 
 def _normalize_main_fabric_type(value: Any) -> str | None:
@@ -193,7 +197,7 @@ def load_rft_rows(from_date: str | None = None, to_date: str | None = None) -> l
     record_time_sql = "COALESCE(NULLIF(b.end_time, ''), b.start_time)"
     sql = f"""
         SELECT b.id AS batch_id, b.dyelot, b.machine, b.machine_group, b.formula_code,
-               b.total_correction_cnt, b.fabric_type, b.greige_code, b.customer,
+               b.total_correction_cnt, b.dyestuff_correction, b.fabric_type, b.greige_code, b.customer,
                b.start_time, b.end_time, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM batch_details b
         LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(b.greige_code))
@@ -231,7 +235,7 @@ def load_rft_rows(from_date: str | None = None, to_date: str | None = None) -> l
             "machine_group_label": machine_group_label(row["machine_group"]),
             "new_batch": new_batch,
             "dyeing_rft": dyeing_rft(nc_no is not None, row["total_correction_cnt"]),
-            "rework_count": rework_count(new_batch_in_dg, nc_no is not None, row["total_correction_cnt"]),
+            "rework_count": rework_count(new_batch_in_dg, nc_no is not None, row["total_correction_cnt"], row["dyestuff_correction"]),
             "rework_source": " + ".join(sources),
             "main_fabric_type": _normalize_main_fabric_type(row["fabric_type"]),
         })
@@ -462,6 +466,7 @@ DATA_COLUMNS: tuple[tuple[str, str], ...] = (
     ("Production Date", "production_date"), ("Dyelot", "dyelot"), ("Machine", "machine"),
     ("MachineGroup", "machine_group"), ("FabricType", "fabric_type"), ("Brand Program", "brand_program"),
     ("Customer", "customer"), ("FormulaCode", "formula_code"), ("TotalCorrectionCnt", "total_correction_cnt"),
+    ("DyestuffCorrection", "dyestuff_correction"),
     ("StartTime", "start_time"), ("EndTime", "end_time"), ("STAGE", "stage"),
     ("MachineGroup2", "machine_group_label"), ("DyeingRFT", "dyeing_rft"), ("NewBatch", "new_batch"),
     ("ReworkCount", "rework_count"), ("Rework Source", "rework_source"),
