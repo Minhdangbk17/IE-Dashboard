@@ -241,21 +241,36 @@ create index if not exists idx_batch_details_dyelot_norm on batch_details (lower
 create unique index if not exists uq_batch_details_dyelot_machine_start
     on batch_details (dyelot, machine, start_time);
 
--- RFT (Right First Time) report — import từ file "RFT report.xlsx" (QC xuất), khoá dyelot.
--- Xem core/rft_importer.py / modules/dyeing/engines/rft/service.py.
-create table if not exists rft_dye_results (
+-- Nguồn tra cứu của báo cáo RFT — nạp hằng ngày, TÍCH LUỸ (UPSERT). Lưu mọi dòng file thô, quy
+-- tắc lọc (công đoạn DG*; NC khác màu/Closed/không MA) áp ở read time. Xem
+-- core/rft_sources_importer.py / modules/dyeing/engines/rft/service.py.
+create table if not exists dye_production_ops (
     id bigint generated always as identity primary key,
-    dyelot text not null unique,
-    customer text, color text, order_no text, greige_code text,
-    machine_type text, nc_dg text, result_dye text, new_batch2 text,
-    rework_count text, stage text not null, recipe text, body_rib text,
-    import_log_id bigint, created_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+    report_time text, department text, operation text not null, plant text, machine text,
+    batch_no text not null, batch_status text, sap_lot text, so_no text, brand text,
+    customer text, greige_code text, fabric_code text, recipe text, color_code text,
+    output_qty double precision, shift text, op_start_time text not null default '', op_end_time text,
+    batch_type text, import_log_id bigint,
+    created_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+    unique (batch_no, operation, op_start_time)
 );
-create index if not exists idx_rft_dye_results_dyelot_norm on rft_dye_results (lower(trim(dyelot)));
+create index if not exists idx_dye_production_ops_batch_norm on dye_production_ops (lower(trim(batch_no)));
 
--- Target (%) cho báo cáo RFT — khoá GHÉP (category, fabric_type): mỗi 1 trong 6 tab (Lab to
--- Lab, Lab to Bulk, Bulk to Bulk, 2nd Batch, Rework, Adjust Color) có Target RIÊNG cho từng
--- loại vải chính (Cotton/CVC/Polyester). Xem modules/dyeing/engines/rft/service.py.
+create table if not exists dye_nc_reports (
+    id bigint generated always as identity primary key,
+    nc_no text not null unique, defect text, defect_qty double precision, operation_route text,
+    status text, dept_report text, mp_no text, plant text, delivery_date text, customer text,
+    sale_no text, batch_ref text not null, batch_qty double precision, colorist text, sap_lot text,
+    color text, recipe text, fabric_code text, greige_code text, new_batch text,
+    corrective text, reason text, dept_in_charge text, remark text,
+    created_nc_at text, confirm_nc_at text, created_nb_at text, import_log_id bigint,
+    created_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+create index if not exists idx_dye_nc_reports_batch_ref_norm on dye_nc_reports (lower(trim(batch_ref)));
+
+-- Target (%) cho báo cáo RFT — khoá GHÉP (category, fabric_type): mỗi 1 trong 5 tab (Lab to
+-- Bulk, Bulk to Bulk, 2nd Batch = mức tối thiểu; Rework, Adjustment = mức tối đa) có Target RIÊNG
+-- cho từng loại vải chính (Cotton/CVC/Polyester). Xem modules/dyeing/engines/rft/service.py.
 create table if not exists rft_targets (
     category text not null,
     fabric_type text not null,
@@ -565,7 +580,8 @@ alter table batch_day_trend_targets enable row level security;
 alter table cleaning_mc_daily_summary enable row level security;
 alter table brand_program_mapping enable row level security;
 alter table import_log_rows enable row level security;
-alter table rft_dye_results enable row level security;
+alter table dye_production_ops enable row level security;
+alter table dye_nc_reports enable row level security;
 alter table rft_targets enable row level security;
 alter table idle_time_stops enable row level security;
 alter table idle_time_settings enable row level security;

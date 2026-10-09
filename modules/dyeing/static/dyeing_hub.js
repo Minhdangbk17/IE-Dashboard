@@ -304,16 +304,15 @@
     }
 
     // -----------------------------------------------------------------
-    // RFT — 1 card gộp 4 nhóm (Lab to Lab/Lab to Bulk/Bulk to Bulk/2nd Batch). Khi backend
-    // báo `classification_ready=false` (chưa có quy tắc phân loại thật — xem
-    // rft/service.py::RFT_CLASSIFICATION_READY), hiện trạng thái "đang chờ cấu hình" thay
-    // vì số 0% (dễ hiểu nhầm là dữ liệu thật xấu).
+    // RFT — 1 card gộp 4 ô: RFT rate của 3 Stage (Lab to Bulk/Bulk to Bulk/2nd Batch, mọi máy)
+    // + Rework rate (chỉ máy >=500kg, thấp là tốt). Khi backend báo
+    // `classification_ready=false`, hiện trạng thái "đang chờ cấu hình" thay vì số 0%.
     // -----------------------------------------------------------------
     const RFT_WIDGETS = [
-        { slug: "lab_to_lab" },
         { slug: "lab_to_bulk" },
         { slug: "bulk_to_bulk" },
         { slug: "second_batch" },
+        { slug: "rework" },
     ];
 
     function ensureRftPendingNote(card, show) {
@@ -336,7 +335,8 @@
         const valueEl = cell.querySelector(".dash-rft-cell-value");
         const canvas = cell.querySelector("canvas");
         try {
-            const params = new URLSearchParams({ category: widget.slug, from_date: WINDOW.from, to_date: WINDOW.to, capacities: CAPACITY_FILTER, group_by: "date" });
+            // Không lọc Capacity: RFT tính mọi máy; tab Rework tự giới hạn máy >=500kg ở backend.
+            const params = new URLSearchParams({ category: widget.slug, from_date: WINDOW.from, to_date: WINDOW.to, group_by: "date" });
             const res = await fetch(`${rftUrl}?${params}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();

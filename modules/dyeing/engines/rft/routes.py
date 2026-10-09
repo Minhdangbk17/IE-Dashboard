@@ -1,9 +1,10 @@
 """Blueprint và API cho báo cáo Right First Time (RFT)."""
 from __future__ import annotations
 
+import io
 from typing import TYPE_CHECKING, Any
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, send_file
 
 from core.auth import permission_required
 
@@ -13,34 +14,52 @@ if TYPE_CHECKING:
     from core.engine_base import BaseEngine
 
 
+def _filter_args() -> dict[str, Any]:
+    """Tham số lọc dùng CHUNG cho bảng và Export (cùng 1 `URLSearchParams` phía JS)."""
+    return {
+        "capacities": request.args.get("capacities") or None,
+        "machine_groups": request.args.get("machine_groups") or None,
+        "brand_programs": request.args.get("brand_programs") or None,
+        "from_date": request.args.get("from_date") or None,
+        "to_date": request.args.get("to_date") or None,
+    }
+
+
 def build_blueprint(_engine: "BaseEngine") -> Blueprint:
     bp = Blueprint("rft", __name__, template_folder="templates", static_folder="static")
 
     @bp.route("/")
     @permission_required("dyeing", "rft", "view")
     def view() -> Any:
-        return render_template("rft_view.html", categories=list(service.RFT_CATEGORY_SLUGS.items()))
+        tabs = [
+            {"slug": slug, "label": label, "kind": "stage" if label in service.STAGE_CATEGORIES else "rework"}
+            for slug, label in service.RFT_CATEGORY_SLUGS.items()
+        ]
+        return render_template("rft_view.html", tabs=tabs)
 
     @bp.route("/api/summary")
     @permission_required("dyeing", "rft", "view")
     def api_summary() -> Any:
-        slug = request.args.get("category") or ""
-        category = service.RFT_CATEGORY_SLUGS.get(slug)
+        category = service.RFT_CATEGORY_SLUGS.get(request.args.get("category") or "")
         if category is None:
             return jsonify({"error": "Invalid or missing category."}), 400
         try:
-            data = service.get_rft_pivot_data(
-                category=category,
-                capacities=request.args.get("capacities") or None,
-                machine_types=request.args.get("machine_types") or None,
-                brand_programs=request.args.get("brand_programs") or None,
-                from_date=request.args.get("from_date") or None,
-                to_date=request.args.get("to_date") or None,
-                group_by=request.args.get("group_by", "date"),
-            )
-            return jsonify(data)
+            data = service.get_rft_pivot_data(category=category, group_by=request.args.get("group_by", "date"), **_filter_args())
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+        return jsonify(data)
+
+    @bp.route("/api/export")
+    @permission_required("dyeing", "rft", "view")
+    def api_export() -> Any:
+        try:
+            content, filename = service.export_rft_excel(**_filter_args())
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return send_file(
+            io.BytesIO(content), as_attachment=True, download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     @bp.route("/api/targets/<slug>/<fabric_type>", methods=["POST"])
     @permission_required("dyeing", "rft", "edit")

@@ -5,10 +5,10 @@
     .rft-kpis .widget-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
     .rft-kpis strong { font-size: 28px; line-height: 1.1; }
     .capacity-dropdown { position: relative; min-width: 210px; }
-    .capacity-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--color-canvas-overlay, #161b22); border: 1px solid var(--color-border-default, #30363d); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
+    .capacity-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--color-canvas-overlay); border: 1px solid var(--color-border-default); border-radius: 6px; box-shadow: var(--shadow-xl); }
     .capacity-menu[hidden] { display: none; }
     .capacity-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
-    .capacity-option:hover { background: var(--color-neutral-muted, rgba(110, 118, 129, .15)); }
+    .capacity-option:hover { background: var(--color-neutral-muted); }
     @media (max-width: 800px) { .rft-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
     .rft-page[hidden] { display: none; }
     .trend-charts-row { display: flex; gap: 12px; height: 320px; }
@@ -16,6 +16,10 @@
     .trend-chart-title { margin: 0 0 6px; text-align: center; }
     .trend-chart-canvas-wrap { position: relative; flex: 1; min-height: 0; }
     @media (max-width: 900px) { .trend-charts-row { flex-direction: column; height: auto; } .trend-chart-canvas-wrap { height: 260px; } }
+    .rft-table td, .rft-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .rft-table .ratio-good { background: var(--success-bg); color: var(--success); }
+    .rft-table .ratio-warning { background: var(--danger-bg); color: var(--danger); }
+    .rft-table .total-row th, .rft-table .total-row td { font-weight: 700; border-top: 2px solid var(--border-default); }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
@@ -28,18 +32,12 @@
         <div class="form-group mb-0 mr-3 capacity-dropdown">
             <label for="capacity-toggle">Capacity (Kg)</label>
             <button id="capacity-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All capacities</button>
-            <div id="capacity-menu" class="capacity-menu" hidden>
-                <label class="capacity-option"><input id="capacity-all" type="checkbox" value="ALL"> Select All</label>
-                <div class="border-top my-1"></div>
-                {% for capacity in [25, 50, 300, 500, 600, 1200, 2400] %}
-                <label class="capacity-option"><input class="capacity-checkbox" type="checkbox" value="{{ capacity }}" {% if capacity in [500, 600, 1200, 2400] %}checked{% endif %}> {{ capacity }} Kg</label>
-                {% endfor %}
-            </div>
+            <div id="capacity-menu" class="capacity-menu" hidden></div>
         </div>
         <div class="form-group mb-0 mr-3 capacity-dropdown">
-            <label for="machine-type-toggle">Machine Type</label>
-            <button id="machine-type-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All machine types</button>
-            <div id="machine-type-menu" class="capacity-menu" hidden></div>
+            <label for="machine-group-toggle">Machine Group</label>
+            <button id="machine-group-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All machine groups</button>
+            <div id="machine-group-menu" class="capacity-menu" hidden></div>
         </div>
         <div class="form-group mb-0 mr-3 capacity-dropdown">
             <label for="brand-program-toggle">Brand Program</label>
@@ -48,52 +46,50 @@
         </div>
         <div class="form-group mb-0 mr-3"><label for="from-date">From Date</label><input id="from-date" class="form-control" type="date"></div>
         <div class="form-group mb-0 mr-3"><label for="to-date">To Date</label><input id="to-date" class="form-control" type="date"></div>
-        <div class="form-group mb-0"><label for="group-by">Group By</label><select id="group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
+        <div class="form-group mb-0 mr-3"><label for="group-by">Group By</label><select id="group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
+        <div class="form-group mb-0"><button id="rft-export" class="btn" type="button">Export Excel</button></div>
     </div>
 </section>
 
 <nav class="page-tabs mb-3" id="rft-tabs" aria-label="Right First Time report pages">
-    {% for slug, label in categories %}
-    <button class="page-tab{% if loop.first %} is-active{% endif %}" type="button" data-page="{{ slug }}">{{ label }}</button>
+    {% for tab in tabs %}
+    <button class="page-tab{% if loop.first %} is-active{% endif %}" type="button" data-page="{{ tab.slug }}">{{ tab.label }}</button>
     {% endfor %}
 </nav>
 
-{% for slug, label in categories %}
-<section class="rft-page" id="page-{{ slug }}" data-page="{{ slug }}"{% if not loop.first %} hidden{% endif %}>
+{% for tab in tabs %}
+{% set is_stage = tab.kind == "stage" %}
+<section class="rft-page" id="page-{{ tab.slug }}" data-page="{{ tab.slug }}" data-kind="{{ tab.kind }}"{% if not loop.first %} hidden{% endif %}>
     <div class="rft-kpis mb-4">
-        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL BATCHES</span><strong class="kpi-total-batches">--</strong><span class="f6 color-fg-muted">in this stage</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">OK (RIGHT FIRST TIME)</span><strong class="kpi-ok-batches">--</strong><span class="f6 color-fg-muted">ResultDYE = OK</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">RATE</span><strong class="kpi-rate">--%</strong><span class="f6 color-fg-muted">OK / total this stage</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">TOTAL BATCHES</span><strong class="kpi-total-batches">--</strong><span class="f6 color-fg-muted">{% if is_stage %}in this stage{% else %}machines &ge;500kg{% endif %}</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">{% if is_stage %}OK (RIGHT FIRST TIME){% else %}{{ tab.label | upper }} BATCHES{% endif %}</span><strong class="kpi-hit-batches">--</strong><span class="f6 color-fg-muted">{% if is_stage %}DyeingRFT = OK{% else %}ReworkCount = {{ tab.label }}{% endif %}</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">{% if is_stage %}RFT RATE{% else %}{{ tab.label | upper }} RATE{% endif %}</span><strong class="kpi-rate">--%</strong><span class="f6 color-fg-muted">{% if is_stage %}OK / total this stage{% else %}{{ tab.label }} / total, lower is better{% endif %}</span></div>
     </div>
-    {% if slug in ("rework", "adjust_color") %}
-    <p class="f6 color-fg-muted mb-3">This tab only counts batches with Machine Type &ge;500kg (Small Machine excluded).</p>
+    {% if is_stage %}
+    <p class="f6 color-fg-muted mb-3">DyeingRFT = NG when the batch has a dyeing NC (colour difference, closed, not MA) or TotalCorrectionCnt &gt; 0.</p>
+    {% else %}
+    <p class="f6 color-fg-muted mb-3">Only machines with MachineGroup &ge;500kg are counted. Rework = the next batch (Dyelot + 1) went back to a DG dyeing operation, or the batch has a dyeing NC; Adjustment = TotalCorrectionCnt &gt; 0.</p>
+    <p class="f6 color-fg-muted mb-3 rft-unknown-group" hidden></p>
     {% endif %}
-    <p class="f6 color-fg-muted mb-3 rft-other-stage" data-category="{{ slug }}" hidden></p>
 
     <div class="Box p-3 mb-4">
-        <h3 class="mt-0 mb-2">{{ label }} — RFT rate trend</h3>
+        <h3 class="mt-0 mb-2">{{ tab.label }} — {% if is_stage %}RFT rate{% else %}{{ tab.label }} rate{% endif %} trend</h3>
         <div class="trend-charts-row">
+            {% for fabric in ["Cotton", "CVC", "Polyester"] %}
             <div class="trend-chart-col">
-                <h4 class="trend-chart-title">Cotton</h4>
-                <div class="trend-chart-canvas-wrap"><canvas class="rft-chart" data-category="{{ slug }}" data-fabric="Cotton" aria-label="{{ label }} Cotton chart"></canvas></div>
+                <h4 class="trend-chart-title">{{ fabric }}</h4>
+                <div class="trend-chart-canvas-wrap"><canvas class="rft-chart" data-category="{{ tab.slug }}" data-fabric="{{ fabric }}" aria-label="{{ tab.label }} {{ fabric }} chart"></canvas></div>
             </div>
-            <div class="trend-chart-col">
-                <h4 class="trend-chart-title">CVC</h4>
-                <div class="trend-chart-canvas-wrap"><canvas class="rft-chart" data-category="{{ slug }}" data-fabric="CVC" aria-label="{{ label }} CVC chart"></canvas></div>
-            </div>
-            <div class="trend-chart-col">
-                <h4 class="trend-chart-title">Polyester</h4>
-                <div class="trend-chart-canvas-wrap"><canvas class="rft-chart" data-category="{{ slug }}" data-fabric="Polyester" aria-label="{{ label }} Polyester chart"></canvas></div>
-            </div>
+            {% endfor %}
         </div>
     </div>
 
     <div class="Box p-3" style="overflow-x:auto;">
-        <table class="preview-table rft-table" data-category="{{ slug }}">
-            <thead><tr class="rft-head"><th>Fabric Type</th><th>Target</th></tr></thead>
+        <table class="preview-table rft-table" data-category="{{ tab.slug }}">
+            <thead><tr class="rft-head"><th>Fabric Type</th><th class="num">Target ({% if is_stage %}min{% else %}max{% endif %})</th></tr></thead>
             <tbody></tbody>
         </table>
-        <p class="f6 color-fg-muted mt-2 mb-0">Only Cotton/CVC/Polyester are shown; other fabric types are excluded from this breakdown. Values shown are RFT rate (% ResultDYE = OK) per period.</p>
+        <p class="f6 color-fg-muted mt-2 mb-0">Cells show the {% if is_stage %}RFT rate (% DyeingRFT = OK){% else %}{{ tab.label }} rate (% of batches){% endif %} per period. Green = meets target, red = misses target. The Total row covers every fabric type in this tab, including types other than Cotton/CVC/Polyester.</p>
     </div>
 </section>
 {% endfor %}
@@ -101,6 +97,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
     window.RFT_API_URL = "{{ url_for('dyeing.rft.api_summary') }}";
+    window.RFT_EXPORT_URL = "{{ url_for('dyeing.rft.api_export') }}";
     window.RFT_CAN_EDIT = {{ "true" if current_user_can('dyeing', 'rft', 'edit') else "false" }};
     window.RFT_TARGET_URL_TEMPLATE = "{{ url_for('dyeing.rft.api_set_target', slug='__SLUG__', fabric_type='__FABRIC__') }}";
 </script>

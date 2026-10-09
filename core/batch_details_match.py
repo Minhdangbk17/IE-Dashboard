@@ -4,7 +4,7 @@ core/batch_details_match.py
 `batch_details` từ nay cho phép NHIỀU dòng/1 Dyelot (mẻ gốc + mẻ redye chạy lại — xem điều tra
 mẻ C260659920 trong memory-bank/activeContext.md, và `core/batch_importer.py::
 _migrate_batch_details_primary_key()`). Mọi nơi JOIN `batch_details` theo `dyelot` để làm giàu
-1 dòng dữ liệu khác (availability_logs/rft_dye_results/performance_logs...) trước đây ngầm giả
+1 dòng dữ liệu khác (availability_logs/performance_logs...) trước đây ngầm giả
 định "1 dyelot = 1 dòng" — nếu JOIN thẳng theo dyelot như cũ, 1 dòng nguồn sẽ bị nhân đôi (mỗi
 dòng batch_details trùng dyelot tạo ra 1 dòng kết quả), gây đếm trùng ở các Engine cộng
 SUM/COUNT trực tiếp trên kết quả JOIN.

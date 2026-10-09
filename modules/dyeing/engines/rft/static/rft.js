@@ -1,10 +1,6 @@
 (function () {
     "use strict";
 
-    const capacityToggle = document.getElementById("capacity-toggle");
-    const capacityMenu = document.getElementById("capacity-menu");
-    const capacityAll = document.getElementById("capacity-all");
-    const capacityCheckboxes = [...document.querySelectorAll(".capacity-checkbox")];
     const charts = {}; // `${category}::${fabricType}` -> Chart instance (1 biểu đồ riêng/loại vải/tab)
     const lastDataByCategory = {}; // category -> response API gần nhất (cần lại khi sửa Target)
 
@@ -25,23 +21,22 @@
         window.setTimeout(() => el.remove(), 4000);
     }
 
-    // Dropdown multi-select DATA-DRIVEN (cùng cách trình bày với Capacity ở trên, nhưng
-    // option list lấy từ response API thay vì Jinja render sẵn) — dùng cho Machine Type/
-    // Brand Program.
-    function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, onChange) {
+    // Dropdown multi-select, danh sách lựa chọn lấy từ response API (available_*). Không chọn
+    // gì = không lọc theo chiều đó.
+    function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, formatOption, onChange) {
         const toggle = document.getElementById(toggleId);
         const menu = document.getElementById(menuId);
         let selected = new Set();
         let options = [];
         function updateLabel() {
             if (selected.size === 0) toggle.textContent = defaultLabel;
-            else if (selected.size === 1) toggle.textContent = [...selected][0];
+            else if (selected.size === 1) toggle.textContent = formatOption([...selected][0]);
             else toggle.textContent = `${selected.size} selected`;
         }
         function render() {
             menu.innerHTML = options.length
                 ? `<label class="capacity-option"><input type="checkbox" class="ms-all-option" ${selected.size === 0 ? "checked" : ""}> All</label><div class="border-top my-1"></div>` +
-                  options.map((value) => `<label class="capacity-option"><input type="checkbox" class="ms-option" value="${escAttr(value)}" ${selected.has(value) ? "checked" : ""}> ${escHtml(value)}</label>`).join("")
+                  options.map((value) => `<label class="capacity-option"><input type="checkbox" class="ms-option" value="${escAttr(value)}" ${selected.has(value) ? "checked" : ""}> ${escHtml(formatOption(value))}</label>`).join("")
                 : `<span class="f6 color-fg-muted" style="padding:6px 8px;display:block;">No data</span>`;
             const allBox = menu.querySelector(".ms-all-option");
             if (allBox) allBox.addEventListener("change", () => {
@@ -77,8 +72,9 @@
             },
         };
     }
-    const machineTypeFilter = makeMultiSelectDropdown("machine-type-toggle", "machine-type-menu", "All machine types", loadAll);
-    const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", loadAll);
+    const capacityFilter = makeMultiSelectDropdown("capacity-toggle", "capacity-menu", "All capacities", (value) => `${value} Kg`, loadAll);
+    const machineGroupFilter = makeMultiSelectDropdown("machine-group-toggle", "machine-group-menu", "All machine groups", (value) => value, loadAll);
+    const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", (value) => value, loadAll);
 
     function pad2(value) { return String(value).padStart(2, "0"); }
     function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
@@ -99,24 +95,11 @@
         return { from: formatDate(from), to: formatDate(to) };
     }
 
-    function selectedCapacities() {
-        return capacityCheckboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
-    }
-
-    function updateCapacityLabel() {
-        const selected = selectedCapacities();
-        capacityAll.checked = selected.length === capacityCheckboxes.length;
-        if (selected.length === 0) capacityToggle.textContent = "Select capacity";
-        else if (selected.length === capacityCheckboxes.length) capacityToggle.textContent = "All capacities";
-        else if (selected.length <= 2) capacityToggle.textContent = `${selected.join(", ")} Kg`;
-        else capacityToggle.textContent = `${selected.length} selected`;
-    }
-
-    function filters(category) {
+    // Tham số lọc dùng CHUNG cho bảng và Export.
+    function filterParams() {
         return new URLSearchParams({
-            category,
-            capacities: selectedCapacities().join(","),
-            machine_types: machineTypeFilter.selected().join(","),
+            capacities: capacityFilter.selected().join(","),
+            machine_groups: machineGroupFilter.selected().join(","),
             brand_programs: brandProgramFilter.selected().join(","),
             from_date: document.getElementById("from-date").value,
             to_date: document.getElementById("to-date").value,
@@ -126,27 +109,28 @@
 
     function chartTextColors() {
         const isLight = document.documentElement.getAttribute("data-color-mode") === "light";
-        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim() || "#c7c9d1";
+        const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary").trim();
         const gridColor = isLight ? "rgba(11, 12, 14, 0.08)" : "rgba(255, 255, 255, 0.08)";
         return { textColor, gridColor };
     }
 
-    // Màu cố định theo loại vải — DÙNG CHUNG cho đường số liệu (nét liền) và đường Target
-    // tương ứng (nét đứt, cùng màu) — cùng bảng màu đã dùng cho %Tank Loading/Batch/Day Trend.
+    // Màu nghiệp vụ theo loại vải (UI_GUIDELINES Mục 6.1) — dùng chung cho đường số liệu (nét
+    // liền) và đường Target (nét đứt, cùng màu).
     const RFT_FABRIC_COLORS = { Cotton: "#3fb950", CVC: "#2862d7", Polyester: "#f778ba" };
 
     function rftTargetUrl(category, fabricType) {
         return window.RFT_TARGET_URL_TEMPLATE.replace("__SLUG__", encodeURIComponent(category)).replace("__FABRIC__", encodeURIComponent(fabricType));
     }
 
-    function formatRftTarget(value) {
+    function formatPct(value) {
         return value === null || value === undefined ? "-" : `${Number(value).toFixed(1)}%`;
     }
 
-    function renderTargetCell(category, row) {
-        const text = formatRftTarget(row.target);
-        if (!window.RFT_CAN_EDIT) return `<td>${text}</td>`;
-        return `<td><span class="case-note-cell" data-category="${escAttr(category)}" data-fabric-type="${escAttr(row.fabric_type)}">${text}</span></td>`;
+    // Target "min" (RFT — cao là tốt) / "max" (Rework, Adjustment — thấp là tốt).
+    function ratioClass(value, target, direction) {
+        if (value === null || value === undefined || target === null || target === undefined) return "";
+        const ok = direction === "max" ? value <= target : value >= target;
+        return ok ? "ratio-good" : "ratio-warning";
     }
 
     function buildTargetCellSpan(category, row) {
@@ -154,8 +138,14 @@
         span.className = "case-note-cell";
         span.dataset.category = category;
         span.dataset.fabricType = row.fabric_type;
-        span.textContent = formatRftTarget(row.target);
+        span.textContent = formatPct(row.target);
         return span;
+    }
+
+    function renderTargetCell(category, row) {
+        const text = formatPct(row.target);
+        if (!window.RFT_CAN_EDIT) return `<td>${text}</td>`;
+        return `<td><span class="case-note-cell" data-category="${escAttr(category)}" data-fabric-type="${escAttr(row.fabric_type)}">${text}</span></td>`;
     }
 
     function startEditingTarget(cell) {
@@ -167,6 +157,8 @@
         const input = document.createElement("input");
         input.type = "number";
         input.step = "0.1";
+        input.min = "0";
+        input.max = "100";
         input.className = "case-note-input";
         input.value = row.target === null || row.target === undefined ? "" : row.target;
         cell.replaceWith(input);
@@ -197,9 +189,10 @@
         }).then((response) => response.json().catch(() => ({})).then((data) => {
             if (!response.ok) throw new Error(data.error || "save failed");
             row.target = value;
-            inputEl.replaceWith(buildTargetCellSpan(category, row));
-            showToast(`Target for ${row.fabric_type} (${category}) saved.`, "success");
+            const section = document.getElementById(`page-${category}`);
+            renderTable(section, category, lastDataByCategory[category]);
             updateChart(category, lastDataByCategory[category]);
+            showToast(`Target for ${row.fabric_type} saved.`, "success");
         })).catch((err) => {
             inputEl.replaceWith(buildTargetCellSpan(category, row));
             showToast(err && err.message ? err.message : "Failed to save target.", "error");
@@ -214,25 +207,41 @@
         });
     });
 
-    function renderTable(section, category, data) {
-        const head = section.querySelector(".rft-head");
-        head.innerHTML = "<th>Fabric Type</th><th>Target</th>" + data.periods.map((period) => `<th>${period}</th>`).join("") + "<th>Total</th>";
-        section.querySelector(".rft-table tbody").innerHTML = data.rows.map((row) =>
-            `<tr><th>${row.fabric_type}</th>${renderTargetCell(category, row)}${row.values.map((value) => `<td>${value.toFixed(1)}%</td>`).join("")}<td><strong>${row.total.toFixed(1)}%</strong></td></tr>`
-        ).join("");
+    function valueCells(row, direction) {
+        return row.values.map((value, index) => {
+            const cls = ratioClass(value, row.target, direction);
+            const title = `${row.batches[index]} batch(es)`;
+            return `<td class="${cls}" title="${title}">${formatPct(value)}</td>`;
+        }).join("");
     }
 
-    // 3 biểu đồ RIÊNG BIỆT/tab (trái=Cotton, giữa=CVC, phải=Polyester) — mỗi biểu đồ chỉ có
-    // 1 đường số liệu + 1 đường Target đứt nét của ĐÚNG loại đó, cùng kỹ thuật đã áp dụng cho
-    // %Tank Loading (`tank_loading.js::updateChart()`).
+    function renderTable(section, category, data) {
+        const direction = data.target_direction;
+        const head = section.querySelector(".rft-head");
+        const targetLabel = direction === "max" ? "Target (max)" : "Target (min)";
+        head.innerHTML = `<th>Fabric Type</th><th class="num">${targetLabel}</th>` + data.periods.map((period) => `<th class="num">${escHtml(period)}</th>`).join("") + `<th class="num">Total</th>`;
+        const fabricRows = data.rows.map((row) =>
+            `<tr><th>${escHtml(row.fabric_type)}</th>${renderTargetCell(category, row)}${valueCells(row, direction)}` +
+            `<td class="${ratioClass(row.total, row.target, direction)}" title="${row.total_batches} batch(es)"><strong>${formatPct(row.total)}</strong></td></tr>`
+        ).join("");
+        const total = data.total_row;
+        const totalRow = `<tr class="total-row"><th>Total</th><td>-</td>` +
+            total.values.map((value, index) => `<td title="${total.batches[index]} batch(es)">${formatPct(value)}</td>`).join("") +
+            `<td title="${total.total_batches} batch(es)"><strong>${formatPct(total.total)}</strong></td></tr>`;
+        section.querySelector(".rft-table tbody").innerHTML = fabricRows + totalRow;
+    }
+
+    // 3 biểu đồ riêng/tab (Cotton / CVC / Polyester) — mỗi biểu đồ 1 đường số liệu + 1 đường
+    // Target nét đứt cùng màu (UI_GUIDELINES Mục 7.2).
     function updateChart(category, data) {
         if (typeof Chart === "undefined" || !data) return;
         const { textColor, gridColor } = chartTextColors();
+        const yTitle = data.target_direction === "max" ? `${data.category} rate (%)` : "RFT rate (%)";
         (data.rows || []).forEach((row) => {
             const canvas = document.querySelector(`.rft-chart[data-category="${category}"][data-fabric="${row.fabric_type}"]`);
             if (!canvas) return;
-            const color = RFT_FABRIC_COLORS[row.fabric_type] || "#abaebb";
-            const datasets = [{ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false }];
+            const color = RFT_FABRIC_COLORS[row.fabric_type];
+            const datasets = [{ label: row.fabric_type, data: row.values, borderColor: color, backgroundColor: "transparent", tension: .2, fill: false, spanGaps: false }];
             if (row.target !== null && row.target !== undefined) {
                 datasets.push({
                     label: `${row.fabric_type} Target`,
@@ -256,36 +265,45 @@
                     interaction: { mode: "index", intersect: false },
                     scales: {
                         x: { ticks: { color: textColor }, grid: { color: gridColor } },
-                        y: { beginAtZero: true, max: 100, ticks: { color: textColor, callback: (value) => `${value}%` }, grid: { color: gridColor }, title: { display: true, text: "RFT rate (%)", color: textColor } },
+                        y: { beginAtZero: true, max: 100, ticks: { color: textColor, callback: (value) => `${value}%` }, grid: { color: gridColor }, title: { display: true, text: yTitle, color: textColor } },
                     },
                     plugins: {
                         legend: { display: false },
-                        tooltip: { filter: (item) => !item.dataset.isTargetLine, callbacks: { label: (context) => `${context.formattedValue}%` } },
+                        tooltip: {
+                            filter: (item) => !item.dataset.isTargetLine,
+                            callbacks: { label: (context) => `${context.formattedValue}% (${row.batches[context.dataIndex]} batch(es))` },
+                        },
                     },
                 },
             });
         });
     }
 
+    // Đổi bộ lọc liên tiếp bắn nhiều request song song — chỉ nhận response của lần tải MỚI
+    // NHẤT mỗi tab, tránh response cũ về sau ghi đè kết quả mới.
+    const latestRequest = {};
+
     async function loadCategory(category) {
         const section = document.getElementById(`page-${category}`);
         if (!section) return;
-        const response = await fetch(`${window.RFT_API_URL}?${filters(category)}`);
-        if (!response.ok) return;
+        const params = filterParams();
+        params.set("category", category);
+        const requestId = (latestRequest[category] || 0) + 1;
+        latestRequest[category] = requestId;
+        const response = await fetch(`${window.RFT_API_URL}?${params}`);
+        if (!response.ok || requestId !== latestRequest[category]) return;
         const data = await response.json();
-        machineTypeFilter.setOptions(data.available_machine_types || []);
+        if (requestId !== latestRequest[category]) return;
+        capacityFilter.setOptions(data.available_capacities || []);
+        machineGroupFilter.setOptions(data.available_machine_groups || []);
         brandProgramFilter.setOptions(data.available_brand_programs || []);
         section.querySelector(".kpi-total-batches").textContent = data.kpis.total_batches.toLocaleString();
-        section.querySelector(".kpi-ok-batches").textContent = data.kpis.ok_batches.toLocaleString();
+        section.querySelector(".kpi-hit-batches").textContent = data.kpis.hit_batches.toLocaleString();
         section.querySelector(".kpi-rate").textContent = `${data.kpis.rate_pct.toFixed(1)}%`;
-        const otherStageEl = section.querySelector(".rft-other-stage");
-        if (otherStageEl) {
-            if (data.other_stage_count > 0) {
-                otherStageEl.hidden = false;
-                otherStageEl.textContent = `${data.other_stage_count} batch(es) have an unrecognized Stage value (outside the 6 known stages) and are excluded from every tab.`;
-            } else {
-                otherStageEl.hidden = true;
-            }
+        const unknownGroupEl = section.querySelector(".rft-unknown-group");
+        if (unknownGroupEl) {
+            unknownGroupEl.hidden = !data.unknown_machine_group_count;
+            unknownGroupEl.textContent = `${data.unknown_machine_group_count} batch(es) have no readable MachineGroup and are excluded from this tab.`;
         }
         lastDataByCategory[category] = data;
         renderTable(section, category, data);
@@ -303,8 +321,8 @@
         activePageIndex = index;
         pageTabs.forEach((tab, i) => tab.classList.toggle("is-active", i === index));
         rftPages.forEach((page, i) => { page.hidden = i !== index; });
-        // Chart.js đo kích thước container lúc vẽ — canvas ở trang vừa hiện lại
-        // trước đó có thể 0x0 (bị "hidden"), phải resize lại sau khi hiện ra.
+        // Chart.js đo kích thước container lúc vẽ — canvas ở trang vừa hiện lại trước đó có
+        // thể 0x0 (bị "hidden"), phải resize lại sau khi hiện ra.
         requestAnimationFrame(() => {
             const category = pageTabsData[index];
             Object.keys(charts).forEach((key) => {
@@ -331,29 +349,12 @@
         pageTabsData.forEach((category) => loadCategory(category));
     }
 
-    capacityToggle.addEventListener("click", () => {
-        capacityMenu.hidden = !capacityMenu.hidden;
-        capacityToggle.setAttribute("aria-expanded", String(!capacityMenu.hidden));
-    });
-    capacityAll.addEventListener("change", () => {
-        capacityCheckboxes.forEach((checkbox) => { checkbox.checked = capacityAll.checked; });
-        updateCapacityLabel();
-        loadAll();
-    });
-    capacityCheckboxes.forEach((checkbox) => checkbox.addEventListener("change", () => {
-        updateCapacityLabel();
-        loadAll();
-    }));
-    document.addEventListener("click", (event) => {
-        if (!event.target.closest(".capacity-dropdown")) {
-            capacityMenu.hidden = true;
-            capacityToggle.setAttribute("aria-expanded", "false");
-        }
+    document.getElementById("rft-export").addEventListener("click", () => {
+        window.location.href = `${window.RFT_EXPORT_URL}?${filterParams()}`;
     });
     ["from-date", "to-date", "group-by"].forEach((id) => document.getElementById(id).addEventListener("change", loadAll));
     document.addEventListener("colormodechange", loadAll);
 
-    updateCapacityLabel();
     const defaultRange = defaultDateRange();
     document.getElementById("from-date").value = defaultRange.from;
     document.getElementById("to-date").value = defaultRange.to;

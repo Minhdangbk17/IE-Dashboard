@@ -1,6 +1,32 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-06 (tiếp) — **Fabric/Color Matrix dùng bộ lọc + mặc định giống
+**Cập nhật lần cuối:** 2026-10-08 — **Viết lại hoàn toàn báo cáo Right First Time (RFT)**
+theo công thức Excel người dùng cung cấp. Bỏ hẳn file "RFT report.xlsx" + bảng `rft_dye_results` +
+`core/rft_importer.py` (người dùng duyệt bỏ dữ liệu cũ). Nguồn mới: `batch_details` (mẻ gốc =
+Dyelot đuôi "0", KHÔNG lọc ReDye, mỗi lần chạy = 1 mẻ, ngày = production_date theo EndTime) + 2
+nguồn tra cứu nạp HẰNG NGÀY từ file THÔ, tích luỹ UPSERT (`core/rft_sources_importer.py`):
+`dye_production_ops` (Production Report Dye, sheet `DYE`, header 3 dòng Trung/Việt/Anh, khoá
+batch_no+operation+op_start_time) và `dye_nc_reports` (NC Report, khoá nc_no). Lưu mọi dòng, lọc ở
+READ TIME: DG = công đoạn `DG*` (người dùng chốt KHÔNG lấy LO02); NC = `DG*` + Defect "khác màu" +
+Closed + Corrective không "MA". Cột tính (`rft/service.py`): STAGE (FormulaCode 01/07 -> Lab to
+Bulk, 08/09 -> Bulk to Bulk, còn lại 2nd Batch), MachineGroup (số trong MachineGroup >= 500 ->
+">=500kg"), NewBatch (Dyelot +1 ký tự cuối theo dãy 0-9 rồi A-Z: …9 -> …A, …A -> …B — người dùng chốt 2026-10-09, khác Excel vốn ra …10), DyeingRFT (NG nếu có NC hoặc TotalCorrectionCnt > 0),
+ReworkCount (Rework nếu NewBatch có trong DG hoặc Dyelot có trong NC; Adjustment nếu
+TotalCorrectionCnt > 0; còn lại OK). Mẻ có thể đổi OK -> Rework khi DG/NC ngày sau được nạp (đúng
+ý đồ). Màn hình GIỮ NGUYÊN bố cục, 5 tab: Lab to Bulk / Bulk to Bulk / 2nd Batch (RFT rate, Target
+TỐI THIỂU) + Rework / Adjustment (chỉ máy >=500kg, Target TỐI ĐA — người dùng yêu cầu). Thêm dòng
+Total vào bảng, ô tô xanh/đỏ theo Target, Capacity lấy từ MachineGroup (data-driven, mặc định tất
+cả), filter Machine Group thay Machine Type, nút Export Excel (Dyeing RFT / Rework Count / Data /
+Filters). Hub: 4 ô RFT đổi thành Lab to Bulk / Bulk to Bulk / 2nd Batch / Rework (bỏ Lab to Lab,
+bỏ lọc Capacity). Modal Import: bỏ "RFT Report", thêm "Production Report (DG)" + "NC Report"
+(auto-detect nhận cả 2). Verify: 57/57 dòng khớp 5 cột Excel + pivot khớp từng số trên file mẫu
+cùng giai đoạn (`tests/test_rft_classification.py` viết lại); 18/18 file test PASS; chạy thật qua
+Flask test client + Playwright (2 theme, mobile). Sửa thêm lỗi race cũ ở `rft.js` (response cũ ghi
+đè kết quả lọc mới). **Deploy: chạy `supabase/migrate_rft_sources.sql` trước.** Trong lúc làm phát
+hiện `core/excel_importer.py` có thay đổi CHƯA commit (giống bản cũ, xoá Standard Achievement) làm
+app không khởi động — người dùng chọn khôi phục về HEAD; bản cũ đã backup ở scratchpad phiên.
+
+**Bản ghi trước:** 2026-10-06 (tiếp) — **Fabric/Color Matrix dùng bộ lọc + mặc định giống
 hệt Batch/Day Trend** (người dùng chốt 4 câu: bỏ THẺ "Date Range" (giữ From/To); ReDye = 0 theo
 quy tắc Trend; Week/Month gộp tổng; bỏ filter Fabric Type). Thanh lọc: From/To (mặc định 6 tuần
 gần nhất như Trend), Capacity (mặc định >= 500 lần tải đầu), Brand Program, Tank Type (tra
@@ -968,13 +994,15 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 ## Đang làm
 - Khung Phase 1 (Application Factory, Auto-loader 2 cấp, SQLite WAL, Graphify,
   Memory Bank) đã ổn định, không đổi.
-- Domain `dyeing` hiện có 9 Engine: `oee`, `downtime`, `excel_import`,
-  `manual_entry`, `reports`, `batch_matrix`, `rft`, `tank_loading`, `dca_cost`
+- Domain `dyeing` hiện có 10 Engine: `oee`, `downtime`, `excel_import`,
+  `manual_entry`, `reports`, `batch_matrix`, `rft`, `tank_loading`, `dca_cost`, `idle_time`
   (bản ghi cũ của file này từng chỉ liệt kê 3/6 rồi 7/7 rồi 8/8 — lưu ý cập
   nhật lại mỗi khi thêm Engine mới, đừng để lệch).
 - **Engine `dca_cost` (DCA Cost) — báo cáo Sum(DyeCost)/Sum(số dyelot), phân
   Fabric Type × Color (2026-09-19, khuya)**: xem chi tiết đầy đủ ở mục -19.
-- **Engine `rft` (Right First Time) — CÓ QUY TẮC PHÂN LOẠI THẬT (2026-09-19,
+- **Engine `rft` — ĐÃ VIẾT LẠI HOÀN TOÀN 2026-10-08 (xem bản ghi đầu file). Mô tả bên dưới
+  là thiết kế CŨ (file "RFT report.xlsx", `rft_dye_results`), chỉ giữ làm lịch sử.**
+- **[CŨ] Engine `rft` (Right First Time) — CÓ QUY TẮC PHÂN LOẠI THẬT (2026-09-19,
   trước đó chỉ là scaffold `classify_rft_category()` luôn trả `None` từ
   2026-09-13)**: báo cáo 6 tab phân loại mẻ nhuộm theo loại lần chạy — Lab to
   Lab, Lab to Bulk, Bulk to Bulk, 2nd Batch, Rework, Adjust Color. Nguồn dữ
@@ -2233,7 +2261,12 @@ vẫn giữ nguyên ở mục -8, chi tiết đầy đủ ở `systemPatterns.md
 8. Quality trong công thức OEE tạm giả định 100% (giữ nguyên, chưa đổi).
 
 ## Việc tiếp theo
-- **CHỜ XÁC NHẬN**: tạo bảng MỚI `rft_dye_results` trên Supabase production (áp DDL trong
+- **RFT bản viết lại (2026-10-08)**: chạy `supabase/migrate_rft_sources.sql` trên Supabase
+  production TRƯỚC khi deploy (tạo `dye_production_ops`, `dye_nc_reports`; lần đầu xoá Target cũ +
+  drop `rft_dye_results`). Sau deploy: nạp Production Report Dye + NC Report hằng ngày; nhập lại
+  Target cho 5 tab. Kỳ trước ngày bắt đầu nạp DG/NC chỉ có Adjustment/NG từ TotalCorrectionCnt
+  (Rework = 0) — số RFT các kỳ đó sẽ cao hơn thực tế.
+- **[ĐÃ THAY THẾ bởi mục trên — bảng `rft_dye_results` bị bỏ]** tạo bảng MỚI `rft_dye_results` trên Supabase production (áp DDL trong
   `supabase/schema.sql`, bảng hoàn toàn mới nên không cần migration script) — trước khi
   chạy, Engine `rft` vẫn hoạt động (trả empty state đúng, không lỗi 500) trên CẢ SQLite lẫn
   Postgres vì `_rft_rows()` bắt `DatabaseError` khi bảng chưa tồn tại, nhưng trên

@@ -1084,7 +1084,24 @@
       Export Excel. `build_matrix()` tính trực tiếp từ raw. Không đổi schema.
       Test `tests/test_batch_matrix_brand_fabric_filters.py` (viết lại), `test_batch_matrix_formula.py`.
 
+- [x] 2026-10-08 — **Viết lại báo cáo RFT** theo công thức Excel người dùng: nguồn `batch_details`
+      (Dyelot đuôi 0) + 2 nguồn nạp hằng ngày từ file thô (`dye_production_ops` Production Report
+      DG, `dye_nc_reports` NC Report — `core/rft_sources_importer.py`, lọc ở read time). 5 tab
+      (3 Stage RFT rate, Target min; Rework/Adjustment máy >=500kg, Target max), dòng Total, ô
+      xanh/đỏ theo Target, Export Excel, Hub 4 ô mới, modal Import 2 loại file mới. Bỏ hẳn
+      "RFT report.xlsx"/`rft_dye_results`/`core/rft_importer.py`. CẦN
+      `supabase/migrate_rft_sources.sql`. Test `tests/test_rft_classification.py` (viết lại,
+      57/57 dòng khớp Excel người dùng).
+
 ## Backlog (Phase 2+)
+- [ ] RFT: `dye_production_ops` lưu MỌI công đoạn của Production Report (~950 dòng/ngày, ~350k
+      dòng/năm) để đổi quy tắc lọc không phải import lại — theo dõi dung lượng Supabase; nếu cần,
+      chỉ lưu công đoạn DG*/LO* lúc import.
+- [ ] RFT: 5 tab tải song song, mỗi request đọc lại toàn bộ `batch_details` của kỳ + tập DG/NC
+      (~0.1-0.2s/tab với 3 tháng dữ liệu local) — nếu chậm khi dữ liệu lớn, gộp 1 request trả cả
+      5 tab.
+- [ ] Hub Dashboard: sparkline 4 ô RFT chưa có đường Target nét đứt (quy tắc biểu đồ Mục 7.2) —
+      cần chọn Target nào cho ô gộp mọi loại vải.
 - [ ] `batch_matrix_daily_summary` + `batch_matrix/service.py::recompute_daily()` không còn
       báo cáo nào đọc (từ 2026-10-06) — cân nhắc gỡ (kèm `tests/verify_rollup_parity.py` phần
       batch_matrix, vốn so với quy tắc batch_type cũ).

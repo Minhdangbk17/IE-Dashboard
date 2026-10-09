@@ -1,20 +1,24 @@
 """
 tests/test_rft_classification.py
 ------------------------------------
-Verify Engine `rft` sau khi có nguồn dữ liệu thật (`rft_dye_results`, import từ file
-"RFT report.xlsx"): (1) `classify_rft_category()` map đúng 6 giá trị Stage, Stage lạ trả
-`None`; (2) `parse_rft_file()` nhận diện đúng file mẫu thật; (3) công thức KPI mới
-(rate_pct = OK / tổng mẻ CỦA CHÍNH TAB, không phải tỷ trọng so với 6 tab); (4) tab
-Rework/Adjust Color chỉ tính máy >=500kg; (5) mẻ không khớp `availability_logs` rơi vào
-bucket "Unknown Date" khi không lọc ngày, bị loại khi có lọc ngày tường minh.
+Verify báo cáo Right First Time (RFT) bản viết lại 2026-10-08 trên ĐÚNG 3 file mẫu người dùng
+cung cấp (cùng giai đoạn 05-06/10/2026):
+- `Copy of Batch_202696181325.xlsx` sheet `data`: 57 mẻ + 5 cột người dùng tự tính bằng công
+  thức Excel (STAGE, MachineGroup, DyeingRFT, NewBatch, ReworkCount) = đáp án chuẩn.
+- `Copy of production_report_dye_1640090610.xlsx` (sheet thô `DYE` + sheet lọc tay `DG`).
+- `Copy of nc_report_1800040610.xlsx` (sheet thô `Sheet1 (2)` + sheet lọc tay `NC`).
 
-Dùng DB TẠM (file SQLite tạm + Flask app context tạm, KHÔNG đụng DB thật) — cùng pattern
-`tests/test_batch_matrix_formula.py`.
+Kịch bản: (1) công thức từng cột; (2) auto-detect + parse file thô; (3) bộ lọc tự động khớp
+sheet lọc tay (trừ 2 sai lệch đã biết khi lọc tay); (4) 57/57 dòng khớp 5 cột Excel; (5) số liệu
+pivot khớp pivot của người dùng; (6) import 2 lần không nhân đôi; (7) DG nạp ngày sau đổi mẻ
+OK -> Rework; (8) Export Excel.
 
+Dùng DB TẠM (file SQLite tạm + Flask app context tạm, KHÔNG đụng DB thật).
 Chạy: python tests/test_rft_classification.py
 """
 from __future__ import annotations
 
+import io
 import os
 import sqlite3
 import sys
@@ -24,51 +28,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from flask import Flask  # noqa: E402
+from openpyxl import load_workbook  # noqa: E402
 
-from core.database import close_db  # noqa: E402
-from core.excel_importer import detect_file_type_from_headers  # noqa: E402
-from core.rft_importer import _ensure_rft_dye_results_table, parse_rft_file, sync_rft_results, RFT_FIELDS  # noqa: E402
-from modules.dyeing.engines.rft.service import classify_rft_category, get_rft_pivot_data  # noqa: E402
+from core.batch_importer import _parse_batch_datetime  # noqa: E402
+from core.database import close_db, get_db  # noqa: E402
+from core.rft_sources_importer import (  # noqa: E402
+    DYE_PRODUCTION_FILE_TYPE, NC_REPORT_FILE_TYPE, detect_rft_source_type, parse_dye_production_file,
+    parse_nc_report_file, sync_dye_production_ops, sync_nc_reports,
+)
+from modules.dyeing.engines.rft.service import (  # noqa: E402
+    classify_stage, export_rft_excel, get_rft_pivot_data, is_counted_nc, load_rft_rows,
+    machine_group_label, next_batch,
+)
 
-FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "sample_imports" / "RFT report.xlsx"
-
-
-def _make_temp_app(db_path: str) -> Flask:
-    app = Flask(__name__)
-    app.config["DATABASE_PATH"] = db_path
-    app.config["SQLITE_PRAGMAS"] = {}
-    return app
-
-
-def _init_schema(db_path: str) -> None:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""
-        CREATE TABLE availability_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            batch TEXT, capacity_kg REAL, fabric_type TEXT, start_time TEXT, end_time TEXT
-        )
-    """)
-    # Bảng `batch_details` TỐI GIẢN (chỉ đủ cột `_rft_rows()` cần) — `rft/service.py` LEFT
-    # JOIN bảng này (khoá dyelot=dyelot) làm nguồn fallback fabric_type khi
-    # `availability_logs` không khớp (xem docstring `_rft_rows()`).
-    conn.execute("""
-        CREATE TABLE batch_details (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            dyelot TEXT NOT NULL, fabric_type TEXT, end_time TEXT
-        )
-    """)
-    _ensure_rft_dye_results_table(conn)
-    conn.commit()
-    conn.close()
-
-
-def _insert_rft_row(conn: sqlite3.Connection, **overrides: str) -> None:
-    record = {field: "" for field in RFT_FIELDS}
-    record.update(overrides)
-    columns = ",".join(RFT_FIELDS)
-    placeholders = ",".join("?" for _ in RFT_FIELDS)
-    conn.execute(f"INSERT INTO rft_dye_results ({columns}) VALUES ({placeholders})", tuple(record[f] for f in RFT_FIELDS))
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sample_imports"
+BATCH_FILE = FIXTURES / "Copy of Batch_202696181325.xlsx"
+DYE_FILE = FIXTURES / "Copy of production_report_dye_1640090610.xlsx"
+NC_FILE = FIXTURES / "Copy of nc_report_1800040610.xlsx"
+PRODUCTION_DAY = "2026-10-05"
+# Cột tính của người dùng trong sheet `data` (BW..CA) — cột MachineGroup thứ 2 trùng tên nên lấy
+# theo vị trí.
+COL_STAGE, COL_MACHINE_GROUP2, COL_DYEING_RFT, COL_NEW_BATCH, COL_REWORK_COUNT = 74, 75, 76, 77, 78
 
 
 def _check(label: str, actual, expected, failures: list[str]) -> None:
@@ -78,260 +58,223 @@ def _check(label: str, actual, expected, failures: list[str]) -> None:
         failures.append(label)
 
 
-def _scenario_stage_mapping(failures: list[str]) -> None:
-    print("\n=== Kịch bản 1: classify_rft_category() map đúng 6 Stage + Stage lạ -> None ===")
-    cases = [
-        ("Lab to Lab", "Lab to Lab"), (" lab to lab ", "Lab to Lab"),
-        ("Lab to Bulk", "Lab to Bulk"), ("LAB TO BULK", "Lab to Bulk"),
-        ("Bulk to Bulk", "Bulk to Bulk"),
-        ("2nd batch", "2nd Batch"), ("2ND BATCH", "2nd Batch"),
-        ("Rework", "Rework"),
-        ("Adjust Color", "Adjust Color"), ("adjust color", "Adjust Color"),
-        ("Something Else", None), ("", None),
-    ]
-    for stage_value, expected in cases:
-        _check(f"stage={stage_value!r}", classify_rft_category({"stage": stage_value}), expected, failures)
+def _make_temp_app(db_path: str) -> Flask:
+    app = Flask(__name__)
+    app.config["DATABASE_PATH"] = db_path
+    app.config["SQLITE_PRAGMAS"] = {}
+    return app
 
 
-def _scenario_parse_real_fixture(failures: list[str]) -> None:
-    print("\n=== Kịch bản 2: parse_rft_file() + detect_file_type_from_headers() trên file mẫu thật ===")
-    if not FIXTURE_PATH.exists():
-        print(f"  [SKIP] Không tìm thấy fixture {FIXTURE_PATH}")
-        return
-    file_bytes = FIXTURE_PATH.read_bytes()
-    result = parse_rft_file(file_bytes)
-    _check("total_records", result["total_records"], 31, failures)
-    _check("số dòng lỗi", len(result["errors"]), 0, failures)
-    ok_count = sum(1 for row in result["rows"] if row["result_dye"] == "OK")
-    ng_count = sum(1 for row in result["rows"] if row["result_dye"] == "NG")
-    _check("số dòng ResultDYE=OK", ok_count, 21, failures)
-    _check("số dòng ResultDYE=NG", ng_count, 10, failures)
+def _batch_sheet_rows() -> tuple[list[str], list[tuple]]:
+    workbook = load_workbook(BATCH_FILE, read_only=True, data_only=True)
+    try:
+        rows = list(workbook["data"].iter_rows(values_only=True))
+    finally:
+        workbook.close()
+    return [str(value) for value in rows[0]], [row for row in rows[1:] if any(value is not None for value in row)]
 
-    import openpyxl
-    workbook = openpyxl.load_workbook(FIXTURE_PATH, read_only=True)
-    headers = [str(cell.value).strip() for cell in next(workbook.worksheets[0].iter_rows(min_row=1, max_row=1))]
+
+def _init_batch_details(db_path: str) -> int:
+    """`batch_details` tối giản (đủ cột service đọc) + nạp 57 mẻ của file Batch mẫu."""
+    headers, rows = _batch_sheet_rows()
+    index = {name: headers.index(name) for name in (
+        "Dyelot", "Machine", "MachineGroup", "FormulaCode", "TotalCorrectionCnt", "FabricType",
+        "GreigeCode", "Customer", "StartTime", "EndTime",
+    )}
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE batch_details (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, machine TEXT, machine_group TEXT,
+            formula_code TEXT, total_correction_cnt INTEGER NOT NULL DEFAULT 0, fabric_type TEXT,
+            greige_code TEXT, customer TEXT, start_time TEXT, end_time TEXT
+        )
+    """)
+    for row in rows:
+        conn.execute(
+            "INSERT INTO batch_details (dyelot, machine, machine_group, formula_code, total_correction_cnt, fabric_type, greige_code, customer, start_time, end_time) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                row[index["Dyelot"]], row[index["Machine"]], row[index["MachineGroup"]], row[index["FormulaCode"]],
+                int(row[index["TotalCorrectionCnt"]] or 0), row[index["FabricType"]], row[index["GreigeCode"]],
+                row[index["Customer"]], _parse_batch_datetime(row[index["StartTime"]]), _parse_batch_datetime(row[index["EndTime"]]),
+            ),
+        )
+    conn.commit()
+    conn.close()
+    return len(rows)
+
+
+def _scenario_formulas(failures: list[str]) -> None:
+    print("\n=== Kịch bản 1: công thức từng cột ===")
+    for code, expected in (
+        ("01-Lab to bulk", "Lab to Bulk"), ("07-Labdip", "Lab to Bulk"), ("08-So theo  QC OK<2batches", "Bulk to Bulk"),
+        ("09-So theo QC-OK", "Bulk to Bulk"), ("03-Chỉnh tay không mẫu", "2nd Batch"), ("06-Khác nhóm máy", "2nd Batch"),
+        (None, "2nd Batch"),
+    ):
+        _check(f"classify_stage({code!r})", classify_stage(code), expected, failures)
+    for group, expected in (("G600", ">=500kg"), ("G500", ">=500kg"), ("C1600", ">=500kg"), ("G300", "Small Machine"), ("C100", "Small Machine"), (None, None), ("", None)):
+        _check(f"machine_group_label({group!r})", machine_group_label(group), expected, failures)
+    for dyelot, expected in (
+        ("C260708660", "C260708661"), ("C260612221", "C260612222"), ("C260612228", "C260612229"),
+        ("C260612229", "C26061222A"), ("C26061222A", "C26061222B"), ("c26061222b", "C26061222C"),
+        ("C26061222Z", None), ("C26061222-", None), ("", None),
+    ):
+        _check(f"next_batch({dyelot!r})", next_batch(dyelot), expected, failures)
+
+
+def _scenario_detect_and_parse(failures: list[str]) -> None:
+    print("\n=== Kịch bản 2: auto-detect + parse file thô ===")
+    dye_bytes, nc_bytes = DYE_FILE.read_bytes(), NC_FILE.read_bytes()
+    _check("detect Production Report", detect_rft_source_type(dye_bytes), DYE_PRODUCTION_FILE_TYPE, failures)
+    _check("detect NC Report", detect_rft_source_type(nc_bytes), NC_REPORT_FILE_TYPE, failures)
+    _check("file Batch không phải nguồn RFT", detect_rft_source_type(BATCH_FILE.read_bytes()), None, failures)
+    _check("file không phải Excel -> None", detect_rft_source_type(b"not an excel file"), None, failures)
+    dye = parse_dye_production_file(dye_bytes)
+    _check("Production Report: đọc sheet thô DYE (953 dòng)", dye["total_records"], 953, failures)
+    _check("Production Report: 0 dòng lỗi", len(dye["errors"]), 0, failures)
+    first = dye["rows"][0]
+    _check("header 3 dòng map đúng Batch#", first["batch_no"], "C260694660", failures)
+    _check("header 3 dòng map đúng Operation#", first["operation"], "PA01 - Phát thẻ-领胚", failures)
+    _check("ô 'Batch Status' dính tiếng Việt vẫn map được", first["batch_status"], "Running", failures)
+    _check("OP Start time -> chuỗi ngày giờ", first["op_start_time"], "2026-10-05 18:33:52", failures)
+    nc = parse_nc_report_file(nc_bytes)
+    _check("NC Report: đọc sheet thô đầu tiên (370 dòng)", nc["total_records"], 370, failures)
+    _check("NC Report: 0 dòng lỗi", len(nc["errors"]), 0, failures)
+
+
+def _scenario_auto_filter_vs_manual(failures: list[str]) -> None:
+    print("\n=== Kịch bản 3: bộ lọc tự động so với sheet lọc tay ===")
+    workbook = load_workbook(DYE_FILE, read_only=True, data_only=True)
+    manual_dg = {str(row[7]).strip(): str(row[2]) for row in list(workbook["DG"].iter_rows(values_only=True))[1:]}
     workbook.close()
-    _check("detect_file_type_from_headers() nhận đúng RFT", detect_file_type_from_headers(headers), "RFT", failures)
+    auto_dg = {row["batch_no"] for row in parse_dye_production_file(DYE_FILE.read_bytes())["rows"] if row["operation"].upper().startswith("DG")}
+    _check("DG tự lọc (công đoạn DG*) = 76 batch", len(auto_dg), 76, failures)
+    _check("Sheet DG lọc tay chỉ dư 5 dòng LO02 (người dùng chốt: chỉ lấy DG*)",
+           sorted({op[:4] for batch, op in manual_dg.items() if batch not in auto_dg}), ["LO02"], failures)
+    _check("Mọi batch DG tự lọc đều có trong sheet lọc tay", auto_dg <= set(manual_dg), True, failures)
+
+    workbook = load_workbook(NC_FILE, read_only=True, data_only=True)
+    manual_nc = {str(row[11]).strip() for row in list(workbook["NC"].iter_rows(values_only=True))[1:]}
+    workbook.close()
+    auto_nc = {row["batch_ref"] for row in parse_nc_report_file(NC_FILE.read_bytes())["rows"] if is_counted_nc(row)}
+    _check("NC tự lọc = 67 dòng", len(auto_nc), 67, failures)
+    _check("Sheet NC lọc tay chỉ sót đúng C260709160 (người dùng xác nhận sót khi lọc tay)", sorted(auto_nc - manual_nc), ["C260709160"], failures)
+    _check("Mọi NC lọc tay đều được bộ lọc tự động giữ lại", manual_nc <= auto_nc, True, failures)
 
 
-def _scenario_kpi_formula_and_machine_restriction(failures: list[str]) -> None:
-    print("\n=== Kịch bản 3: công thức KPI OK/tổng-trong-tab + giới hạn >=500kg cho Rework/Adjust Color ===")
+def _scenario_end_to_end(failures: list[str]) -> None:
+    print("\n=== Kịch bản 4-8: import 2 nguồn + so với kết quả Excel của người dùng ===")
     fd, db_path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     try:
-        _init_schema(db_path)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-
-        # Tab "Lab to Bulk": 3 mẻ, 2 OK 1 NG -> rate 66.7%. Cả 3 đều khớp availability_logs
-        # (có production_date) để không rơi vào bucket "Unknown Date".
-        conn.executemany(
-            "INSERT INTO availability_logs (batch, capacity_kg, fabric_type, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-            [
-                ("LB-1", 600, "Cotton", "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
-                ("LB-2", 600, "Cotton", "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
-                ("LB-3", 600, "Cotton", "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
-            ],
-        )
-        _insert_rft_row(conn, dyelot="LB-1", stage="lab to bulk", result_dye="OK", machine_type=">=500kg")
-        _insert_rft_row(conn, dyelot="LB-2", stage="lab to bulk", result_dye="OK", machine_type=">=500kg")
-        _insert_rft_row(conn, dyelot="LB-3", stage="lab to bulk", result_dye="NG", machine_type=">=500kg")
-
-        # Tab "Rework": 2 mẻ máy lớn (1 OK, 1 NG) + 1 mẻ Small Machine (phải bị LOẠI khỏi
-        # KPI/tổng của tab này theo yêu cầu "chỉ tính máy >=500kg").
-        conn.executemany(
-            "INSERT INTO availability_logs (batch, capacity_kg, fabric_type, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-            [
-                ("RW-BIG-OK", 600, "Cotton", "2026-09-02 08:00:00", "2026-09-02 10:00:00"),
-                ("RW-BIG-NG", 600, "Cotton", "2026-09-02 08:00:00", "2026-09-02 10:00:00"),
-            ],
-        )
-        _insert_rft_row(conn, dyelot="RW-BIG-OK", stage="rework", result_dye="OK", machine_type=">=500kg")
-        _insert_rft_row(conn, dyelot="RW-BIG-NG", stage="rework", result_dye="NG", machine_type=">=500kg")
-        _insert_rft_row(conn, dyelot="RW-SMALL", stage="rework", result_dye="OK", machine_type="Small Machine")
-
-        # 1 mẻ Stage lạ (không thuộc 6 nhóm) — phải đếm vào other_stage_count, KHÔNG rơi vào
-        # tab nào. Cần khớp availability_logs CÙNG ngày với kịch bản Rework (2026-09-02) để
-        # không bị loại bởi from_date/to_date filter của chính kịch bản đó.
-        conn.execute(
-            "INSERT INTO availability_logs (batch, capacity_kg, fabric_type, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-            ("UNK-1", 600, "Cotton", "2026-09-02 08:00:00", "2026-09-02 10:00:00"),
-        )
-        _insert_rft_row(conn, dyelot="UNK-1", stage="mystery stage", result_dye="OK", machine_type=">=500kg")
-
-        conn.commit()
-        conn.close()
-
+        batch_count = _init_batch_details(db_path)
+        _check("nạp 57 mẻ Batch mẫu", batch_count, 57, failures)
         app = _make_temp_app(db_path)
         with app.app_context():
-            lab_to_bulk = get_rft_pivot_data(category="Lab to Bulk", from_date="2026-09-01", to_date="2026-09-01")
-            rework_default = get_rft_pivot_data(category="Rework", from_date="2026-09-02", to_date="2026-09-02")
-            rework_small_only = get_rft_pivot_data(category="Rework", machine_types="Small Machine", from_date="2026-09-02", to_date="2026-09-02")
+            for _ in range(2):  # import 2 lần — UPSERT, không nhân đôi
+                dye_result = sync_dye_production_ops(DYE_FILE.read_bytes(), "tester", DYE_FILE.name)
+                nc_result = sync_nc_reports(NC_FILE.read_bytes(), "tester", NC_FILE.name)
+            conn = get_db()
+            _check("Kịch bản 6: dye_production_ops sau 2 lần import vẫn 953 dòng",
+                   conn.execute("SELECT COUNT(*) AS c FROM dye_production_ops").fetchone()["c"], 953, failures)
+            _check("Kịch bản 6: dye_nc_reports sau 2 lần import vẫn 370 dòng",
+                   conn.execute("SELECT COUNT(*) AS c FROM dye_nc_reports").fetchone()["c"], 370, failures)
+            _check("import Production Report status", dye_result["status"], "completed", failures)
+            _check("import NC Report status", nc_result["status"], "completed", failures)
+
+            # Kịch bản 4: 57/57 dòng khớp 5 cột Excel của người dùng.
+            headers, sheet_rows = _batch_sheet_rows()
+            expected = {}
+            for row in sheet_rows:
+                key = (row[headers.index("Dyelot")], _parse_batch_datetime(row[headers.index("EndTime")]))
+                expected[key] = {
+                    "stage": row[COL_STAGE], "machine_group_label": row[COL_MACHINE_GROUP2],
+                    "dyeing_rft": row[COL_DYEING_RFT], "new_batch": row[COL_NEW_BATCH], "rework_count": row[COL_REWORK_COUNT],
+                }
+            rows = load_rft_rows(PRODUCTION_DAY, PRODUCTION_DAY)
+            _check("Kịch bản 4: 57 mẻ trong ngày sản xuất 05/10", len(rows), 57, failures)
+            mismatches = []
+            for row in rows:
+                theirs = expected[(row["dyelot"], row["end_time"])]
+                mine = {
+                    "stage": row["stage"].lower(), "machine_group_label": row["machine_group_label"],
+                    "dyeing_rft": row["dyeing_rft"], "new_batch": row["new_batch"], "rework_count": row["rework_count"],
+                }
+                for field, value in mine.items():
+                    if value != theirs[field]:
+                        mismatches.append((row["dyelot"], field, value, theirs[field]))
+            _check("Kịch bản 4: số ô lệch so với Excel (5 cột x 57 dòng)", mismatches, [], failures)
+            sources = {row["dyelot"]: row["rework_source"] for row in rows if row["rework_count"] == "Rework"}
+            _check("Rework Source ghi rõ số NC", sources.get("C260712960"), "NC2607129600", failures)
+
+            # Kịch bản 5: pivot khớp pivot của người dùng (sheet `pivot`).
+            def tab(slug: str, **kwargs):
+                return get_rft_pivot_data(slug, from_date=PRODUCTION_DAY, to_date=PRODUCTION_DAY, group_by="date", **kwargs)
+
+            lab = tab("Lab to Bulk")
+            bulk = tab("Bulk to Bulk")
+            second = tab("2nd Batch")
+            _check("Lab to Bulk Total (pivot 33.3%)", lab["total_row"]["total"], 33.3, failures)
+            _check("Lab to Bulk Polyester (pivot 33.3%)", lab["rows"][2]["total"], 33.3, failures)
+            _check("Lab to Bulk Cotton không có mẻ -> '-'", lab["rows"][0]["total"], None, failures)
+            _check("Bulk to Bulk Total (pivot 100%)", bulk["total_row"]["total"], 100.0, failures)
+            _check("2nd Batch Total (pivot 91.2%)", second["total_row"]["total"], 91.2, failures)
+            _check("2nd Batch Cotton/CVC/Polyester (pivot 93.3/92.9/80.0%)", [row["total"] for row in second["rows"]], [93.3, 92.9, 80.0], failures)
+            _check("2nd Batch KPI = 31/34 mẻ", (second["kpis"]["hit_batches"], second["kpis"]["total_batches"]), (31, 34), failures)
+            _check("Target RFT là mức tối thiểu", lab["target_direction"], "min", failures)
+
+            rework = tab("Rework")
+            adjustment = tab("Adjustment")
+            _check("Rework: mẫu số chỉ máy >=500kg (pivot 47 mẻ)", rework["kpis"]["total_batches"], 47, failures)
+            _check("Rework rate tổng = 3/47 (pivot 6.4%)", rework["kpis"]["rate_pct"], 6.4, failures)
+            _check("Adjustment rate tổng = 1/47 (pivot 2.1%)", adjustment["kpis"]["rate_pct"], 2.1, failures)
+            _check("Rework theo vải: Cotton 0/19, CVC 1/17, Polyester 2/11",
+                   [row["total"] for row in rework["rows"]], [0.0, 5.9, 18.2], failures)
+            _check("Target Rework là mức tối đa", rework["target_direction"], "max", failures)
+
+            small_only = tab("Rework", machine_groups="Small Machine")
+            _check("Lọc Small Machine -> tab Rework không còn mẻ", small_only["kpis"]["total_batches"], 0, failures)
+            _check("Lọc Capacity 600 -> 2nd Batch chỉ còn máy G600",
+                   {row["machine_group"] for row in load_rft_rows(PRODUCTION_DAY, PRODUCTION_DAY) if row["capacity"] == 600.0} == {"G600"}
+                   and tab("2nd Batch", capacities="600")["kpis"]["total_batches"] > 0, True, failures)
+            _check("available_capacities lấy từ MachineGroup", lab["available_capacities"],
+                   ["25", "50", "100", "300", "500", "600", "800", "1200", "1600", "2400"], failures)
+
+            # Kịch bản 7: Production Report của ngày sau có mẻ làm lại -> mẻ gốc chuyển Rework.
+            target = next(row for row in rows if row["rework_count"] == "OK")
+            conn.execute(
+                "INSERT INTO dye_production_ops (batch_no, operation, op_start_time) VALUES (?, ?, ?)",
+                (target["new_batch"], "DG09 - Nhuộm lại màu-染缸修色", "2026-10-07 10:00:00"),
+            )
+            conn.commit()
+            later = {row["dyelot"]: row for row in load_rft_rows(PRODUCTION_DAY, PRODUCTION_DAY)}
+            _check(f"Kịch bản 7: {target['dyelot']} chuyển OK -> Rework khi DG ngày sau có {target['new_batch']}",
+                   (later[target["dyelot"]]["rework_count"], later[target["dyelot"]]["rework_source"]), ("Rework", "DG"), failures)
+            _check("DG không làm đổi DyeingRFT (chỉ NC/TotalCorrectionCnt)", later[target["dyelot"]]["dyeing_rft"], target["dyeing_rft"], failures)
+            conn.execute("DELETE FROM dye_production_ops WHERE op_start_time = '2026-10-07 10:00:00'")
+            conn.commit()
+
+            # Kịch bản 8: Export Excel.
+            content, filename = export_rft_excel(from_date=PRODUCTION_DAY, to_date=PRODUCTION_DAY)
+            workbook = load_workbook(io.BytesIO(content), read_only=True)
+            _check("Export: 4 sheet", workbook.sheetnames, ["Dyeing RFT", "Rework Count", "Data", "Filters"], failures)
+            _check("Export: sheet Data có 57 mẻ", workbook["Data"].max_row - 1, 57, failures)
+            rework_sheet = list(workbook["Rework Count"].iter_rows(values_only=True))
+            grand = next(row for row in rework_sheet if row and row[0] == "Grand Total")
+            _check("Export: Grand Total Rework Count OK/Adjustment/Rework/Total", grand[1:5], (43, 1, 3, 47), failures)
+            workbook.close()
+            _check("Export: tên file", filename, f"rft_{PRODUCTION_DAY}_to_{PRODUCTION_DAY}.xlsx", failures)
             close_db()
-
-        _check("Lab to Bulk: total_batches", lab_to_bulk["kpis"]["total_batches"], 3, failures)
-        _check("Lab to Bulk: ok_batches", lab_to_bulk["kpis"]["ok_batches"], 2, failures)
-        _check("Lab to Bulk: rate_pct (2/3)", lab_to_bulk["kpis"]["rate_pct"], 66.7, failures)
-
-        _check("Rework (mặc định, không lọc Machine Type): total_batches CHỈ tính máy >=500kg (loại RW-SMALL)", rework_default["kpis"]["total_batches"], 2, failures)
-        _check("Rework: ok_batches (chỉ RW-BIG-OK)", rework_default["kpis"]["ok_batches"], 1, failures)
-        _check("Rework: rate_pct (1/2)", rework_default["kpis"]["rate_pct"], 50.0, failures)
-        _check("Rework: other_stage_count đếm được UNK-1", rework_default["other_stage_count"], 1, failures)
-
-        _check("Rework lọc Machine Type=Small Machine: vẫn 0 (bị business rule >=500kg loại trước)", rework_small_only["kpis"]["total_batches"], 0, failures)
-    finally:
-        os.unlink(db_path)
-
-
-def _scenario_unknown_date_bucket(failures: list[str]) -> None:
-    print("\n=== Kịch bản 4: mẻ không khớp availability_logs -> bucket 'Unknown Date' ===")
-    fd, db_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        _init_schema(db_path)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute(
-            "INSERT INTO availability_logs (batch, capacity_kg, fabric_type, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-            ("BB-KNOWN", 600, "Cotton", "2026-09-03 08:00:00", "2026-09-03 10:00:00"),
-        )
-        _insert_rft_row(conn, dyelot="BB-KNOWN", stage="bulk to bulk", result_dye="OK", machine_type=">=500kg")
-        _insert_rft_row(conn, dyelot="BB-UNKNOWN", stage="bulk to bulk", result_dye="NG", machine_type="Small Machine")
-        conn.commit()
-        conn.close()
-
-        app = _make_temp_app(db_path)
-        with app.app_context():
-            no_date_filter = get_rft_pivot_data(category="Bulk to Bulk")
-            with_date_filter = get_rft_pivot_data(category="Bulk to Bulk", from_date="2026-09-03", to_date="2026-09-03")
-            close_db()
-
-        _check("Không lọc ngày: total_batches = 2 (giữ cả dòng không khớp availability_logs)", no_date_filter["kpis"]["total_batches"], 2, failures)
-        _check("Không lọc ngày: có period 'Unknown Date'", "Unknown Date" in no_date_filter["periods"], True, failures)
-        _check("Có lọc ngày tường minh: total_batches = 1 (loại dòng không xác định được ngày)", with_date_filter["kpis"]["total_batches"], 1, failures)
-    finally:
-        os.unlink(db_path)
-
-
-def _scenario_sync_rft_results_end_to_end(failures: list[str]) -> None:
-    """`sync_rft_results()` (import THẬT, UPSERT vào DB) trên file mẫu thật — DB tạm, KHÔNG
-    đụng DB thật. Import 2 LẦN liên tiếp để verify UPSERT idempotent (không nhân đôi dòng)."""
-    print("\n=== Kịch bản 5: sync_rft_results() end-to-end trên file mẫu thật (UPSERT idempotent) ===")
-    if not FIXTURE_PATH.exists():
-        print(f"  [SKIP] Không tìm thấy fixture {FIXTURE_PATH}")
-        return
-    fd, db_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        _init_schema(db_path)
-        file_bytes = FIXTURE_PATH.read_bytes()
-        app = _make_temp_app(db_path)
-        with app.app_context():
-            result1 = sync_rft_results(file_bytes, imported_by="tester", filename="RFT report.xlsx")
-            result2 = sync_rft_results(file_bytes, imported_by="tester", filename="RFT report.xlsx")
-            close_db()
-
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        total_rows = conn.execute("SELECT COUNT(*) AS c FROM rft_dye_results").fetchone()["c"]
-        import_logs_count = conn.execute("SELECT COUNT(*) AS c FROM import_logs").fetchone()["c"]
-        sample = conn.execute("SELECT result_dye, stage FROM rft_dye_results WHERE dyelot='C260612220'").fetchone()
-        conn.close()
-
-        _check("Lần 1: rows_imported = 31", result1["rows_imported"], 31, failures)
-        _check("Lần 1: status = completed", result1["status"], "completed", failures)
-        _check("Lần 2 (re-import CÙNG file): rows_imported vẫn = 31", result2["rows_imported"], 31, failures)
-        _check("Sau 2 lần import: rft_dye_results KHÔNG nhân đôi (vẫn 31 dòng, UPSERT theo dyelot)", total_rows, 31, failures)
-        _check("import_logs ghi đủ 2 lần import (audit trail)", import_logs_count, 2, failures)
-        _check("Dòng mẫu C260612220 lưu đúng result_dye/stage", (sample["result_dye"], sample["stage"]), ("NG", "2nd batch"), failures)
-    finally:
-        os.unlink(db_path)
-
-
-def _scenario_fabric_type_fallback_batch_details(failures: list[str]) -> None:
-    """`fabric_type` PHẢI fallback sang `batch_details` (khoá dyelot=dyelot) khi
-    `availability_logs` không khớp — xem docstring `_rft_rows()` (2026-09-19, sửa sau khi
-    người dùng report báo cáo chia-3-loại-vải trống trơn vì file "RFT report.xlsx" không có
-    cột Fabric Type và nhiều dyelot không khớp `availability_logs`)."""
-    print("\n=== Kịch bản 6: fabric_type fallback sang batch_details khi availability_logs không khớp ===")
-    fd, db_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        _init_schema(db_path)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-
-        # FB-MATCH: khớp availability_logs (fabric_type=CVC) — batch_details CÓ dòng khác
-        # (Polyester) nhưng KHÔNG được dùng, availability_logs vẫn ưu tiên trước.
-        conn.execute(
-            "INSERT INTO availability_logs (batch, capacity_kg, fabric_type, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-            ("FB-MATCH", 600, "CVC", "2026-09-05 08:00:00", "2026-09-05 10:00:00"),
-        )
-        conn.execute("INSERT INTO batch_details (dyelot, fabric_type) VALUES ('FB-MATCH', 'Polyester')")
-        # FB-FALLBACK: KHÔNG khớp availability_logs -> phải lấy fabric_type từ batch_details.
-        conn.execute("INSERT INTO batch_details (dyelot, fabric_type) VALUES ('FB-FALLBACK', 'Cotton')")
-        # FB-NONE: KHÔNG khớp cả 2 nguồn -> fabric_type rỗng, không rơi vào dòng vải nào.
-        for dyelot in ("FB-MATCH", "FB-FALLBACK", "FB-NONE"):
-            _insert_rft_row(conn, dyelot=dyelot, stage="lab to lab", result_dye="OK", machine_type=">=500kg")
-        conn.commit()
-        conn.close()
-
-        app = _make_temp_app(db_path)
-        with app.app_context():
-            data = get_rft_pivot_data(category="Lab to Lab")
-            close_db()
-
-        rows_by_fabric = {row["fabric_type"]: row for row in data["rows"]}
-        _check("KPI tổng vẫn đếm CẢ 3 dyelot (không đổi hành vi cũ)", data["kpis"]["total_batches"], 3, failures)
-        _check("Cotton total = 1 (FB-FALLBACK, lấy fabric_type từ batch_details)", rows_by_fabric["Cotton"]["total"], 100.0, failures)
-        _check("CVC total = 1 (FB-MATCH, ưu tiên availability_logs dù batch_details khác)", rows_by_fabric["CVC"]["total"], 100.0, failures)
-        _check("Polyester total = 0 (FB-NONE không khớp nguồn nào, không bị gán nhầm)", rows_by_fabric["Polyester"]["total"], 0.0, failures)
-    finally:
-        os.unlink(db_path)
-
-
-def _scenario_duplicate_dyelot_no_double_count(failures: list[str]) -> None:
-    """1 Dyelot có 2 dòng `batch_details` (mẻ gốc + mẻ redye, xem điều tra C260659920 trong
-    memory-bank/activeContext.md), KHÔNG khớp `availability_logs` nào — đúng population dễ bị
-    lỗi nhân đôi nhất (fallback fabric_type). PHẢI vẫn đếm ĐÚNG 1 mẻ RFT (không nhân đôi thành
-    2 dù JOIN theo dyelot khớp cả 2 dòng batch_details), và chọn fabric_type của dòng end_time
-    MỚI NHẤT (fallback khi không có availability_logs để so khớp end_time chính xác)."""
-    print("\n=== Kịch bản 7: Dyelot có 2 dòng batch_details (mẻ gốc + redye) — RFT KHÔNG đếm trùng ===")
-    fd, db_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        _init_schema(db_path)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("INSERT INTO batch_details (dyelot, fabric_type, end_time) VALUES ('FB-DUP', 'Cotton', '2026-09-01 08:00:00')")
-        conn.execute("INSERT INTO batch_details (dyelot, fabric_type, end_time) VALUES ('FB-DUP', 'CVC', '2026-09-08 06:00:00')")
-        _insert_rft_row(conn, dyelot="FB-DUP", stage="lab to lab", result_dye="OK", machine_type=">=500kg")
-        conn.commit()
-        conn.close()
-
-        app = _make_temp_app(db_path)
-        with app.app_context():
-            data = get_rft_pivot_data(category="Lab to Lab")
-            close_db()
-
-        rows_by_fabric = {row["fabric_type"]: row for row in data["rows"]}
-        _check("KPI tổng vẫn đếm ĐÚNG 1 mẻ (KHÔNG nhân đôi thành 2)", data["kpis"]["total_batches"], 1, failures)
-        _check("CVC total = 1 (chọn dòng end_time MỚI NHẤT khi không có availability_logs để so khớp)", rows_by_fabric.get("CVC", {}).get("total"), 100.0, failures)
-        _check("Cotton total = 0 (dòng cũ hơn KHÔNG được chọn)", rows_by_fabric.get("Cotton", {}).get("total", 0.0), 0.0, failures)
     finally:
         os.unlink(db_path)
 
 
 def main() -> int:
     failures: list[str] = []
-    _scenario_stage_mapping(failures)
-    _scenario_parse_real_fixture(failures)
-    _scenario_kpi_formula_and_machine_restriction(failures)
-    _scenario_unknown_date_bucket(failures)
-    _scenario_sync_rft_results_end_to_end(failures)
-    _scenario_fabric_type_fallback_batch_details(failures)
-    _scenario_duplicate_dyelot_no_double_count(failures)
-    print(f"\n{'='*60}\nKẾT QUẢ: {'TẤT CẢ KHỚP' if not failures else f'{len(failures)} CASE LỆCH'}\n{'='*60}")
+    _scenario_formulas(failures)
+    _scenario_detect_and_parse(failures)
+    _scenario_auto_filter_vs_manual(failures)
+    _scenario_end_to_end(failures)
+    print(f"\n{'=' * 60}\nKẾT QUẢ: {'TẤT CẢ KHỚP' if not failures else f'{len(failures)} CASE LỆCH'}\n{'=' * 60}")
     return 1 if failures else 0
 
 

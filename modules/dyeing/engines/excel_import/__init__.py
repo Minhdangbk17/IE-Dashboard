@@ -24,7 +24,7 @@ class ExcelImportEngine(BaseEngine):
             domain=self.domain,
             description="Auto-detects and imports Availability/Performance data from Excel/CSV with transactional upsert.",
             data_sources=["File Excel (.xlsx/.csv) do người dùng tải lên"],
-            data_sinks=["availability_logs", "performance_logs", "machine_telemetry", "downtime_logs", "import_logs", "brand_program_mapping"],
+            data_sinks=["availability_logs", "performance_logs", "machine_telemetry", "downtime_logs", "import_logs", "brand_program_mapping", "dye_production_ops", "dye_nc_reports"],
             depends_on=[],
         )
 

@@ -486,6 +486,19 @@ từ bảng đã tổng hợp sẵn.
   1 khoảng -> chia tại mốc lần sau; chưa nằm trọn trong giờ có dữ liệu -> "pending". Máy dùng
   để dựng khoảng idle = máy có mẻ trong kỳ ±7 ngày (drawer/danh sách 1 ngày khớp ma trận).
 
+### 6.2.3 Right First Time tính ở read time từ Batch + 2 nguồn tra cứu tích luỹ (2026-10-08)
+
+- Engine `rft` KHÔNG có rollup: mỗi request đọc `batch_details` (Dyelot đuôi "0", production_date
+  theo EndTime) rồi tra 2 tập: batch đã qua công đoạn `DG*` (`dye_production_ops`) và NC được tính
+  (`dye_nc_reports`). Vì tra ở read time, mẻ của kỳ cũ tự đổi sang Rework khi DG/NC ngày sau được
+  nạp — không cần rebuild.
+- 2 nguồn tra cứu import FILE THÔ, lưu mọi dòng; quy tắc lọc nghiệp vụ nằm ở `rft/service.py`
+  (`_dg_batches()`, `is_counted_nc()`), không ở importer — đổi quy tắc không phải import lại.
+- Công thức các cột (STAGE, MachineGroup, NewBatch, DyeingRFT, ReworkCount) là hàm thuần trong
+  `rft/service.py`, bám đúng công thức Excel người dùng (riêng NewBatch: ký tự cuối tăng theo dãy
+  0-9 rồi A-Z, …9 -> …A, không ra …10 như Excel); test đối chiếu từng dòng với file mẫu
+  `Copy of Batch_202696181325.xlsx` (sheet `data`, cột BW..CA).
+
 ### 6.3 Downtime "Total Valid Batches" vs Cleaning MC "Normal Dyeing" — KHÁC số theo THIẾT KẾ, không phải bug (2026-09-11)
 Người dùng phát hiện cùng filter (capacity 500/600/1200/2400, 1 khoảng ngày) ra 2 số khác
 nhau: Downtime 389 mẻ, Cleaning MC "Normal Dyeing" 308 mẻ, và ĐÃ xác nhận 389 đúng (dùng

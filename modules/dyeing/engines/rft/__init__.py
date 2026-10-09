@@ -3,13 +3,11 @@ modules/dyeing/engines/rft/__init__.py
 ----------------------------------------
 Điểm vào của Engine "rft" (Right First Time). Expose biến module-level `engine`.
 
-Khung sườn (scaffold) — 6 bảng phân loại mẻ nhuộm theo loại lần chạy (Lab to Lab,
-Lab to Bulk, Bulk to Bulk, 2nd Batch, Rework, Adjust Color) dựa trên dữ liệu Batch
-(`batch_details` JOIN `availability_logs`). Quy tắc phân loại CHI TIẾT từng bảng
-CHƯA được cung cấp (người dùng sẽ hướng dẫn sau) — xem
-`service.py::classify_rft_category()`. Chưa có Daily Rollup (`recompute_daily`
-không override, dùng no-op mặc định của `BaseEngine`) vì công thức chưa ổn định —
-cùng quyết định đã áp dụng cho `oee` (xem `memory-bank/activeContext.md`).
+5 tab: Lab to Bulk / Bulk to Bulk / 2nd Batch (tỷ lệ DyeingRFT = OK theo Stage) và Rework /
+Adjustment (tỷ lệ ReworkCount, chỉ máy >=500kg). Nguồn: `batch_details` (mẻ, Dyelot đuôi "0")
++ 2 nguồn tra cứu nạp hằng ngày `dye_production_ops` (Production Report, công đoạn DG*) và
+`dye_nc_reports` (NC Report). Tính trực tiếp ở read time, không có Daily Rollup — xem
+`service.py`.
 """
 from __future__ import annotations
 
@@ -30,12 +28,11 @@ class RftEngine(BaseEngine):
             name=self.name,
             domain=self.domain,
             description=(
-                "Right First Time report: classify batches by dyeing attempt type "
-                "(Lab to Lab / Lab to Bulk / Bulk to Bulk / 2nd Batch / Rework / Adjust Color). "
-                "Scaffold — classification rules pending."
+                "Right First Time report: DyeingRFT OK rate by stage (Lab to Bulk / Bulk to Bulk / "
+                "2nd Batch) and Rework / Adjustment rate on >=500kg machines."
             ),
-            data_sources=["availability_logs", "batch_details"],
-            data_sinks=[],
+            data_sources=["batch_details", "dye_production_ops", "dye_nc_reports", "brand_program_mapping"],
+            data_sinks=["rft_targets"],
             depends_on=["excel_import"],
         )
 

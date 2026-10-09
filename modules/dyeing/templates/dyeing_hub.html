@@ -69,7 +69,7 @@
     .dash-tankloading-sub-item b { font-size: 16px; font-weight: 700; color: var(--text-primary); }
     .dash-tankloading-spark-wrap { position: relative; flex: 1; min-height: 0; margin-top: 10px; }
 
-    /* --- RFT: 1 card gộp 4 nhóm (2x2 nội bộ) --- */
+    /* --- RFT: 1 card gộp 4 ô (3 Stage + Rework, 2x2 nội bộ) --- */
     .dash-cell-rft { grid-column: 3; grid-row: 2; position: relative; }
     .dash-rft-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; margin-top: 10px; }
     .dash-rft-cell { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
@@ -159,11 +159,6 @@
     <div class="dash-panel dash-cell-rft" id="dash-rft-card">
         <div class="dash-panel-label">Right First Time</div>
         <div class="dash-rft-grid">
-            <div class="dash-rft-cell" data-rft-cell="lab_to_lab">
-                <div class="dash-rft-cell-label">Lab to Lab</div>
-                <div class="dash-rft-cell-value">--</div>
-                <div class="dash-rft-cell-spark"><canvas></canvas></div>
-            </div>
             <div class="dash-rft-cell" data-rft-cell="lab_to_bulk">
                 <div class="dash-rft-cell-label">Lab to Bulk</div>
                 <div class="dash-rft-cell-value">--</div>
@@ -176,6 +171,11 @@
             </div>
             <div class="dash-rft-cell" data-rft-cell="second_batch">
                 <div class="dash-rft-cell-label">2nd Batch</div>
+                <div class="dash-rft-cell-value">--</div>
+                <div class="dash-rft-cell-spark"><canvas></canvas></div>
+            </div>
+            <div class="dash-rft-cell" data-rft-cell="rework">
+                <div class="dash-rft-cell-label">Rework (&ge;500kg)</div>
                 <div class="dash-rft-cell-value">--</div>
                 <div class="dash-rft-cell-spark"><canvas></canvas></div>
             </div>
@@ -277,7 +277,8 @@
                     <option value="availability">Availability</option>
                     <option value="performance">Performance</option>
                     <option value="batch">Batch Data</option>
-                    <option value="rft">RFT Report</option>
+                    <option value="dye_production">Production Report (DG)</option>
+                    <option value="nc_report">NC Report</option>
                     <option value="brand_program">Brand Program Mapping</option>
                 </select>
                 <a href="#" id="btn-download-template" class="f6 d-inline-block mt-1"><svg class="btn-icon-svg btn-icon-svg-sm" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v8"></path><path d="M4.5 6.5 8 10l3.5-3.5"></path><path d="M2 11.5v1.75c0 .414.336.75.75.75h10.5a.75.75 0 0 0 .75-.75V11.5"></path></svg>Download Excel Template</a>

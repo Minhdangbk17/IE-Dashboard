@@ -56,11 +56,13 @@
 - `machine_telemetry` — dữ liệu vận hành máy theo thời gian.
 - `downtime_logs` — lịch sử dừng máy.
 - `import_logs` — lịch sử các lần import Excel/CSV.
-- `rft_dye_results` — kết quả phân loại RFT (import từ file "RFT report.xlsx",
-  khoá `dyelot`; xem `core/rft_importer.py`). Lưu ý: cùng lỗi thiết kế
-  "1 dyelot = 1 dòng" như `batch_details` bên dưới TỪNG có (dedupe-theo-dyelot ở
-  `core/rft_importer.py::sync_rft_results()`) — CHƯA sửa lần này (ngoài phạm vi
-  task C260659920, khác bảng), nhưng cùng rủi ro nếu 1 dyelot RFT có nhiều dòng thật.
+- `dye_production_ops` — Production Report Dye (file thô hệ thống xuất, nạp hằng ngày, tích
+  luỹ UPSERT khoá `batch_no, operation, op_start_time`; `core/rft_sources_importer.py`). Báo cáo
+  RFT chỉ đọc công đoạn `DG*` (lọc ở read time).
+- `dye_nc_reports` — NC Report (nạp hằng ngày, UPSERT khoá `nc_no`). RFT chỉ tính NC công đoạn
+  `DG*`, Defect "khác màu", Closed, Corrective không "MA" (lọc ở read time).
+- `rft_targets` — Target RFT khoá `(category, fabric_type)`; 5 category: Lab to Bulk / Bulk to
+  Bulk / 2nd Batch (mức tối thiểu), Rework / Adjustment (mức tối đa).
 - `batch_details` — chi tiết mẻ nhuộm (import Batch Detail). **Khoá đã đổi
   (2026-09-22)**: KHÔNG còn `dyelot TEXT PRIMARY KEY` — giờ là `id INTEGER
   PRIMARY KEY AUTOINCREMENT` + `UNIQUE(dyelot, machine, start_time)`, cho phép
