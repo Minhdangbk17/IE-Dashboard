@@ -76,6 +76,9 @@
   `knitting_core_programs` (PK program_key) — từ Knitting program.xlsx, import thay thế toàn bộ.
   Program của máy-ngày tính ở read time (`downtime/programs.py`). Mọi bảng `knitting_*` dữ liệu nguồn
   do Engine `knitting.excel_import` tạo/ghi (`excel_import/service.py::ensure_tables()`).
+  Cột thêm 2026-10-09 trên `knitting_piece_rolls`: std_ptm, knt_nw_kg, final_nw_kg, operator_code,
+  production_date (Record End kẹp theo khoảng tên file). `knitting_incentive_bands` (from_pct, to_pct,
+  unit_vnd_per_kg) — Engine `knitting.incentive`.
 - `rft_targets` — Target RFT khoá `(category, fabric_type)`; 5 category: Lab to Bulk / Bulk to
   Bulk / 2nd Batch (mức tối thiểu), Rework / Adjustment (mức tối đa).
 - `batch_details` — chi tiết mẻ nhuộm (import Batch Detail). **Khoá đã đổi

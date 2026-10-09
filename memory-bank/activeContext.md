@@ -1,6 +1,26 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-09 (tiếp 3) — **Knitting: thiết kế lại theo khuôn Dyeing.**
+**Cập nhật lần cuối:** 2026-10-09 (tiếp 4) — **Engine mới `knitting.incentive` (báo cáo Incentive Dệt).**
+Người dùng chốt: **%Achieve = Σ(KNT N.W(kg) × Std.PTM) / Σ Available** (file Piece Produced); tính cho
+**cả xưởng + từng Machine Group** (mỗi dòng %Achieve + bậc RIÊNG — dòng Xưởng KHÔNG phải tổng tiền nhóm);
+**Incentive = đơn giá bậc × Σ KNT N.W(kg)**; kỳ = **tháng cộng dồn từ ngày 1 tới "As of"** (mặc định
+ngày mới nhất có dữ liệu). Bậc "From (>) To (<=)" VND/kg ở `knitting_incentive_bands` (seed 0/15/45/60/80/
+104/130/162/192, admin sửa trên tab Incentive Bands; lưu phải liên tục). Giả định chờ xác nhận: %Achieve
+> To bậc cuối (100%) vẫn hưởng bậc cuối; cuộn KNT N.W = 0 (chưa cân) vẫn cộng Available. File Piece
+Produced bổ sung lưu `std_ptm`, `knt_nw_kg`, `final_nw_kg`, `operator_code`, `production_date`. **BUG THẬT
+phát hiện khi làm**: Record End chỉ có ngày -> 87 cuộn kết thúc sáng 01/08 (trước 07:00, file 01/07 07:00
+-> 01/08 07:00) rơi sang tháng 8; sửa: `production_date` = Record End KẸP vào khoảng sản xuất trong TÊN
+FILE (tổng tháng đúng tuyệt đối, theo ngày gần đúng). Tháng 7 thật: xưởng 74.66% (D-1F 79.19%, D-2F
+72.84%) < 82% -> 0 VND. Trang: filter Month / As of / Machine Group; tab Overview (4 KPI kèm "+x% tới
+bậc kế", biểu đồ MTD %Achieve Xưởng + nhóm + đường ngưỡng 82% nét đứt, bảng nhóm, bảng ngày bấm -> drawer
+máy + cuộn), By Machine, Incentive Bands; Excel Summary/Daily/Machines/Bands/Filters. Test
+`tests/test_knitting_incentive.py` (42 kiểm tra). **Sửa kèm lỗi cũ**: `{% set is_admin %}` trong block
+`content` KHÔNG thấy được ở block `extra_scripts` (scope Jinja) -> JS luôn coi là không phải admin ->
+trang Downtime Knitting trước nay admin KHÔNG sửa được Target / Stop Code Mapping; đã đổi sang tính trực
+tiếp từ `CURRENT_USER` trong block script. **Deploy: chạy `supabase/migrate_knitting_incentive.sql`
+(sau migrate_knitting_downtime.sql) rồi import LẠI file Piece Produced** (cuộn cũ thiếu cột -> cảnh báo).
+
+**Bản ghi trước:** 2026-10-09 (tiếp 3) — **Knitting: thiết kế lại theo khuôn Dyeing.**
 (1) **Import ra Hub**: Engine mới `knitting.excel_import` (ẩn khỏi menu như `dyeing.excel_import`) sở hữu
 tầng dữ liệu dùng chung — `importer.py`, `program_importer.py`, `service.py` đã `git mv` từ `downtime/`
 sang `excel_import/`; route `POST /knitting/excel_import/api/import` (form `data_type`: auto /

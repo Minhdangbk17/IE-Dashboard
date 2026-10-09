@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Incentive - Knitting{% endblock %}
+{% block extra_head %}<style>
+    .ki-dropdown { position: relative; min-width: 200px; }
+    .ki-menu { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin-top: 4px; padding: 8px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-xl); max-height: 320px; overflow-y: auto; }
+    .ki-menu[hidden] { display: none; }
+    .ki-option { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; white-space: nowrap; }
+    .ki-option:hover { background: var(--bg-surface-raised); }
+    .ki-kpis { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
+    .ki-kpis .widget-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+    .ki-kpis strong { font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .ki-kpis .kpi-bad { color: var(--danger); }
+    .ki-kpis .kpi-good { color: var(--success); }
+    .ki-chart-panel { height: 340px; }
+    .ki-table td, .ki-table th { white-space: nowrap; }
+    .ki-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ki-table tr.total-row th, .ki-table tr.total-row td { font-weight: 600; }
+    .ki-table td.ratio-warning { background: var(--danger-bg); color: var(--danger); }
+    .ki-table tr.is-current td { background: var(--accent-wash-bg); font-weight: 600; }
+    .ki-table input.form-control { width: 90px; text-align: right; }
+    .ki-page[hidden] { display: none; }
+    .ki-drawer-section { padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); }
+    .ki-drawer-section h4 { margin: 0 0 8px; }
+    @media (max-width: 1050px) { .ki-kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
+</style>{% endblock %}
+{% block content %}
+{% set is_admin = CURRENT_USER and CURRENT_USER.role == 'admin' %}
+<div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
+    <div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Knitting / Incentive</p><h2 class="mt-0">Incentive</h2></div>
+    <a class="btn btn-sm" href="{{ url_for('knitting.hub') }}">&larr; Back to Hub</a>
+</div>
+
+<section class="Box p-3 mb-3" aria-label="Report filters">
+    <div class="d-flex flex-wrap flex-items-end" style="gap:12px">
+        <div class="form-group mb-0"><label for="ki-month">Month</label><input id="ki-month" class="form-control" type="month"></div>
+        <div class="form-group mb-0"><label for="ki-as-of">As of (month to date)</label><input id="ki-as-of" class="form-control" type="date"></div>
+        <div class="form-group mb-0 ki-dropdown">
+            <label for="ki-group-toggle">Machine Group</label>
+            <button id="ki-group-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All groups</button>
+            <div id="ki-group-menu" class="ki-menu" hidden></div>
+        </div>
+        <a id="ki-export" class="btn" href="#">Export Excel</a>
+    </div>
+</section>
+
+<nav class="page-tabs mb-3" id="ki-tabs" aria-label="Incentive report pages">
+    <button class="page-tab is-active" type="button" data-page="overview">Overview</button>
+    <button class="page-tab" type="button" data-page="machines">By Machine</button>
+    <button class="page-tab" type="button" data-page="bands">Incentive Bands</button>
+</nav>
+
+<p id="ki-error" class="flash flash-error mb-3" hidden></p>
+<p id="ki-missing" class="flash flash-warn mb-3" hidden></p>
+<div id="ki-empty" class="Box blankslate mb-3" hidden><p class="color-fg-muted mb-0">No Piece Produced data in this month. Import the <strong>Piece Produced report</strong> on the <a href="{{ url_for('knitting.hub') }}">Knitting Hub</a>.</p></div>
+
+<section class="ki-page" data-page="overview">
+    <div class="ki-kpis mb-4">
+        <div class="widget-card"><span class="f6 color-fg-muted">MTD %ACHIEVE (WORKSHOP)</span><strong id="kpi-ach">--%</strong><span class="f6 color-fg-muted" id="kpi-ach-sub">--</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">UNIT INCENTIVE</span><strong id="kpi-unit">--</strong><span class="f6 color-fg-muted" id="kpi-unit-sub">VND/kg</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">MTD KNT N.W</span><strong id="kpi-kg">--</strong><span class="f6 color-fg-muted">kg, <span id="kpi-rolls">--</span> rolls</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">MTD INCENTIVE (WORKSHOP)</span><strong id="kpi-incentive">--</strong><span class="f6 color-fg-muted">VND = unit × KNT N.W</span></div>
+    </div>
+    <div class="Box p-3 mb-4">
+        <h3 class="mt-0 mb-1">Month-to-date %Achieve</h3>
+        <p class="f6 color-fg-muted mt-0 mb-2">Cumulative from day 1 of the month. Dashed line = first band that pays incentive.</p>
+        <div class="ki-chart-panel"><canvas id="ki-chart" aria-label="Month to date achievement chart"></canvas></div>
+    </div>
+    <div class="Box p-3 mb-4" style="overflow-x:auto;">
+        <h3 class="mt-0 mb-2">Incentive by group</h3>
+        <table class="preview-table ki-table">
+            <thead><tr><th>Scope</th><th class="num">KNT N.W (kg)</th><th class="num">Std minutes</th><th class="num">Available</th><th class="num">%Achieve</th><th class="num">Unit (VND/kg)</th><th class="num">Incentive (VND)</th><th class="num">To next band</th></tr></thead>
+            <tbody id="ki-groups"></tbody>
+        </table>
+        <p class="f6 color-fg-muted mt-2 mb-0">%Achieve = Σ(KNT N.W(kg) × Std.PTM) / Σ Available. Each row has its own %Achieve and band; the Workshop row is not the sum of the group incentives.</p>
+    </div>
+    <div class="Box p-3" style="overflow-x:auto;">
+        <h3 class="mt-0 mb-2">Daily detail</h3>
+        <table class="preview-table ki-table">
+            <thead><tr><th>Date</th><th class="num">KNT N.W (kg)</th><th class="num">Std minutes</th><th class="num">Available</th><th class="num">Day %Achieve</th><th class="num">MTD %Achieve</th><th class="num">MTD Unit</th><th class="num">MTD Incentive (VND)</th><th class="num">Rolls</th></tr></thead>
+            <tbody id="ki-daily"></tbody>
+        </table>
+        <p class="f6 color-fg-muted mt-2 mb-0">Rolls are dated by Record End (rolls ending on the file's last morning count for the previous production day). Click a day to see its machines and rolls. Red = below the first paying band.</p>
+    </div>
+</section>
+
+<section class="ki-page" data-page="machines" hidden>
+    <div class="Box p-3" style="overflow-x:auto;">
+        <p class="f6 color-fg-muted mt-0">Month-to-date %Achieve per machine (lowest first) — shows which machines pull the workshop below the next band.</p>
+        <table class="preview-table ki-table">
+            <thead><tr><th>M/c Code</th><th>Machine Group</th><th class="num">KNT N.W (kg)</th><th class="num">Std minutes</th><th class="num">Available</th><th class="num">%Achieve</th><th class="num">Rolls</th></tr></thead>
+            <tbody id="ki-machines"></tbody>
+        </table>
+    </div>
+</section>
+
+<section class="ki-page" data-page="bands" hidden>
+    <div class="Box p-3" style="overflow-x:auto; max-width:640px;">
+        <p class="f6 color-fg-muted mt-0">Achievement per target: a %Achieve above <em>From</em> and up to <em>To</em> gets the unit incentive. Below the first band = first band; above the last band = last band. Current workshop band is highlighted.</p>
+        <table class="preview-table ki-table">
+            <thead><tr><th class="num">From (&gt;)</th><th class="num">To (&le;)</th><th class="num">Unit Incentive (VND/Kg)</th></tr></thead>
+            <tbody id="ki-bands"></tbody>
+        </table>
+        {% if is_admin %}
+        <div class="d-flex mt-2" style="gap:8px"><button id="ki-band-add" class="btn btn-sm" type="button">Add band</button><button id="ki-band-save" class="btn btn-primary btn-sm" type="button">Save bands</button></div>
+        {% endif %}
+        <p id="ki-band-msg" class="f6 mt-2 mb-0"></p>
+    </div>
+</section>
+
+<div id="ki-drawer" class="drawer-overlay" aria-hidden="true">
+    <div class="drawer-panel" role="dialog" aria-labelledby="ki-drawer-title">
+        <div class="drawer-header d-flex flex-justify-between flex-items-center">
+            <div><h3 class="Box-title mb-0" id="ki-drawer-title">Day detail</h3><p class="f6 color-fg-muted mb-0" id="ki-drawer-meta"></p></div>
+            <button class="btn btn-sm" id="ki-drawer-close" type="button">Close</button>
+        </div>
+        <div class="drawer-body" id="ki-drawer-body"><div class="drawer-empty">Loading...</div></div>
+    </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+    window.KI_API = "{{ url_for('knitting.incentive.view') }}api/";
+    window.KI_IS_ADMIN = {{ "true" if CURRENT_USER and CURRENT_USER.role == 'admin' else "false" }};
+</script>
+<script src="{{ url_for('knitting.incentive.static', filename='knitting_incentive.js') }}"></script>
+{% endblock %}

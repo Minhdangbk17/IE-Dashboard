@@ -9,6 +9,11 @@ Parse 2 nguồn dùng cho bộ lọc Program của báo cáo Downtime Dệt (ng�
    dd/mm/yyyy, không có giờ). Header 2 dòng (dòng nhóm + dòng tên cột, tìm dòng có "Roll No"); có 2
    cột trùng tên "Time" (Aut. Stops / Decl.Stop) — không dùng. File thường phủ 1 tháng, import
    UPSERT theo Roll No (cuộn vắt qua 2 tháng xuất hiện ở cả 2 file).
+   `production_date` của cuộn = Record End KẸP vào khoảng sản xuất trong TÊN FILE ("01-07-2026
+   07;00;00 - 01-08-2026 07;00;00" -> 01/07..31/07): cuộn có Record End = ngày kết thúc file chắc
+   chắn xong TRƯỚC 07:00 nên thuộc ngày sản xuất hôm trước (bug thật 2026-10-09: 87 cuộn sáng 01/08
+   bị tính sang tháng 8). Tổng theo THÁNG đúng tuyệt đối; theo NGÀY vẫn gần đúng (file không có giờ).
+   Tên file không có khoảng -> production_date = Record End.
 2. "Knitting program.xlsx" — sheet đầu: cột A "Greige code SAP", cột B "Program"; bảng Core program
    không tiêu đề ở cột F:G (F = "Core program", G = tên program). Cột H/I người dùng xác nhận KHÔNG
    liên quan. Import = THAY THẾ toàn bộ danh mục.
@@ -19,12 +24,12 @@ import csv
 import io
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from openpyxl import load_workbook
 
-from .importer import _decode, _header_key, _to_number
+from .importer import _decode, _header_key, _to_number, parse_period_from_filename
 
 PIECE_FILE_TYPE = "KNITTING_PIECE_PRODUCED"
 PROGRAM_FILE_TYPE = "KNITTING_PROGRAM"
@@ -48,14 +53,19 @@ PIECE_HEADER_MAP: dict[str, str] = {
     "greige id": "greige_id",
     "record start": "record_start",
     "record end": "record_end",
+    # Báo cáo Incentive (2026-10-09): %Achieve = Σ(KNT N.W × Std.PTM) / Σ Available.
+    "std.ptm": "std_ptm",
+    "knt n.w(kg)": "knt_nw_kg",
+    "final n.w(kg)": "final_nw_kg",
+    "operator code": "operator_code",
 }
 PIECE_FIELDS: tuple[str, ...] = (
     "roll_no", "machine_group", "machine", "machine_code", "job_id", "sap_lot", "sale_order", "material_type",
     "knitting_structure", "greige_id", "available", "running", "stopped", "total_qty", "good_qty",
-    "record_start", "record_end",
+    "record_start", "record_end", "std_ptm", "knt_nw_kg", "final_nw_kg", "operator_code", "production_date",
 )
 _PIECE_REQUIRED = {"machine_code", "roll_no", "greige_id", "record_start", "record_end", "available"}
-_PIECE_NUMERIC = {"available", "running", "stopped", "total_qty", "good_qty"}
+_PIECE_NUMERIC = {"available", "running", "stopped", "total_qty", "good_qty", "std_ptm", "knt_nw_kg", "final_nw_kg"}
 
 
 def normalize_program(name: Any) -> str:
@@ -72,7 +82,20 @@ def _parse_day(value: str) -> str:
     return datetime.strptime(value.strip(), "%d/%m/%Y").date().isoformat()
 
 
-def parse_piece_produced_file(file_bytes: bytes) -> dict[str, Any]:
+def _production_window(filename: str | None) -> tuple[str, str] | None:
+    """(ngày sản xuất đầu, ngày sản xuất cuối) từ tên file, None nếu tên file không có khoảng."""
+    try:
+        start, end = parse_period_from_filename(filename or "")
+    except ValueError:
+        return None
+    last = (end - timedelta(seconds=1))
+    first_day = start.date() if start.hour >= 7 else start.date() - timedelta(days=1)
+    last_day = last.date() if last.hour >= 7 else last.date() - timedelta(days=1)
+    return first_day.isoformat(), last_day.isoformat()
+
+
+def parse_piece_produced_file(file_bytes: bytes, filename: str | None = None) -> dict[str, Any]:
+    window = _production_window(filename)
     rows = list(csv.reader(io.StringIO(_decode(file_bytes))))
     header_index = next((i for i, row in enumerate(rows) if any(_header_key(c) == "roll no" for c in row)), None)
     if header_index is None:
@@ -106,6 +129,10 @@ def parse_piece_produced_file(file_bytes: bytes) -> dict[str, Any]:
                 raise ValueError("Record Start/End phải dạng dd/mm/yyyy") from exc
             if record["record_end"] < record["record_start"]:
                 raise ValueError("Record End trước Record Start")
+            production_date = record["record_end"]
+            if window:
+                production_date = min(max(production_date, window[0]), window[1])
+            record["production_date"] = production_date
             rolls[record["roll_no"]] = record  # Roll No trùng trong file: giữ dòng cuối
         except ValueError as exc:
             errors.append({"row": offset, "error": str(exc)})
@@ -115,8 +142,9 @@ def parse_piece_produced_file(file_bytes: bytes) -> dict[str, Any]:
         "rolls": values,
         "errors": errors,
         "total_rows": len(values) + len(errors),
-        "date_from": min((r["record_end"] for r in values), default=None),
-        "date_to": max((r["record_end"] for r in values), default=None),
+        "date_from": min((r["production_date"] for r in values), default=None),
+        "date_to": max((r["production_date"] for r in values), default=None),
+        "production_window": window,
         "machines": len({r["machine_code"] for r in values}),
         "greige_ids": sorted({r["greige_id"] for r in values}),
     }

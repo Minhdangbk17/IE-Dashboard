@@ -606,6 +606,10 @@ cố định.
     Stop Code Mapping (`/api/stop-codes` POST) = `role_required("admin")` giống Target của
     `dyeing.downtime`. Import đã chuyển sang `knitting.excel_import` (`view` = status, `edit` = import;
     nút Import Data trên Hub ẩn khi thiếu quyền edit).
+  - `knitting.incentive` (2026-10-09): `view` cho mọi route đọc; lưu bậc đơn giá = `role_required("admin")`.
+  - **Bẫy Jinja**: biến `{% set %}` trong block `content` KHÔNG dùng được trong block khác (VD
+    `extra_scripts`) — cờ quyền bơm vào JS phải tính lại ngay trong block script (bug thật ở Knitting
+    Downtime: admin không sửa được Target/Mapping vì JS nhận `false`).
   - Có `view` + `edit` (không có route xoá): `dyeing.batch_matrix` (POST `/api/targets`
     = edit), `dyeing.manual_entry` (lưu mẻ nhập tay = edit), `dyeing.reports` (import
     Batch Detail = edit), **`dyeing.downtime`** (POST `/api/case-notes/<id>` — lưu

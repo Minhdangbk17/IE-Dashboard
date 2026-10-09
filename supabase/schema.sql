@@ -617,10 +617,31 @@ create table if not exists knitting_piece_rolls (
     good_qty            double precision,
     record_start        text not null,
     record_end          text not null,
+    std_ptm             double precision,
+    knt_nw_kg           double precision,
+    final_nw_kg         double precision,
+    operator_code       text,
+    production_date     text,
     import_log_id       bigint,
     updated_at          text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
 create index if not exists idx_knitting_piece_rolls_span on knitting_piece_rolls (record_end, record_start);
+create index if not exists idx_knitting_piece_rolls_production_date on knitting_piece_rolls (production_date);
+
+-- knitting.incentive — bậc đơn giá (xem migrate_knitting_incentive.sql)
+create table if not exists knitting_incentive_bands (
+    id               bigint generated always as identity primary key,
+    from_pct         double precision not null,
+    to_pct           double precision not null,
+    unit_vnd_per_kg  double precision not null,
+    updated_by       text,
+    updated_at       text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+insert into knitting_incentive_bands (from_pct, to_pct, unit_vnd_per_kg, updated_by)
+select v.from_pct, v.to_pct, v.unit, 'seed'
+from (values (0.0, 82.0, 0), (82.0, 84.5, 15), (84.5, 87.0, 45), (87.0, 89.5, 60), (89.5, 92.0, 80),
+             (92.0, 94.0, 104), (94.0, 96.0, 130), (96.0, 98.0, 162), (98.0, 100.0, 192)) as v (from_pct, to_pct, unit)
+where not exists (select 1 from knitting_incentive_bands);
 
 create table if not exists knitting_greige_programs (
     greige_code    text primary key,
@@ -693,3 +714,4 @@ alter table knitting_downtime_targets enable row level security;
 alter table knitting_piece_rolls enable row level security;
 alter table knitting_greige_programs enable row level security;
 alter table knitting_core_programs enable row level security;
+alter table knitting_incentive_bands enable row level security;

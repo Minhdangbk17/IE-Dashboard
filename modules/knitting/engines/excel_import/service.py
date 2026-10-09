@@ -113,10 +113,16 @@ def ensure_tables(conn: Any) -> None:
                 sale_order TEXT, material_type TEXT, knitting_structure TEXT, greige_id TEXT NOT NULL,
                 available REAL, running REAL, stopped REAL, total_qty REAL, good_qty REAL,
                 record_start TEXT NOT NULL, record_end TEXT NOT NULL,
+                std_ptm REAL, knt_nw_kg REAL, final_nw_kg REAL, operator_code TEXT, production_date TEXT,
                 import_log_id INTEGER,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        # Cột thêm 2026-10-09 cho báo cáo Incentive — DB đã tạo bảng trước đó thì ALTER bổ sung.
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(knitting_piece_rolls)")}
+        for column, definition in (("std_ptm", "REAL"), ("knt_nw_kg", "REAL"), ("final_nw_kg", "REAL"), ("operator_code", "TEXT"), ("production_date", "TEXT")):
+            if column not in existing:
+                conn.execute(f"ALTER TABLE knitting_piece_rolls ADD COLUMN {column} {definition}")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS knitting_greige_programs (
                 greige_code TEXT PRIMARY KEY,
@@ -134,6 +140,7 @@ def ensure_tables(conn: Any) -> None:
         """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knitting_stop_details_code ON knitting_stop_details (stop_code, production_date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knitting_piece_rolls_span ON knitting_piece_rolls (record_end, record_start)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_knitting_piece_rolls_production_date ON knitting_piece_rolls (production_date)")
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +252,7 @@ def _fail_log(conn: Any, log_id: int, exc: Exception) -> None:
 def import_piece_produced_file(conn: Any, file_bytes: bytes, filename: str, imported_by: str | None) -> dict[str, Any]:
     """UPSERT cuộn theo Roll No. Chỉ ghi dòng LỖI vào `import_log_rows` (file ~10k dòng/tháng,
     knitting không có Raw Data Viewer — không lưu snapshot mọi dòng)."""
-    result = parse_piece_produced_file(file_bytes)
+    result = parse_piece_produced_file(file_bytes, filename)
     log_id = _start_log(conn, filename, PIECE_FILE_TYPE, imported_by, result["total_rows"], len(result["errors"]))
     try:
         columns = PIECE_FIELDS + ("import_log_id",)
@@ -269,6 +276,7 @@ def import_piece_produced_file(conn: Any, file_bytes: bytes, filename: str, impo
     return {
         "status": status, "file_type": PIECE_FILE_TYPE, "rolls": len(result["rolls"]),
         "date_from": result["date_from"], "date_to": result["date_to"], "machines": result["machines"],
+        "production_window": result["production_window"],
         "greige_not_in_program_list": missing, "errors": result["errors"],
         "warnings": [f"Greige ID chưa có trong danh mục Program: {', '.join(missing)}"] if known and missing else [],
         "import_log_id": log_id,

@@ -148,7 +148,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
     window.KD_API = "{{ url_for('knitting.downtime.view') }}api/";
-    window.KD_IS_ADMIN = {{ "true" if is_admin else "false" }};
+    window.KD_IS_ADMIN = {{ "true" if CURRENT_USER and CURRENT_USER.role == 'admin' else "false" }};
     window.KD_CATEGORIES = {{ categories | list | tojson }};
 </script>
 <script src="{{ url_for('knitting.downtime.static', filename='knitting_downtime.js') }}"></script>

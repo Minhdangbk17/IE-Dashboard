@@ -24,6 +24,8 @@
 - [x] (2026-10-09) Knitting thiết kế lại theo Dyeing: Engine `knitting.excel_import` + modal Import trên
       Hub, Dashboard Hub để trống, trang Downtime 3 tab (Overview / Standard Achievement Breakdown / Stop
       Code Mapping), biểu đồ trên - bảng dưới, drill-down chi tiết hằng ngày, Excel thêm Achievement.
+- [x] (2026-10-09) Knitting Incentive: %Achieve tháng cộng dồn, bậc đơn giá VND/kg sửa được, xưởng +
+      Machine Group, chi tiết ngày / máy / cuộn, Excel. Sửa production_date cuộn theo khoảng tên file.
 - [x] UI Primer CSS + Dark Mode + Sidebar động theo role.
 - [x] Modal Import Excel: Drag&Drop, Progress Bar, Preview Table, báo lỗi
       theo dòng.
@@ -1181,6 +1183,8 @@
 - [ ] Knitting Program: xác nhận Core có tính biến thể (Graphic Tee-20S/1 Heather/Recycle, Airism -Trim,
       Washed Boxy trim 1/2) không; 20 Greige có 2 Program khác hẳn (đang lấy dòng cuối). Máy-ngày không
       có cuộn / Greige ngoài danh mục: Program để trống (người dùng chốt 2026-10-09).
+- [ ] Knitting Incentive: xác nhận %Achieve > 100% hưởng bậc cuối; cuộn chưa cân (KNT N.W = 0) có tính
+      Available không; có cần chia tiền theo công nhân (Operator Code đã lưu) không.
 - [ ] Knitting Hub: thiết kế Dashboard (người dùng sẽ bàn). Biểu đồ Achievement chưa có đường Target
       (chưa có mức % achievement mục tiêu — quy tắc UI 7.2 yêu cầu đề xuất, không tự bịa).
 - [ ] Sửa `tests/verify_rollup_parity.py` (`KeyError: 'days'` — build_matrix đổi sang `periods`).
