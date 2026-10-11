@@ -457,6 +457,53 @@ def get_rft_pivot_data(
 
 
 # ---------------------------------------------------------------------------
+# Drill-down — danh sách mẻ sau 1 ô của bảng pivot
+# ---------------------------------------------------------------------------
+
+DRILL_FIELDS: tuple[str, ...] = (
+    "dyelot", "machine", "machine_group", "machine_group_label", "fabric_type", "brand_program",
+    "customer", "formula_code", "stage", "total_correction_cnt", "dyestuff_correction",
+    "new_batch", "dyeing_rft", "rework_count", "rework_source", "start_time", "end_time",
+)
+
+
+def get_rft_batches(
+    category: str, fabric_type: str = "Total", period_key: str | None = None,
+    capacities: str | list[str] | None = None, machine_groups: str | list[str] | None = None,
+    brand_programs: str | list[str] | None = None,
+    from_date: str | None = None, to_date: str | None = None, group_by: str = "date",
+) -> dict[str, Any]:
+    """Các mẻ tạo nên 1 ô của bảng tab `category`: `fabric_type` = 1 trong `MAIN_FABRIC_TYPES`
+    hoặc "Total" (mọi loại vải); `period_key` rỗng = cột Total (cả khoảng ngày). Dùng ĐÚNG
+    `_filtered_rows` + `_tab_rows` như `get_rft_pivot_data` nên `summary` luôn khớp con số trên
+    bảng. `hit` = mẻ thuộc tử số (OK ở tab Stage; đúng loại Rework/Adjustment ở tab Rework)."""
+    if category not in RFT_CATEGORIES:
+        raise ValueError(f"Nhóm RFT không hợp lệ: {category}")
+    if fabric_type != "Total" and fabric_type not in MAIN_FABRIC_TYPES:
+        raise ValueError(f"Fabric type không hợp lệ: {fabric_type}")
+    group_by = group_by if group_by in {"date", "week", "month"} else "date"
+    rows, _meta = _filtered_rows(capacities, machine_groups, brand_programs, from_date, to_date)
+    tab_rows, is_hit = _tab_rows(category, rows)
+    selected = [
+        row for row in tab_rows
+        if (fabric_type == "Total" or row["main_fabric_type"] == fabric_type)
+        and (not period_key or _period(row["production_date"], group_by)[0] == period_key)
+    ]
+    selected.sort(key=lambda row: (row["production_date"], str(row["end_time"] or ""), row["dyelot"]))
+    batches = [
+        {"production_date": row["production_date"].isoformat(), **{field: row.get(field) for field in DRILL_FIELDS}, "hit": bool(is_hit(row))}
+        for row in selected
+    ]
+    hits = sum(1 for batch in batches if batch["hit"])
+    return {
+        "category": category,
+        "target_direction": target_direction(category),
+        "summary": {"total_batches": len(batches), "hit_batches": hits, "rate_pct": _rate(hits, len(batches))},
+        "batches": batches,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Export Excel — 2 pivot đúng bố cục file đối chiếu của người dùng + dữ liệu từng mẻ
 # ---------------------------------------------------------------------------
 

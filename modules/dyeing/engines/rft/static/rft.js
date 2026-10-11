@@ -207,12 +207,19 @@
         });
     });
 
-    function valueCells(row, direction) {
-        return row.values.map((value, index) => {
-            const cls = ratioClass(value, row.target, direction);
-            const title = `${row.batches[index]} batch(es)`;
-            return `<td class="${cls}" title="${title}">${formatPct(value)}</td>`;
-        }).join("");
+    // 1 ô % — có mẻ thì bấm được (mở drawer danh sách mẻ); `periodKey` rỗng = cột Total.
+    function rateCell(cls, value, batchCount, fabricType, periodKey, periodLabel, bold) {
+        const text = bold ? `<strong>${formatPct(value)}</strong>` : formatPct(value);
+        if (!batchCount) return `<td class="${cls}" title="0 batch(es)">${text}</td>`;
+        return `<td class="${cls} cell-clickable" tabindex="0" title="${batchCount} batch(es) — click to see batches"` +
+            ` data-fabric-type="${escAttr(fabricType)}" data-period-key="${escAttr(periodKey)}" data-period-label="${escAttr(periodLabel)}">${text}</td>`;
+    }
+
+    function valueCells(row, direction, data, highlight) {
+        return row.values.map((value, index) => rateCell(
+            highlight ? ratioClass(value, row.target, direction) : "", value, row.batches[index],
+            row.fabric_type, data.period_keys[index], data.periods[index], false,
+        )).join("");
     }
 
     function renderTable(section, category, data) {
@@ -221,15 +228,114 @@
         const targetLabel = direction === "max" ? "Target (max)" : "Target (min)";
         head.innerHTML = `<th>Fabric Type</th><th class="num">${targetLabel}</th>` + data.periods.map((period) => `<th class="num">${escHtml(period)}</th>`).join("") + `<th class="num">Total</th>`;
         const fabricRows = data.rows.map((row) =>
-            `<tr><th>${escHtml(row.fabric_type)}</th>${renderTargetCell(category, row)}${valueCells(row, direction)}` +
-            `<td class="${ratioClass(row.total, row.target, direction)}" title="${row.total_batches} batch(es)"><strong>${formatPct(row.total)}</strong></td></tr>`
+            `<tr><th>${escHtml(row.fabric_type)}</th>${renderTargetCell(category, row)}${valueCells(row, direction, data, true)}` +
+            rateCell(ratioClass(row.total, row.target, direction), row.total, row.total_batches, row.fabric_type, "", "All periods", true) + `</tr>`
         ).join("");
         const total = data.total_row;
-        const totalRow = `<tr class="total-row"><th>Total</th><td>-</td>` +
-            total.values.map((value, index) => `<td title="${total.batches[index]} batch(es)">${formatPct(value)}</td>`).join("") +
-            `<td title="${total.total_batches} batch(es)"><strong>${formatPct(total.total)}</strong></td></tr>`;
+        const totalRow = `<tr class="total-row"><th>Total</th><td>-</td>` + valueCells(total, direction, data, false) +
+            rateCell("", total.total, total.total_batches, "Total", "", "All periods", true) + `</tr>`;
         section.querySelector(".rft-table tbody").innerHTML = fabricRows + totalRow;
     }
+
+    // -----------------------------------------------------------------
+    // Drill-down: bấm 1 ô % -> drawer liệt kê các mẻ của ô đó. Dùng ĐÚNG bộ tham số của lần
+    // tải bảng gần nhất (lastParamsByCategory) để danh sách luôn khớp con số đang hiển thị.
+    // -----------------------------------------------------------------
+    const lastParamsByCategory = {};
+    const drawer = document.getElementById("rft-batches-drawer");
+    const drawerBody = document.getElementById("rft-batches-body");
+    const onlyMissBox = document.getElementById("rft-only-miss");
+    let drillCell = null;
+    let drillData = null;
+
+    function closeDrawer() {
+        drawer.classList.remove("is-open");
+        drawer.setAttribute("aria-hidden", "true");
+        drillCell = null;
+    }
+    document.getElementById("rft-batches-close").addEventListener("click", closeDrawer);
+    drawer.addEventListener("click", (event) => { if (event.target === drawer) closeDrawer(); });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape" && drawer.classList.contains("is-open")) closeDrawer(); });
+    onlyMissBox.addEventListener("change", () => { if (drillData) renderDrill(drillData); });
+
+    // Tab Stage: "miss" = NG (cái cần xem); tab Rework/Adjustment: "miss" = mẻ thuộc tử số.
+    function isStageTab(data) { return data.target_direction === "min"; }
+    function focusLabel(category, data) { return isStageTab(data) ? "NG" : category.charAt(0).toUpperCase() + category.slice(1); }
+
+    function openDrill(category, cell) {
+        const tabLabel = document.querySelector(`.page-tab[data-page="${category}"]`);
+        drillCell = { category, fabricType: cell.dataset.fabricType, periodKey: cell.dataset.periodKey, periodLabel: cell.dataset.periodLabel };
+        drillData = null;
+        document.getElementById("rft-batches-title").textContent =
+            `${tabLabel ? tabLabel.textContent.trim() : category} · ${drillCell.fabricType} · ${drillCell.periodLabel}`;
+        document.getElementById("rft-batches-meta").textContent = "";
+        drawerBody.innerHTML = `<div class="drawer-empty">Loading...</div>`;
+        drawer.classList.add("is-open");
+        drawer.setAttribute("aria-hidden", "false");
+        const params = new URLSearchParams(lastParamsByCategory[category] || filterParams());
+        params.set("category", category);
+        params.set("fabric_type", drillCell.fabricType);
+        params.set("period_key", drillCell.periodKey);
+        const requested = drillCell;
+        fetch(`${window.RFT_BATCHES_URL}?${params}`).then((response) => response.json()).then((data) => {
+            if (requested !== drillCell) return;
+            if (data.error) throw new Error(data.error);
+            drillData = data;
+            renderDrill(data);
+        }).catch(() => {
+            if (requested === drillCell) drawerBody.innerHTML = `<div class="drawer-empty">Failed to load batches.</div>`;
+        });
+    }
+
+    function renderDrill(data) {
+        const stage = isStageTab(data);
+        const focus = focusLabel(drillCell.category, data);
+        const s = data.summary;
+        const missCount = stage ? s.total_batches - s.hit_batches : s.hit_batches;
+        document.getElementById("rft-only-miss-label").textContent = `Only ${focus}`;
+        document.getElementById("rft-batches-meta").textContent = stage
+            ? `${s.total_batches} batches · ${s.hit_batches} OK · ${missCount} NG · RFT = ${formatPct(s.rate_pct)}`
+            : `${s.total_batches} batches (≥500kg) · ${s.hit_batches} ${focus} · rate = ${formatPct(s.rate_pct)}`;
+        const isMiss = (b) => (stage ? !b.hit : b.hit);
+        const shown = onlyMissBox.checked ? data.batches.filter(isMiss) : data.batches;
+        if (!shown.length) {
+            drawerBody.innerHTML = `<div class="drawer-empty">${data.batches.length ? `No ${focus} batches in this cell.` : "No batches match the current filters."}</div>`;
+            return;
+        }
+        const dash = (value) => (value === null || value === undefined || value === "" ? "-" : escHtml(value));
+        const badge = (value) => {
+            if (!value) return "-";
+            const cls = value === "OK" ? "rft-status-ok" : (value === "Adjustment" ? "rft-status-warn" : "Label--danger");
+            return `<span class="Label ${cls}">${escHtml(value)}</span>`;
+        };
+        // Cột kết quả + lý do (Rework Source, Correction) đứng ngay sau Dyelot — không phải cuộn ngang mới thấy.
+        const headers = ["Production Date", "Dyelot", "DyeingRFT", "ReworkCount", "Rework Source", "NewBatch", "TotalCorrectionCnt",
+            "DyestuffCorrection", "Machine", "MachineGroup", "Fabric Type", "Brand Program", "Customer", "FormulaCode", "STAGE", "Start", "End"];
+        drawerBody.innerHTML = `<table class="preview-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>` +
+            shown.map((b) => `<tr>` +
+                `<td>${dash(b.production_date)}</td><td><strong>${dash(b.dyelot)}</strong></td>` +
+                `<td>${badge(b.dyeing_rft)}</td><td>${badge(b.rework_count)}</td><td>${dash(b.rework_source)}</td><td>${dash(b.new_batch)}</td>` +
+                `<td>${dash(b.total_correction_cnt)}</td><td>${dash(b.dyestuff_correction)}</td>` +
+                `<td>${dash(b.machine)}</td><td>${dash(b.machine_group)}</td><td>${dash(b.fabric_type)}</td><td>${dash(b.brand_program)}</td>` +
+                `<td>${dash(b.customer)}</td><td>${dash(b.formula_code)}</td><td>${dash(b.stage)}</td>` +
+                `<td>${dash(b.start_time)}</td><td>${dash(b.end_time)}</td>` +
+                `</tr>`).join("") +
+            `</tbody></table>`;
+    }
+
+    document.querySelectorAll(".rft-table").forEach((table) => {
+        const category = table.dataset.category;
+        table.addEventListener("click", (event) => {
+            const cell = event.target.closest("td.cell-clickable");
+            if (cell) openDrill(category, cell);
+        });
+        table.addEventListener("keydown", (event) => {
+            const cell = event.target.closest("td.cell-clickable");
+            if (!cell || (event.key !== "Enter" && event.key !== " ")) return;
+            event.preventDefault();
+            openDrill(category, cell);
+        });
+    });
 
     // 3 biểu đồ riêng/tab (Cotton / CVC / Polyester) — mỗi biểu đồ 1 đường số liệu + 1 đường
     // Target nét đứt cùng màu (UI_GUIDELINES Mục 7.2).
@@ -294,6 +400,7 @@
         if (!response.ok || requestId !== latestRequest[category]) return;
         const data = await response.json();
         if (requestId !== latestRequest[category]) return;
+        lastParamsByCategory[category] = params.toString();
         capacityFilter.setOptions(data.available_capacities || []);
         machineGroupFilter.setOptions(data.available_machine_groups || []);
         brandProgramFilter.setOptions(data.available_brand_programs || []);

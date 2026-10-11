@@ -49,6 +49,24 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             return jsonify({"error": str(exc)}), 400
         return jsonify(data)
 
+    @bp.route("/api/batches")
+    @permission_required("dyeing", "rft", "view")
+    def api_batches() -> Any:
+        category = service.RFT_CATEGORY_SLUGS.get(request.args.get("category") or "")
+        if category is None:
+            return jsonify({"error": "Invalid or missing category."}), 400
+        try:
+            data = service.get_rft_batches(
+                category=category,
+                fabric_type=request.args.get("fabric_type") or "Total",
+                period_key=request.args.get("period_key") or None,
+                group_by=request.args.get("group_by", "date"),
+                **_filter_args(),
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(data)
+
     @bp.route("/api/export")
     @permission_required("dyeing", "rft", "view")
     def api_export() -> Any:

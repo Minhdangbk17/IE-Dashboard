@@ -20,6 +20,8 @@
     .rft-table .ratio-good { background: var(--success-bg); color: var(--success); }
     .rft-table .ratio-warning { background: var(--danger-bg); color: var(--danger); }
     .rft-table .total-row th, .rft-table .total-row td { font-weight: 700; border-top: 2px solid var(--border-default); }
+    .rft-status-ok { background: var(--success-bg); color: var(--success); }
+    .rft-status-warn { background: var(--warning-bg); color: var(--warning); }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3 flex-wrap">
@@ -89,15 +91,29 @@
             <thead><tr class="rft-head"><th>Fabric Type</th><th class="num">Target ({% if is_stage %}min{% else %}max{% endif %})</th></tr></thead>
             <tbody></tbody>
         </table>
-        <p class="f6 color-fg-muted mt-2 mb-0">Cells show the {% if is_stage %}RFT rate (% DyeingRFT = OK){% else %}{{ tab.label }} rate (% of batches){% endif %} per period. Green = meets target, red = misses target. The Total row covers every fabric type in this tab, including types other than Cotton/CVC/Polyester.</p>
+        <p class="f6 color-fg-muted mt-2 mb-0">Cells show the {% if is_stage %}RFT rate (% DyeingRFT = OK){% else %}{{ tab.label }} rate (% of batches){% endif %} per period. Green = meets target, red = misses target. The Total row covers every fabric type in this tab, including types other than Cotton/CVC/Polyester. Click a value to see the batches behind it.</p>
     </div>
 </section>
 {% endfor %}
 
+<div id="rft-batches-drawer" class="drawer-overlay" aria-hidden="true">
+    <div class="drawer-panel" role="dialog" aria-labelledby="rft-batches-title">
+        <div class="drawer-header d-flex flex-justify-between flex-items-center" style="gap:12px">
+            <div><h3 class="Box-title mb-0" id="rft-batches-title">Batches</h3><p class="f6 color-fg-muted mb-0" id="rft-batches-meta"></p></div>
+            <div class="d-flex flex-items-center" style="gap:12px">
+                <label class="f6 mb-0" style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="rft-only-miss"> <span id="rft-only-miss-label">Only NG</span></label>
+                <button class="btn btn-sm" id="rft-batches-close" type="button">Close</button>
+            </div>
+        </div>
+        <div class="drawer-body" id="rft-batches-body"><div class="drawer-empty">Loading...</div></div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
     window.RFT_API_URL = "{{ url_for('dyeing.rft.api_summary') }}";
-    window.RFT_EXPORT_URL = "{{ url_for('dyeing.rft.api_export') }}";
+    window.RFT_BATCHES_URL = "{{ url_for('dyeing.rft.api_batches') }}";
+    window.RFT_EXPORT_URL ="{{ url_for('dyeing.rft.api_export') }}";
     window.RFT_CAN_EDIT = {{ "true" if current_user_can('dyeing', 'rft', 'edit') else "false" }};
     window.RFT_TARGET_URL_TEMPLATE = "{{ url_for('dyeing.rft.api_set_target', slug='__SLUG__', fabric_type='__FABRIC__') }}";
 </script>

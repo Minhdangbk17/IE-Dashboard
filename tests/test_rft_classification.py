@@ -37,8 +37,8 @@ from core.rft_sources_importer import (  # noqa: E402
     parse_nc_report_file, sync_dye_production_ops, sync_nc_reports,
 )
 from modules.dyeing.engines.rft.service import (  # noqa: E402
-    classify_stage, export_rft_excel, get_rft_pivot_data, is_counted_nc, load_rft_rows,
-    machine_group_label, next_batch, rework_count,
+    RFT_CATEGORIES, classify_stage, export_rft_excel, get_rft_batches, get_rft_pivot_data, is_counted_nc,
+    load_rft_rows, machine_group_label, next_batch, rework_count,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sample_imports"
@@ -258,6 +258,27 @@ def _scenario_end_to_end(failures: list[str]) -> None:
             _check("DG không làm đổi DyeingRFT (chỉ NC/TotalCorrectionCnt)", later[target["dyelot"]]["dyeing_rft"], target["dyeing_rft"], failures)
             conn.execute("DELETE FROM dye_production_ops WHERE op_start_time = '2026-10-07 10:00:00'")
             conn.commit()
+
+            # Kịch bản 9: Drill-down — danh sách mẻ của TỪNG ô (mọi tab, mọi loại vải + Total, mọi
+            # kỳ + cột Total) khớp đúng số mẻ / số mẻ đạt / % trên bảng pivot.
+            drill_mismatch = []
+            for category in RFT_CATEGORIES:
+                pivot = get_rft_pivot_data(category, from_date=PRODUCTION_DAY, to_date=PRODUCTION_DAY, group_by="date")
+                for line in [*pivot["rows"], pivot["total_row"]]:
+                    cells = [(key, line["batches"][i], line["values"][i]) for i, key in enumerate(pivot["period_keys"])]
+                    cells.append(("", line["total_batches"], line["total"]))
+                    for period_key, batch_count, rate in cells:
+                        drill = get_rft_batches(category, fabric_type=line["fabric_type"], period_key=period_key,
+                                                from_date=PRODUCTION_DAY, to_date=PRODUCTION_DAY, group_by="date")
+                        actual = (drill["summary"]["total_batches"], drill["summary"]["rate_pct"])
+                        if actual != (batch_count, rate):
+                            drill_mismatch.append((category, line["fabric_type"], period_key, actual, (batch_count, rate)))
+            _check("Kịch bản 9: drill-down khớp pivot ở mọi ô", drill_mismatch, [], failures)
+            rework_drill = get_rft_batches("Rework", from_date=PRODUCTION_DAY, to_date=PRODUCTION_DAY)
+            _check("Kịch bản 9: drill tab Rework — mẻ hit đều là Rework",
+                   {b["rework_count"] for b in rework_drill["batches"] if b["hit"]}, {"Rework"}, failures)
+            _check("Kịch bản 9: production_date trả về dạng ISO",
+                   {b["production_date"] for b in rework_drill["batches"]}, {PRODUCTION_DAY}, failures)
 
             # Kịch bản 8: Export Excel.
             content, filename = export_rft_excel(from_date=PRODUCTION_DAY, to_date=PRODUCTION_DAY)
