@@ -145,10 +145,12 @@ def _norm_key(value: Any) -> str:
 
 
 def _dg_batches() -> set[str]:
-    """Batch# (chuẩn hoá) đã đi qua 1 công đoạn nhuộm `DG*` trong Production Report."""
+    """Batch# (chuẩn hoá) đã đi qua 1 công đoạn nhuộm `DG*` trong Production Report.
+    Pattern LIKE truyền qua tham số — `%` literal trong SQL làm psycopg2 lỗi ở Postgres."""
     rows = execute_query(
         "SELECT DISTINCT lower(trim(batch_no)) AS batch_key FROM dye_production_ops "
-        "WHERE upper(trim(operation)) LIKE 'DG%'"
+        "WHERE upper(trim(operation)) LIKE ?",
+        ["DG%"],
     )
     return {row["batch_key"] for row in rows if row["batch_key"]}
 
@@ -201,9 +203,10 @@ def load_rft_rows(from_date: str | None = None, to_date: str | None = None) -> l
                b.start_time, b.end_time, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
         FROM batch_details b
         LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(b.greige_code))
-        WHERE trim(b.dyelot) LIKE '%0'
+        WHERE trim(b.dyelot) LIKE ?
     """
-    params: list[Any] = []
+    # Pattern qua tham số (không viết '%0' literal) — psycopg2 hiểu `%` là format specifier.
+    params: list[Any] = ["%0"]
     start, end = production_bounds(from_date, to_date)
     if start:
         sql += f" AND {record_time_sql} >= ?"

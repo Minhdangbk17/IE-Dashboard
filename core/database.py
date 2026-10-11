@@ -17,9 +17,10 @@ Quản lý kết nối DB — DUAL-MODE:
       literal trong chuỗi; các `IN (?, ?, ?)` động đều build qua `",".join("?" for _ in x)`
       nên số lượng khớp tham số 1:1, không lệch khi đổi ký hiệu.
       **CẢNH BÁO cho code viết SAU NÀY**: `%s` khiến dấu `%` LITERAL (vd `LIKE '%x%'`) bị
-      psycopg2 hiểu nhầm thành format specifier trừ khi viết `%%`. Dự án hiện KHÔNG có
-      `LIKE` nào (đã grep xác nhận) nên chưa phát tác — nhưng nếu thêm `LIKE '%...%'` sau
-      này, PHẢI viết `LIKE '%%...%%'` để chạy đúng ở nhánh Postgres.
+      psycopg2 hiểu nhầm thành format specifier (ValueError). Cách an toàn cho cả 2 dialect:
+      truyền pattern qua tham số (`LIKE ?` + `"%0"`) — KHÔNG viết `%` literal trong SQL.
+      (Lỗi thật 2026-10-11: `LIKE '%0'` trong `rft/service.py` làm trang RFT trống trên
+      Supabase trong khi test SQLite vẫn PASS.)
     - `PRAGMA table_info(x)` -> `SELECT column_name AS name FROM information_schema.columns
       WHERE table_name = 'x' ORDER BY ordinal_position` — cùng hình dạng cột `name` mà mọi
       call site hiện tại đang đọc (`{row["name"] for row in conn.execute(...)}`).
