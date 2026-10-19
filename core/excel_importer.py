@@ -22,6 +22,7 @@ import csv
 import io
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -772,12 +773,39 @@ def _raw_datetime(value: Any) -> str | None:
     raise ValueError(f"không đúng định dạng ngày giờ: {text}")
 
 
+_THOUSANDS_COMMA = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
+
+
+def _coerce_number_text(text: str) -> float:
+    """Ép chuỗi số (ô Excel định dạng Text, CSV) sang float.
+
+    Từ 2026-10 hệ thống xuất file Availability ghi Load/Unload (hour) dạng TEXT ("0.11",
+    ô trống thay cho 0) — phải ép về số như cũ. Chấp nhận thêm các biến thể text hay gặp:
+    dấu ' ở đầu (Excel force-text), NBSP/khoảng trắng, "1,234.5" (dấu phẩy hàng nghìn) và
+    "0,11" (dấu phẩy thập phân). Trước đây `replace(",", "")` biến "0,11" thành 11 — sai.
+    """
+    cleaned = text.replace("\u00a0", "").replace(" ", "").lstrip("'")
+    if "," in cleaned:
+        if "." in cleaned or _THOUSANDS_COMMA.match(cleaned):
+            cleaned = cleaned.replace(",", "")
+        else:
+            cleaned = cleaned.replace(",", ".")
+    number = float(cleaned)
+    if math.isnan(number) or math.isinf(number):
+        raise ValueError(cleaned)
+    return number
+
+
 def _raw_float(value: Any) -> float:
     value = _raw_cell(value)
     if value is None:
         return 0.0
+    if isinstance(value, bool):
+        raise ValueError(f"không phải số hợp lệ: {value}")
+    if isinstance(value, (int, float)):
+        return float(value)
     try:
-        return float(str(value).strip().replace(",", ""))
+        return _coerce_number_text(str(value).strip())
     except (TypeError, ValueError) as exc:
         raise ValueError(f"không phải số hợp lệ: {value}") from exc
 
