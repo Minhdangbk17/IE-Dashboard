@@ -21,6 +21,10 @@
       nhiều file. Đối chiếu khớp bảng người dùng 01–08/10.
 - [x] (2026-10-09) Knitting Downtime: bộ lọc Program / Core program — import Piece Produced report
       (Greige ID theo máy-ngày) + Knitting program.xlsx (Greige -> Program, Core).
+- [x] (2026-10-20) Knitting Downtime: biểu đồ cột chồng nhóm (chọn tuỳ ý) + đường Total + Target
+      Total; bộ lọc "Categories" gộp nhóm vào Others (server-side, áp pivot/achievement/drill/export).
+      Token `--chart-1..12`, `--chart-other`. Test merge thêm vào `test_knitting_downtime_import.py`.
+      CHƯA kiểm tra trên trình duyệt (máy không có Node để check cú pháp JS).
 - [x] (2026-10-09) Knitting thiết kế lại theo Dyeing: Engine `knitting.excel_import` + modal Import trên
       Hub, Dashboard Hub để trống, trang Downtime 3 tab (Overview / Standard Achievement Breakdown / Stop
       Code Mapping), biểu đồ trên - bảng dưới, drill-down chi tiết hằng ngày, Excel thêm Achievement.

@@ -196,6 +196,24 @@ def main() -> int:
         report.set_target(conn, "Safe Door", 5.0, 1.2, "tester")
         _check("sửa Target", report.load_targets(conn)["Safe Door"]["target"], 1.2, failures)
         report.set_target(conn, "Safe Door", 5.0, 1.5, "tester")
+        # Gộp nhóm vào Others (2026-10-20): Total không đổi, Others = Others + nhóm bị gộp,
+        # Target Others = tổng Target, drill-down Others khớp ô, nhóm bị gộp không còn dòng riêng.
+        f_m = report.normalize_filters("2026-09-14", "2026-09-14", "date", merged="Safe Door|Yarn Broken|Abc")
+        _check("merged: bỏ nhóm lạ, giữ thứ tự", f_m["merged"], ["Yarn Broken", "Safe Door"], failures)
+        rep_m = report.build_report(conn, f_m)
+        by_cat = {r["category"]: r for r in rep["rows"]}
+        by_cat_m = {r["category"]: r for r in rep_m["rows"]}
+        _check("merged: không còn dòng riêng", "Safe Door" in by_cat_m or "Yarn Broken" in by_cat_m, False, failures)
+        _check("merged: Total không đổi", round(rep_m["total_row"]["total_stop_time"], 6), round(rep["total_row"]["total_stop_time"], 6), failures)
+        _check("merged: Others = tổng 3 nhóm", round(by_cat_m["Others"]["total_stop_time"], 6),
+               round(sum(by_cat[c]["total_stop_time"] for c in ("Others", "Safe Door", "Yarn Broken")), 6), failures)
+        _check("merged: Target Others = tổng", round(by_cat_m["Others"]["target"], 6),
+               round(sum(by_cat[c]["target"] for c in ("Others", "Safe Door", "Yarn Broken")), 6), failures)
+        _check("merged: Others ghi nhóm gộp", by_cat_m["Others"]["merged"], ["Yarn Broken", "Safe Door"], failures)
+        _check("merged: drill-down Others khớp ô", round(report.get_cell_details(conn, f_m, "ALL", "Others")["stop_time"], 6),
+               round(by_cat_m["Others"]["total_stop_time"], 6), failures)
+        _expect_error("merged: drill-down nhóm đã gộp", lambda: report.get_cell_details(conn, f_m, "ALL", "Safe Door"), failures)
+        _check("merged: achievement không còn dòng gộp", [r["category"] for r in rep_m["achievement"]["rows"]].count("Safe Door"), 0, failures)
         _expect_error("From > To", lambda: report.normalize_filters("2026-09-15", "2026-09-14", "date"), failures)
 
         wb = load_workbook(io.BytesIO(report.export_excel(conn, f)))

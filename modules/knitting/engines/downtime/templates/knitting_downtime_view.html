@@ -57,6 +57,11 @@
             <button id="kd-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All programs</button>
             <div id="kd-program-menu" class="kd-menu" hidden></div>
         </div>
+        <div class="form-group mb-0 kd-dropdown" style="min-width:210px">
+            <label for="kd-group-toggle">Categories</label>
+            <button id="kd-group-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false" title="Ticked = own row; unticked = merged into Others">All separate</button>
+            <div id="kd-group-menu" class="kd-menu" hidden></div>
+        </div>
         <div class="form-group mb-0"><label for="kd-core-only">Core program</label><label class="kd-option" style="padding:8px 0"><input id="kd-core-only" type="checkbox"> Core only</label></div>
         <div class="form-group mb-0"><label>Unit</label><div class="BtnGroup" id="kd-unit" role="group" aria-label="Display unit">
             <button type="button" class="btn btn-sm BtnGroup-item is-active" data-unit="pct" aria-pressed="true">Percentage (%)</button>
@@ -87,11 +92,11 @@
         <div class="d-flex flex-justify-between flex-items-center flex-wrap mb-2" style="gap:8px">
             <h3 class="mt-0 mb-0">Downtime by category</h3>
             <div class="kd-dropdown" style="min-width:230px">
-                <button id="kd-series-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">Total</button>
+                <button id="kd-series-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All categories</button>
                 <div id="kd-series-menu" class="kd-menu kd-menu-right" hidden></div>
             </div>
         </div>
-        <p class="f6 color-fg-muted mt-0 mb-2">Total plus up to 3 categories. Dashed lines are targets.</p>
+        <p class="f6 color-fg-muted mt-0 mb-2">Stacked bars = categories you pick (stacks only add up to Total when all are shown). Line = Total downtime of all categories; dashed line = Total target. Merge small categories into Others with the <strong>Categories</strong> filter.</p>
         <div class="kd-chart-panel"><canvas id="kd-chart" aria-label="Downtime rate chart"></canvas></div>
     </div>
     <div class="Box p-3" style="overflow-x:auto;">
@@ -150,6 +155,7 @@
     window.KD_API = "{{ url_for('knitting.downtime.view') }}api/";
     window.KD_IS_ADMIN = {{ "true" if CURRENT_USER and CURRENT_USER.role == 'admin' else "false" }};
     window.KD_CATEGORIES = {{ categories | list | tojson }};
+    window.KD_MERGEABLE = {{ mergeable | list | tojson }};
 </script>
 <script src="{{ url_for('knitting.downtime.static', filename='knitting_downtime.js') }}"></script>
 {% endblock %}

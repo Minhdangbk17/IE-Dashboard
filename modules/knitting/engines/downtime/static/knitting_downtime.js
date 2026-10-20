@@ -5,7 +5,10 @@
     const API = window.KD_API;
     const IS_ADMIN = window.KD_IS_ADMIN;
     const CATEGORIES = window.KD_CATEGORIES;
+    const MERGEABLE = window.KD_MERGEABLE;
+    const OTHERS = "Others";
     const MAX_EXTRA_SERIES = 3;
+    const MERGED_STORAGE_KEY = "kd_merged_categories";
 
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -60,15 +63,17 @@
         };
     }
 
-    // Chọn tối đa MAX_EXTRA_SERIES nhóm vẽ thêm cạnh Total (quy tắc line chart: <= 4 đường).
+    // Line chart Achievement: chọn tối đa MAX_EXTRA_SERIES nhóm vẽ thêm cạnh Total (quy tắc <= 4 đường).
+    // Danh sách nhóm lấy từ report (đã gộp Others) -> setOptions() mỗi lần tải.
     function makeSeriesSelector(toggleId, menuId, onChange) {
         const toggle = $(toggleId);
         const menu = $(menuId);
+        let options = [];
         let picked = [];
         function render() {
             toggle.textContent = picked.length ? `Total + ${picked.length} categories` : "Total";
             menu.innerHTML = `<label class="kd-option"><input type="checkbox" checked disabled> Total</label><div class="border-top my-1"></div>`
-                + CATEGORIES.map((c) => {
+                + options.map((c) => {
                     const checked = picked.includes(c);
                     const disabled = !checked && picked.length >= MAX_EXTRA_SERIES;
                     return `<label class="kd-option"><input type="checkbox" value="${esc(c)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}> ${esc(c)}</label>`;
@@ -80,13 +85,81 @@
         }
         closeOnOutside(toggle, menu);
         render();
-        return { picked: () => picked };
+        return {
+            setOptions(values) { options = values; picked = picked.filter((c) => values.includes(c)); render(); },
+            picked: () => picked,
+        };
     }
+
+    // Biểu đồ cột chồng Downtime: chọn TUỲ Ý số nhóm (mặc định tất cả). Lưu nhóm BỊ ẨN (không lưu nhóm
+    // được chọn) để nhóm mới xuất hiện sau khi đổi gộp Others mặc định vẫn hiện.
+    function makeStackSelector(toggleId, menuId, onChange) {
+        const toggle = $(toggleId);
+        const menu = $(menuId);
+        let options = [];
+        const hidden = new Set();
+        const picked = () => options.filter((c) => !hidden.has(c));
+        function render() {
+            const n = picked().length;
+            toggle.textContent = n === options.length ? "All categories" : n === 0 ? "Total only" : `${n} of ${options.length} categories`;
+            menu.innerHTML = `<label class="kd-option"><input type="checkbox" class="kd-all" ${n === options.length ? "checked" : ""}> All categories</label><div class="border-top my-1"></div>`
+                + options.map((c) => `<label class="kd-option"><input type="checkbox" class="kd-opt" value="${esc(c)}" ${hidden.has(c) ? "" : "checked"}> ${esc(c)}</label>`).join("");
+            menu.querySelector(".kd-all").addEventListener("change", (e) => {
+                if (e.target.checked) hidden.clear(); else options.forEach((c) => hidden.add(c));
+                render(); onChange();
+            });
+            menu.querySelectorAll(".kd-opt").forEach((box) => box.addEventListener("change", () => {
+                if (box.checked) hidden.delete(box.value); else hidden.add(box.value);
+                render(); onChange();
+            }));
+        }
+        closeOnOutside(toggle, menu);
+        render();
+        return { setOptions(values) { options = values; render(); }, picked };
+    }
+
+    // Bộ lọc "Categories" (giống Group trong pivot): tick = tách dòng riêng, bỏ tick = gộp vào Others.
+    // Gửi lên server (`merged`) để pivot / achievement / drill-down / export cùng 1 cách gộp.
+    function makeGroupSelector(toggleId, menuId, onChange) {
+        const toggle = $(toggleId);
+        const menu = $(menuId);
+        let merged = new Set();
+        try {
+            const saved = JSON.parse(localStorage.getItem(MERGED_STORAGE_KEY) || "[]");
+            merged = new Set(saved.filter((c) => MERGEABLE.includes(c)));
+        } catch (e) { /* localStorage không dùng được -> mặc định tách hết */ }
+        function save() { try { localStorage.setItem(MERGED_STORAGE_KEY, JSON.stringify([...merged])); } catch (e) { /* bỏ qua */ } }
+        function render() {
+            toggle.textContent = merged.size === 0 ? "All separate" : `${MERGEABLE.length - merged.size} separate + Others`;
+            menu.innerHTML = `<p class="f6 color-fg-muted my-1 px-2">Ticked = own row. Unticked = merged into Others.</p>`
+                + `<div class="d-flex px-2 mb-1" style="gap:6px"><button type="button" class="btn btn-sm" data-act="split">Split all</button><button type="button" class="btn btn-sm" data-act="merge">Merge all</button></div>`
+                + `<div class="border-top my-1"></div>`
+                + MERGEABLE.map((c) => `<label class="kd-option"><input type="checkbox" value="${esc(c)}" ${merged.has(c) ? "" : "checked"}> ${esc(c)}</label>`).join("")
+                + `<label class="kd-option" title="Others always has its own row"><input type="checkbox" checked disabled> ${OTHERS}</label>`;
+            menu.querySelectorAll("button[data-act]").forEach((btn) => btn.addEventListener("click", () => {
+                merged = btn.dataset.act === "merge" ? new Set(MERGEABLE) : new Set();
+                save(); render(); onChange();
+            }));
+            menu.querySelectorAll("input[value]").forEach((box) => box.addEventListener("change", () => {
+                if (box.checked) merged.delete(box.value); else merged.add(box.value);
+                save(); render(); onChange();
+            }));
+        }
+        closeOnOutside(toggle, menu);
+        render();
+        // Giữ thứ tự CATEGORIES để URL ổn định.
+        return { merged: () => MERGEABLE.filter((c) => merged.has(c)) };
+    }
+
+    // Nhãn dòng: Others đang gộp -> "Others (+3)" kèm title liệt kê nhóm bị gộp.
+    const rowLabel = (row) => (row.merged && row.merged.length ? `${row.category} (+${row.merged.length})` : row.category);
+    const rowTitle = (row) => (row.merged && row.merged.length ? `Others + ${row.merged.join(", ")}` : "");
 
     const machineFilter = makeMultiSelect("kd-machine-toggle", "kd-machine-menu", "All machines", scheduleLoad, true);
     const structureFilter = makeMultiSelect("kd-structure-toggle", "kd-structure-menu", "All structures", scheduleLoad, false);
     const programFilter = makeMultiSelect("kd-program-toggle", "kd-program-menu", "All programs", scheduleLoad, true);
-    const downtimeSeries = makeSeriesSelector("kd-series-toggle", "kd-series-menu", () => renderDowntimeChart());
+    const groupFilter = makeGroupSelector("kd-group-toggle", "kd-group-menu", scheduleLoad);
+    const downtimeSeries = makeStackSelector("kd-series-toggle", "kd-series-menu", () => renderDowntimeChart());
     const achievementSeries = makeSeriesSelector("kd-ach-toggle", "kd-ach-menu", () => renderAchievementChart());
     $("kd-core-only").addEventListener("change", scheduleLoad);
 
@@ -97,6 +170,8 @@
         // Tên Program có thể chứa dấu phẩy -> phân tách bằng "|".
         if (programFilter.selected().length) p.set("programs", programFilter.selected().join("|"));
         if ($("kd-core-only").checked) p.set("core_only", "1");
+        // Tên nhóm có "/" và "+" -> phân tách bằng "|".
+        if (groupFilter.merged().length) p.set("merged", groupFilter.merged().join("|"));
         return p;
     }
 
@@ -125,6 +200,8 @@
             ? `Stop codes without a category (counted in Total as "Unmapped"): ${data.unmapped_codes.map((c) => `<strong>${esc(c.stop_code)}</strong> ${esc(c.stop_description)}`).join(", ")}. Set them in Stop Code Mapping.`
             : "";
         if (empty) return;
+        downtimeSeries.setOptions(data.rows.map((r) => r.category));
+        achievementSeries.setOptions(data.achievement.rows.map((r) => r.category));
         renderKpis();
         renderPivot();
         renderAchievementTable();
@@ -153,7 +230,8 @@
         const over = (row, v) => unit === "pct" && isOver(v, row.target);
         const rowHtml = (row, isTotal) => {
             const refCell = (field) => {
-                const editable = IS_ADMIN && !isTotal && row.category !== "Unmapped";
+                // Others đang gộp hiển thị TỔNG Target nhiều nhóm -> không sửa trực tiếp được.
+                const editable = IS_ADMIN && !isTotal && row.category !== "Unmapped" && !(row.merged && row.merged.length);
                 return `<td class="num ref${editable ? " cell-clickable kd-target" : ""}" ${editable ? `tabindex="0" data-field="${field}" data-category="${esc(row.category)}"` : ""}>${fmtPct(row[field])}</td>`;
             };
             const cells = report.period_keys.map((key, i) => {
@@ -161,7 +239,7 @@
                 return `<td class="num cell-clickable${over(row, v) ? " ratio-warning" : ""}" tabindex="0" data-period="${key}" data-category="${esc(row.category)}">${fmtCell(v)}</td>`;
             }).join("");
             const total = unit === "pct" ? row.total_pct : row.total_stop_time;
-            return `<tr class="${isTotal ? "total-row" : ""}"><th>${esc(row.category)}</th>${refCell("before")}${refCell("target")}${cells}`
+            return `<tr class="${isTotal ? "total-row" : ""}"><th title="${esc(rowTitle(row))}">${esc(rowLabel(row))}</th>${refCell("before")}${refCell("target")}${cells}`
                 + `<td class="num cell-clickable${over(row, total) ? " ratio-warning" : ""}" tabindex="0" data-period="ALL" data-category="${esc(row.category)}"><strong>${fmtCell(total)}</strong></td></tr>`;
         };
         const planRow = `<tr class="plan-row"><th>Plan PRD (Available)</th><td></td><td></td>${report.available.map((v) => `<td class="num">${fmtNum(v)}</td>`).join("")}<td class="num">${fmtNum(report.total_available)}</td></tr>`;
@@ -212,7 +290,7 @@
                 const title = row.evaluated[i] ? `${row.passed[i]} / ${row.evaluated[i]} machine-days` : "No machine-day evaluated";
                 return `<td class="num cell-clickable" tabindex="0" title="${title}" data-period="${key}" data-category="${esc(row.category)}">${row.values[i] === null ? "N/A" : fmtPct(row.values[i])}</td>`;
             }).join("");
-            return `<tr class="${isTotal ? "total-row" : ""}"><th>${esc(row.category)}</th><td class="num ref">${fmtPct(row.target)}</td>${cells}`
+            return `<tr class="${isTotal ? "total-row" : ""}"><th title="${esc(rowTitle(row))}">${esc(rowLabel(row))}</th><td class="num ref">${fmtPct(row.target)}</td>${cells}`
                 + `<td class="num cell-clickable" tabindex="0" title="${row.total_passed} / ${row.total_evaluated} machine-days" data-period="ALL" data-category="${esc(row.category)}"><strong>${row.rate_pct === null ? "N/A" : fmtPct(row.rate_pct)}</strong></td></tr>`;
         };
         $("kd-ach-table").querySelector("tbody").innerHTML = report.achievement.rows.map((r) => rowHtml(r, false)).join("") + rowHtml(report.achievement.total_row, true);
@@ -278,21 +356,80 @@
         });
     }
 
-    function renderDowntimeChart() {
-        if (!report || !report.period_keys.length) return;
-        const fewPoints = report.periods.length <= 12;
-        const rows = [report.total_row, ...downtimeSeries.picked().map((c) => report.rows.find((r) => r.category === c)).filter(Boolean)];
-        const colors = palette();
-        const datasets = [];
-        rows.forEach((row, i) => {
-            const color = colors[i % colors.length];
-            datasets.push({ label: row.category, data: row.pct, borderColor: color, backgroundColor: color, tension: 0.2, pointRadius: 3, spanGaps: true, showLabels: fewPoints && i === 0 });
-            if (row.target !== null && row.target !== undefined) {
-                datasets.push({ label: `${row.category} target`, data: report.periods.map(() => row.target), borderColor: color, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, isTargetLine: true });
-            }
-        });
-        drawLineChart("kd-chart", datasets, { title: { display: true, text: "Downtime (%)", color: token("--text-secondary", "#666") } });
+    // Màu theo THỰC THỂ: vị trí cố định của nhóm trong CATEGORIES (không theo thứ tự đang hiện) ->
+    // ẩn/gộp nhóm khác không làm đổi màu nhóm còn lại. Others / Unmapped = xám trung tính.
+    function categoryColor(category) {
+        if (category === OTHERS) return token("--chart-other", "#8b8f9c");
+        if (category === "Unmapped") return token("--text-tertiary", "#6b7080");
+        return token(`--chart-${CATEGORIES.indexOf(category) + 1}`, "#2a78d6");
     }
+
+    // Cột chồng = các nhóm đang chọn (% Downtime), đường = Total (mọi nhóm, không phụ thuộc lựa chọn),
+    // nét đứt = Target Total. KHÔNG vẽ Target từng nhóm: tới 13 nhóm chọn tự do -> rối (bài học
+    // commit e198720 bên Dyeing Downtime).
+    function renderDowntimeChart() {
+        if (!report || !report.period_keys.length || typeof Chart === "undefined") return;
+        const fewPoints = report.periods.length <= 12;
+        const axis = token("--text-secondary", "#666");
+        const grid = token("--border-subtle", "#ddd");
+        const surface = token("--bg-surface", "#fff");
+        const totalColor = token("--text-primary", "#0b0c0e");
+        const picked = new Set(downtimeSeries.picked());
+        const datasets = report.rows.filter((row) => picked.has(row.category)).map((row) => ({
+            type: "bar", label: rowLabel(row), data: row.pct, backgroundColor: categoryColor(row.category),
+            borderColor: surface, borderWidth: { top: 1 }, borderSkipped: false, stack: "downtime", order: 2,
+            barPercentage: 0.75, categoryPercentage: 0.8,
+        }));
+        const total = report.total_row;
+        datasets.push({
+            type: "line", label: "Total downtime", data: total.pct, borderColor: totalColor, backgroundColor: totalColor,
+            borderWidth: 2, tension: 0.2, pointRadius: 3, pointHoverRadius: 5, spanGaps: true, order: 0, showLabels: fewPoints,
+        });
+        if (total.target !== null && total.target !== undefined) {
+            datasets.push({
+                type: "line", label: `Total target (${fmtPct(total.target)})`, data: report.periods.map(() => total.target),
+                borderColor: token("--danger", "#f85149"), borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0,
+                order: 1, isTargetLine: true,
+            });
+        }
+        if (charts["kd-chart"]) charts["kd-chart"].destroy();
+        charts["kd-chart"] = new Chart($("kd-chart"), {
+            type: "bar",
+            data: { labels: report.periods, datasets },
+            plugins: [valueLabels],
+            options: {
+                responsive: true, maintainAspectRatio: false, layout: { padding: { top: 20, left: 8, right: 16 } },
+                interaction: { mode: "index", intersect: false },
+                scales: {
+                    x: { stacked: true, ticks: { color: axis }, grid: { display: false } },
+                    y: {
+                        stacked: true, beginAtZero: true, grace: "10%", ticks: { color: axis, callback: (v) => `${v}%` }, grid: { color: grid },
+                        title: { display: true, text: "Downtime (%)", color: axis },
+                    },
+                },
+                plugins: {
+                    legend: { position: "bottom", labels: { color: axis, boxWidth: 12, usePointStyle: true } },
+                    tooltip: {
+                        // Bỏ nhóm = 0 cho gọn; Total + Target luôn hiện.
+                        filter: (item) => item.dataset.type === "line" || (item.parsed.y !== null && item.parsed.y > 0),
+                        callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y === null ? "-" : ctx.parsed.y.toFixed(2) + "%"}` },
+                    },
+                },
+            },
+        });
+    }
+
+    // Bấm 1 cột/điểm trên biểu đồ -> drawer chi tiết của đúng ô đó (cùng drawer với bảng).
+    $("kd-chart").addEventListener("click", (e) => {
+        const chart = charts["kd-chart"];
+        if (!chart) return;
+        const hit = chart.getElementsAtEventForMode(e, "nearest", { intersect: true }, false)[0];
+        if (!hit) return;
+        const ds = chart.data.datasets[hit.datasetIndex];
+        if (ds.isTargetLine) return;
+        const row = ds.type === "bar" ? report.rows.find((r) => rowLabel(r) === ds.label) : report.total_row;
+        if (row) openDrawer(report.period_keys[hit.index], row.category, "downtime");
+    });
 
     function renderAchievementChart() {
         if (!report || !report.period_keys.length) return;
@@ -301,7 +438,7 @@
         const rows = [ach.total_row, ...achievementSeries.picked().map((c) => ach.rows.find((r) => r.category === c)).filter(Boolean)];
         const colors = palette();
         const datasets = rows.map((row, i) => ({
-            label: row.category, data: row.values, borderColor: colors[i % colors.length], backgroundColor: colors[i % colors.length],
+            label: rowLabel(row), data: row.values, borderColor: colors[i % colors.length], backgroundColor: colors[i % colors.length],
             tension: 0.2, pointRadius: 3, spanGaps: true, showLabels: fewPoints && i === 0,
         }));
         drawLineChart("kd-ach-chart", datasets, { max: 100, grace: 0, title: { display: true, text: "Achievement (%)", color: token("--text-secondary", "#666") } });
@@ -322,7 +459,8 @@
         detailMode = mode;
         detailDay = null;
         const label = period === "ALL" ? "Total" : report.periods[report.period_keys.indexOf(period)];
-        $("kd-drawer-title").textContent = `${category} — ${label}${mode === "achievement" ? " (Standard Achievement)" : ""}`;
+        const row = report.rows.find((r) => r.category === category);
+        $("kd-drawer-title").textContent = `${row ? rowLabel(row) : category} — ${label}${mode === "achievement" ? " (Standard Achievement)" : ""}`;
         $("kd-drawer-meta").textContent = "";
         $("kd-drawer-body").innerHTML = `<div class="drawer-empty">Loading...</div>`;
         drawer.classList.add("is-open");
@@ -341,7 +479,8 @@
 
     function renderDrawer() {
         const d = detail;
-        const showCategory = d.category === "Total";
+        // Total hoặc Others đang gộp -> cần cột Category gốc để biết dòng dừng thuộc nhóm nào.
+        const showCategory = d.category === "Total" || (d.merged && d.merged.length > 0);
         const dailyRows = d.daily.map((day) => `<tr class="cell-clickable${detailDay === day.production_date ? " is-selected" : ""}" tabindex="0" data-day="${day.production_date}">`
             + `<td>${esc(day.production_date)}</td><td class="num">${fmtNum(day.available)}</td><td class="num">${fmtNum(day.stop_time)}</td>`
             + `<td class="num${isOver(day.pct, d.target) ? " ratio-warning" : ""}">${fmtPct(day.pct)}</td><td class="num">${day.machines}</td>`

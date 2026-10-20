@@ -1,6 +1,20 @@
 # Active Context — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-09 (tiếp 4) — **Engine mới `knitting.incentive` (báo cáo Incentive Dệt).**
+**Cập nhật lần cuối:** 2026-10-20 — **Knitting Downtime: biểu đồ cột chồng + gộp nhóm vào Others.**
+(1) Biểu đồ Overview: cột chồng % các nhóm (dropdown chọn TUỲ Ý, mặc định tất cả — lưu nhóm bị ẩn),
+đường Total = tổng MỌI nhóm (không phụ thuộc lựa chọn), CHỈ 1 đường Target Total nét đứt (không vẽ
+Target từng nhóm — bài học `e198720`). Bấm cột/điểm mở drawer. Biểu đồ luôn theo %, nút Unit chỉ đổi
+bảng. (2) Bộ lọc "Categories" trên filter bar (giống Group của pivot): bỏ tick = gộp vào Others.
+Gộp làm ở SERVER (`normalize_filters(merged=...)`, tham số `merged` phân tách "|") trong
+`_load_machine_days` -> pivot, Achievement, drill-down, Excel cùng 1 cách gộp. Before/Target Others
+gộp = TỔNG (cùng quy ước Target Total); Achievement Others gộp so Stop gộp / Target gộp; Unmapped luôn
+tách; Total không đổi; dòng gộp hiện "Others (+n)", admin KHÔNG sửa Target dòng gộp. Lựa chọn nhớ ở
+`localStorage` (mặc định tách hết). Màu nhóm = token `--chart-<vị trí trong CATEGORIES>` (màu theo
+thực thể). Không đổi DB. Chưa test trên trình duyệt.
+
+**Bản ghi trước:** 2026-10-09 (tiếp 4) — **Engine mới `knitting.incentive`** (xem dưới).
+
+**Bản ghi:** 2026-10-09 (tiếp 4) — **Engine mới `knitting.incentive` (báo cáo Incentive Dệt).**
 Người dùng chốt: **%Achieve = Σ(KNT N.W(kg) × Std.PTM) / Σ Available** (file Piece Produced); tính cho
 **cả xưởng + từng Machine Group** (mỗi dòng %Achieve + bậc RIÊNG — dòng Xưởng KHÔNG phải tổng tiền nhóm);
 **Incentive = đơn giá bậc × Σ KNT N.W(kg)**; kỳ = **tháng cộng dồn từ ngày 1 tới "As of"** (mặc định

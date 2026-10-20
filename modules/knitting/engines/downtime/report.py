@@ -24,6 +24,12 @@ report + danh mục Greige -> Program); lọc giữ NGUYÊN máy-ngày (cả t�
 Standard Achievement (người dùng chốt 2026-10-09): % máy-ngày có % Downtime của nhóm (Stop Time nhóm
 / Available của CHÍNH máy-ngày đó) <= Target nhóm; dòng Total so tổng Stop với Target Total (16.3%).
 Máy-ngày Available = 0 không được đánh giá. KPI "Standard Achievement" = dòng Total.
+
+Gộp nhóm vào "Others" (người dùng yêu cầu 2026-10-20, giống "Group" trong pivot table): bộ lọc
+`merged` = các nhóm KHÔNG tách riêng -> cộng Stop Time vào dòng "Others" ở MỌI nơi (pivot,
+achievement, drill-down, export). Before/Target của dòng Others gộp = tổng Before/Target của Others +
+các nhóm bị gộp (cùng quy ước Target Total = tổng cột); Achievement của Others gộp so Stop gộp với
+Target gộp. "Unmapped" luôn tách riêng (là cảnh báo cần xử lý). Total KHÔNG đổi khi gộp.
 """
 from __future__ import annotations
 
@@ -54,8 +60,11 @@ CATEGORIES: tuple[str, ...] = (
     "Drop stitch",
     "Others",
 )
+OTHERS = "Others"
 UNMAPPED = "Unmapped"
 TOTAL = "Total"
+# Nhóm có thể gộp vào Others (mọi nhóm trừ chính Others).
+MERGEABLE: tuple[str, ...] = tuple(c for c in CATEGORIES if c != OTHERS)
 
 # (Before %, 2026 Target %) — bảng người dùng gửi 2026-10-09.
 DEFAULT_TARGETS: dict[str, tuple[float, float]] = {
@@ -228,6 +237,7 @@ def normalize_filters(
     from_date: str | None, to_date: str | None, group_by: str | None,
     machines: str | Iterable[str] | None = None, structures: str | Iterable[str] | None = None,
     programs: str | Iterable[str] | None = None, core_only: bool | str | None = False,
+    merged: str | Iterable[str] | None = None,
 ) -> dict[str, Any]:
     if not from_date or not to_date:
         raise ValueError("Cần From Date và To Date.")
@@ -241,7 +251,38 @@ def normalize_filters(
         # Tên Program có thể chứa dấu phẩy -> nhận list, hoặc chuỗi phân tách bằng "|".
         "programs": _split(programs.split("|") if isinstance(programs, str) else programs),
         "core_only": str(core_only).lower() in {"1", "true", "yes", "on"},
+        # Tên nhóm có "/" và "+" -> phân tách bằng "|"; nhóm lạ bị bỏ qua, giữ thứ tự CATEGORIES.
+        "merged": _merged_list(merged),
     }
+
+
+def _merged_list(value: str | Iterable[str] | None) -> list[str]:
+    items = set(_split(value.split("|") if isinstance(value, str) else value))
+    return [c for c in MERGEABLE if c in items]
+
+
+def group_of(category: str, merged: Iterable[str]) -> str:
+    """Nhóm hiển thị của 1 nhóm gốc: bị gộp -> "Others", còn lại giữ nguyên (kể cả Unmapped)."""
+    return OTHERS if category in merged else category
+
+
+def display_categories(merged: Iterable[str]) -> list[str]:
+    merged_set = set(merged)
+    return [c for c in CATEGORIES if c not in merged_set]
+
+
+def grouped_targets(targets: dict[str, dict[str, float | None]], merged: Iterable[str]) -> dict[str, dict[str, float | None]]:
+    """Before/Target theo nhóm hiển thị: Others gộp = tổng Others + các nhóm bị gộp (bỏ qua None,
+    None hết -> None)."""
+    merged_list = list(merged)
+    result = {c: dict(targets.get(c, {"before": None, "target": None})) for c in display_categories(merged_list)}
+    if merged_list:
+        members = [OTHERS, *merged_list]
+        for field in ("before", "target"):
+            values = [targets.get(c, {}).get(field) for c in members]
+            values = [v for v in values if v is not None]
+            result[OTHERS][field] = sum(values) if values else None
+    return result
 
 
 def _machine_where(filters: dict[str, Any], alias: str = "m") -> tuple[str, list[Any]]:
@@ -326,7 +367,8 @@ def _achieved(stop: float, available: float, target: float | None) -> bool | Non
 
 def _load_machine_days(conn: Any, filters: dict[str, Any], with_programs: bool = False) -> dict[str, Any]:
     """Nguồn DUY NHẤT cho pivot / achievement / drill-down / export: mọi máy-ngày (sau mọi bộ lọc)
-    kèm Stop Time theo nhóm + danh sách dòng dừng thô. `with_programs` = luôn gắn Program (drill-down,
+    kèm Stop Time theo nhóm HIỂN THỊ (đã gộp `merged` vào Others) + danh sách dòng dừng thô (giữ cả
+    nhóm gốc `category` lẫn nhóm hiển thị `group`). `with_programs` = luôn gắn Program (drill-down,
     export) kể cả khi không lọc theo Program."""
     where, params = _machine_where(filters)
     allowed = program_lookup.allowed_program_keys(conn, filters["programs"], filters["core_only"])
@@ -366,10 +408,11 @@ def _load_machine_days(conn: Any, filters: dict[str, Any], with_programs: bool =
         category, _source = resolve_category(row["stop_code"], row["stop_description"], overrides)
         if category == UNMAPPED:
             unmapped_codes[row["stop_code"]] = row["stop_description"] or ""
-        md["stops"][category] += row["stop_time"] or 0
+        group = group_of(category, filters.get("merged", ()))
+        md["stops"][group] += row["stop_time"] or 0
         stop_rows.append({
             "production_date": row["d"], "machine_code": row["machine_code"], "knitting_structure": md["knitting_structure"],
-            "stop_code": row["stop_code"], "stop_description": row["stop_description"], "category": category,
+            "stop_code": row["stop_code"], "stop_description": row["stop_description"], "category": category, "group": group,
             "stop_time": row["stop_time"], "stop_count": row["stop_count"], "program": md["program"], "greige_id": md["greige_id"],
         })
     return {"machine_days": machine_days, "stop_rows": stop_rows, "unmapped_codes": unmapped_codes}
@@ -379,10 +422,13 @@ def build_report(conn: Any, filters: dict[str, Any]) -> dict[str, Any]:
     _ensure_seeded(conn)
     group_by = filters["group_by"]
     loaded = _load_machine_days(conn, filters)
-    targets = load_targets(conn)
-    total_target = sum(t["target"] or 0 for c, t in targets.items() if c in CATEGORIES)
-    total_before = sum(t["before"] or 0 for c, t in targets.items() if c in CATEGORIES)
-    categories = list(CATEGORIES) + ([UNMAPPED] if loaded["unmapped_codes"] else [])
+    raw_targets = load_targets(conn)
+    total_target = sum(t["target"] or 0 for c, t in raw_targets.items() if c in CATEGORIES)
+    total_before = sum(t["before"] or 0 for c, t in raw_targets.items() if c in CATEGORIES)
+    merged = filters.get("merged", [])
+    targets = grouped_targets(raw_targets, merged)
+    shown = display_categories(merged)
+    categories = shown + ([UNMAPPED] if loaded["unmapped_codes"] else [])
 
     available_by_period: dict[str, float] = defaultdict(float)
     stop_by_cell: dict[tuple[str, str], float] = defaultdict(float)
@@ -393,7 +439,7 @@ def build_report(conn: Any, filters: dict[str, Any]) -> dict[str, Any]:
         available_by_period[key] += md["available"]
         for category, stop in md["stops"].items():
             stop_by_cell[(category, key)] += stop
-        for category in CATEGORIES:
+        for category in shown:
             ok = _achieved(md["stops"].get(category, 0.0), md["available"], targets.get(category, {}).get("target"))
             if ok is not None:
                 achievement[(category, key)][0] += 1
@@ -413,6 +459,7 @@ def build_report(conn: Any, filters: dict[str, Any]) -> dict[str, Any]:
         times = [stop_by_cell.get((category, key), 0.0) for key in keys]
         rows.append({
             "category": category,
+            "merged": list(merged) if category == OTHERS else [],
             "before": targets.get(category, {}).get("before"),
             "target": targets.get(category, {}).get("target"),
             "stop_time": times,
@@ -434,16 +481,18 @@ def build_report(conn: Any, filters: dict[str, Any]) -> dict[str, Any]:
         evaluated, passed = sum(c[0] for c in counts), sum(c[1] for c in counts)
         return {
             "category": category, "target": target,
+            "merged": list(merged) if category == OTHERS else [],
             "values": [c[1] / c[0] * 100 if c[0] else None for c in counts],
             "evaluated": [c[0] for c in counts], "passed": [c[1] for c in counts],
             "total_evaluated": evaluated, "total_passed": passed,
             "rate_pct": passed / evaluated * 100 if evaluated else None,
         }
 
-    achievement_rows = [achievement_row(c, targets.get(c, {}).get("target")) for c in CATEGORIES]
+    achievement_rows = [achievement_row(c, targets.get(c, {}).get("target")) for c in shown]
     achievement_total = achievement_row(TOTAL, total_target)
     return {
         "filters": filters,
+        "merged": list(merged),
         "period_keys": keys,
         "periods": labels,
         "rows": rows,
@@ -468,7 +517,8 @@ def get_cell_details(conn: Any, filters: dict[str, Any], period: str, category: 
     số máy-ngày đạt Target), bảng máy-ngày (%, Đạt/Không) và các dòng dừng (máy x mã dừng).
     Tổng Stop Time của `rows` PHẢI khớp ô. `category` = "Total" -> mọi nhóm; `period` = "ALL" ->
     cột Total (cả khoảng lọc)."""
-    if category not in CATEGORIES + (UNMAPPED, TOTAL):
+    merged = filters.get("merged", [])
+    if category not in display_categories(merged) + [UNMAPPED, TOTAL]:
         raise ValueError(f"Nhóm không hợp lệ: {category}")
     if period == "ALL":
         start, end = date.fromisoformat(filters["from_date"]), date.fromisoformat(filters["to_date"])
@@ -484,9 +534,9 @@ def get_cell_details(conn: Any, filters: dict[str, Any], period: str, category: 
     }
     ensure_tables(conn)
     _ensure_seeded(conn)
-    targets = load_targets(conn)
-    total_target = sum(t["target"] or 0 for c, t in targets.items() if c in CATEGORIES)
-    target = total_target if category == TOTAL else targets.get(category, {}).get("target")
+    raw_targets = load_targets(conn)
+    total_target = sum(t["target"] or 0 for c, t in raw_targets.items() if c in CATEGORIES)
+    target = total_target if category == TOTAL else grouped_targets(raw_targets, merged).get(category, {}).get("target")
     loaded = _load_machine_days(conn, cell_filters, with_programs=True)
 
     def stop_of(md: dict[str, Any]) -> float:
@@ -512,7 +562,7 @@ def get_cell_details(conn: Any, filters: dict[str, Any], period: str, category: 
     for day in daily.values():
         day["pct"] = _pct(day["stop_time"], day["available"])
         day["achievement_pct"] = day["passed"] / day["evaluated"] * 100 if day["evaluated"] else None
-    rows = [r for r in loaded["stop_rows"] if category == TOTAL or r["category"] == category]
+    rows = [r for r in loaded["stop_rows"] if category == TOTAL or r["group"] == category]
     rows.sort(key=lambda r: (-(r["stop_time"] or 0), r["production_date"], r["machine_code"]))
     available = sum(md["available"] for md in machine_days)
     stop_total = sum(r["stop_time"] or 0 for r in rows)
@@ -521,6 +571,7 @@ def get_cell_details(conn: Any, filters: dict[str, Any], period: str, category: 
     return {
         "period": period,
         "category": category,
+        "merged": list(merged) if category == OTHERS else [],
         "target": target,
         "from_date": cell_filters["from_date"],
         "to_date": cell_filters["to_date"],
@@ -561,7 +612,8 @@ def _write_pivot(sheet: Any, report: dict[str, Any], as_pct: bool) -> None:
         values = row["pct"] if as_pct else row["stop_time"]
         total = row["total_pct"] if as_pct else row["total_stop_time"]
         to_ratio = (lambda v: None if v is None else v / 100) if as_pct else (lambda v: v)
-        sheet.append([row["category"], to_ratio(row["before"]), to_ratio(row["target"]), *[to_ratio(v) for v in values], to_ratio(total)])
+        label = f'{row["category"]} (+{len(row["merged"])})' if row.get("merged") else row["category"]
+        sheet.append([label, to_ratio(row["before"]), to_ratio(row["target"]), *[to_ratio(v) for v in values], to_ratio(total)])
         excel_row = sheet.max_row
         for col in range(2, sheet.max_column + 1):
             cell = sheet.cell(row=excel_row, column=col)
@@ -586,7 +638,8 @@ def _write_achievement(sheet: Any, report: dict[str, Any]) -> None:
     _write_header(sheet, ["Standard Achievement (%)", "Target", *report["periods"], "Total", "Machine-days evaluated"])
     for row in report["achievement"]["rows"] + [report["achievement"]["total_row"]]:
         sheet.append([
-            row["category"], None if row["target"] is None else row["target"] / 100,
+            f'{row["category"]} (+{len(row["merged"])})' if row.get("merged") else row["category"],
+            None if row["target"] is None else row["target"] / 100,
             *[None if v is None else v / 100 for v in row["values"]],
             None if row["rate_pct"] is None else row["rate_pct"] / 100, row["total_evaluated"],
         ])
@@ -629,6 +682,7 @@ def export_excel(conn: Any, filters: dict[str, Any]) -> bytes:
         ("Knitting Structure", ", ".join(filters["structures"]) or "All"),
         ("Program", " | ".join(filters["programs"]) or "All"),
         ("Core program only", "Yes" if filters["core_only"] else "No"),
+        ("Merged into Others", " | ".join(filters.get("merged", [])) or "None (all categories shown separately)"),
         ("Formula", "% = Σ Stop Time of category / Σ Available (Plan PRD) of all filtered machine-days in the period"),
         ("Standard Achievement", "% of machine-days whose downtime % of the category (stop / Available of that machine-day) <= category Target; Total row uses the total Target"),
         ("Program rule", "Program of a machine-day = Greige ID of Piece Produced rolls covering that day (most Available minutes); no roll or Greige not in program list = blank"),

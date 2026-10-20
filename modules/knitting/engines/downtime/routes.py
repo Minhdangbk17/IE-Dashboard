@@ -24,7 +24,7 @@ def _filters_from_args() -> dict[str, Any]:
     args = request.args
     return report.normalize_filters(
         args.get("from_date"), args.get("to_date"), args.get("group_by"), args.get("machines"), args.get("structures"),
-        args.get("programs"), args.get("core_only"),
+        args.get("programs"), args.get("core_only"), args.get("merged"),
     )
 
 
@@ -34,7 +34,7 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
     @bp.route("/")
     @permission_required("knitting", "downtime", "view")
     def view() -> Any:
-        return render_template("knitting_downtime_view.html", categories=report.CATEGORIES)
+        return render_template("knitting_downtime_view.html", categories=report.CATEGORIES, mergeable=report.MERGEABLE)
 
     @bp.route("/api/filters")
     @permission_required("knitting", "downtime", "view")

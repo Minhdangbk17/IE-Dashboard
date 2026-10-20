@@ -4,7 +4,7 @@
 > Mọi thay đổi UI phải (1) tuân theo các quyết định dưới đây, hoặc (2) ghi một quyết định mới /
 > sửa quyết định cũ vào **Mục 10 — Nhật ký quyết định** trước khi code.
 >
-> - Cập nhật lần cuối: **2026-10-08**
+> - Cập nhật lần cuối: **2026-10-20**
 > - File CSS thật: [`static/css/app.css`](../static/css/app.css) (1 file duy nhất)
 > - Nguồn cảm hứng gốc: [`design/DESIGN.md`](DESIGN.md) ("AgentQL — Aurora glow over a midnight terminal")
 > - Template tham khảo (KHÔNG dùng trực tiếp): [`templates/static/`](../templates/static/) — xem Mục 11
@@ -284,7 +284,9 @@ Các màu này mang **ý nghĩa nghiệp vụ**, người dùng đã quen nhận
 | Màu trục/lưới/chú giải | Đọc động `--text-secondary` bằng `getComputedStyle` lúc vẽ | ✅ |
 | Đổi theme | Lắng nghe `colormodechange` → `destroy()` rồi vẽ lại | ✅ |
 | Màu series | Theo Mục 6.1; series không phải fabric dùng token accent/status | ✅ |
-| Token chung `--chart-grid`, `--chart-axis`, `--chart-1..6` | Thay cho fallback hex trong JS | 🟡 D-11 |
+| Token chung `--chart-grid`, `--chart-axis` | Thay cho fallback hex trong JS | 🟡 D-11 |
+| Token categorical `--chart-1..12` + `--chart-other` (Dark/Light riêng) | Màu theo THỰC THỂ (vị trí cố định của hạng mục), không theo thứ tự đang hiện. 1–8 = bộ dataviz đã kiểm CVD theo cặp kề nhau; 9–12 chỉ khi tách > 8 hạng mục; `--chart-other` = nhóm gộp "Others". Dùng đầu tiên ở Knitting Downtime | ✅ D-19 |
+| Stacked bar + đường Total | Cột chồng = hạng mục người dùng chọn tự do; đường Total (`--text-primary`) luôn = tổng mọi hạng mục; CHỈ 1 đường Target Total nét đứt `--danger` — không vẽ Target từng hạng mục (bài học commit `e198720`) | ✅ D-19 |
 
 ### 7.2 Quy tắc chọn & trình bày biểu đồ (bắt buộc)
 
@@ -348,6 +350,7 @@ Các màu này mang **ý nghĩa nghiệp vụ**, người dùng đã quen nhận
 | D-15 | 2026-09-29 | Hỗ trợ `prefers-reduced-motion` | Accessibility | 💡 |
 | D-16 | 2026-09-29 | Sửa K-01: thay `color:#fff` bằng `var(--text-primary)` (hoặc accent) cho mục active | Lỗi hiển thị Light mode | 💡 |
 | D-18 | 2026-09-29 | Đổi gradient chính từ xanh→tím (`90deg #305fbd→#625fff`) sang **xanh–cyan** `135deg`, token theo theme (Mục 3.2); thêm `--text-on-gradient` thay `#fff` cứng | Đã code rồi người dùng huỷ ngay trong ngày — giữ gradient xanh → tím. Không đề xuất lại trừ khi người dùng yêu cầu | ❌ (đã huỷ) |
+| D-19 | 2026-10-20 | Knitting Downtime: biểu đồ cột chồng các nhóm (chọn tuỳ ý) + đường Total + 1 đường Target Total; bộ lọc "Categories" gộp nhóm vào Others giống pivot; thêm token `--chart-1..12`, `--chart-other` | Người dùng yêu cầu; >8 màu là giới hạn dễ đọc — dùng gộp Others để giảm | ✅ |
 | D-17 | 2026-09-29 | **Không** áp dụng từ template: card bo 26px, hover `scale()`, shell `100vh overflow:hidden`, topbar thay sidebar, `data-theme`, file `dashboard.css` | Xung đột mật độ dữ liệu / kiến trúc MPA / hook hiện có | ❌ (đã loại) |
 
 ---
@@ -386,6 +389,7 @@ Chỉ để **tham khảo**, KHÔNG link vào `base.html`, KHÔNG copy nguyên f
 
 | Ngày | Thay đổi |
 |---|---|
+| 2026-10-20 | **Knitting Downtime**: biểu đồ Overview đổi từ line (Total + ≤ 3 nhóm) sang **cột chồng** các nhóm (dropdown chọn tuỳ ý, mặc định tất cả) + đường Total + đường Target Total nét đứt `[6,4]` màu `--danger`; data label chỉ ở đường Total khi ≤ 12 kỳ; tooltip bỏ nhóm = 0; bấm cột/điểm mở drawer. Filter bar thêm dropdown **Categories** (tick = dòng riêng, bỏ tick = gộp vào Others, nút Split all / Merge all, nhớ lựa chọn bằng `localStorage`) — áp cho pivot, Achievement, drill-down, Excel; dòng gộp hiện "Others (+n)", title liệt kê nhóm, Target của dòng gộp không sửa trực tiếp. **Token mới** `--chart-1..12`, `--chart-other` (cả Dark và Light) trong `app.css`. |
 | 2026-10-09 | Trang mới **Knitting Incentive**: filter Month (`input type=month`) / As of / Machine Group; 3 `.page-tab`; 4 `.widget-card` KPI (%Achieve đỏ/xanh theo ngưỡng bậc có thưởng, dòng phụ "+x% tới bậc kế"); line chart MTD %Achieve Xưởng + ≤ 3 nhóm, đường ngưỡng 82% nét đứt `[6,4]` màu `--danger` (đóng vai Target); bảng nhóm + bảng ngày (dòng bấm được -> drawer máy + cuộn), ô dưới ngưỡng `.ratio-warning`; tab Bands: bảng sửa trực tiếp cho admin, bậc hiện tại nền `--accent-wash-bg`, nút xoá bậc `.btn-danger` có `aria-label`. Không thêm token/hex. |
 | 2026-10-09 | **Knitting thiết kế lại theo Dyeing**: Hub có nút Import Data (`.btn-primary`) mở modal (`.drawer-overlay` làm nền tối + hộp `.kh-modal` dùng token, không hex mới; Data Type, `.dropzone` nhiều file, progress, Data status, bảng lịch sử — cột File tự xuống dòng); vùng Dashboard để trống (`.blankslate`). Trang Downtime: 3 `.page-tab` (Overview / Standard Achievement Breakdown / Stop Code Mapping), 4 `.widget-card` KPI (Downtime Rate đỏ/xanh theo Target), biểu đồ trên — bảng dưới; biểu đồ Achievement trục 0–100% CHƯA có đường Target (chưa có mức mục tiêu — chờ người dùng); drawer chi tiết: bảng theo ngày (dòng bấm được, dòng chọn nền `--accent-wash-bg`) + máy-ngày (nhãn `.Label` Achieved / `.Label--danger` Not achieved) + mã dừng. Vá K-01 cho mọi `.BtnGroup .btn.is-active` trong trang (cục bộ, token). Không thêm token/hex. |
 | 2026-10-09 | **Knitting Downtime — bộ lọc Program**: thêm dropdown multi-select Program (dùng lại `.kd-dropdown`/`.kd-menu` có ô tìm) + checkbox "Core only" có nhãn "Core program" phía trên để thẳng hàng các ô lọc; drawer thêm cột Program (title = Greige ID); tab Import thêm Box "Program sources". Không thêm token/hex. |
