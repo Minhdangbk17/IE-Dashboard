@@ -173,7 +173,25 @@
             const totalValue = useHours ? row.total_hours : row.total_pct;
             const totalOver = target !== null && Number(totalValue) > target;
             return `<tr><th>${row.category}</th>${renderTargetCell(row, useHours)}${cells}<td class="${totalOver ? "cell-over-target" : ""}"><strong>${useHours ? Number(row.total_hours).toFixed(2) : `${Number(row.total_pct).toFixed(1)}%`}</strong></td></tr>`;
-        }).join("") + `<tr class="total-row"><th>Total</th><td>-</td>${(useHours ? data.total_row_hours : data.total_row).map((value) => `<td><strong>${useHours ? (value === null ? "-" : Number(value).toFixed(2)) : `${Number(value).toFixed(1)}%`}</strong></td>`).join("")}<td><strong>${useHours ? Number(data.kpis.downtime_hours_per_batch).toFixed(2) : `${data.kpis.downtime_rate_pct.toFixed(1)}%`}</strong></td></tr>`;
+        }).join("") + renderTotalRow(data, useHours);
+    }
+
+    // Target của hàng Total = tổng Target các category (cùng đơn vị đang xem). Hợp lệ vì
+    // Total Rate (%) = Σ giờ downtime các category / planned, và giờ/mẻ Total = Σ giờ/mẻ
+    // các category trên cùng mẫu số — nên ngưỡng tổng cũng cộng thẳng được. Chưa
+    // category nào có Target → hiển thị "-" và không tô màu.
+    function totalTargetOf(rows, useHours) {
+        const targets = rows.map((row) => targetValueOf(row, useHours)).filter((value) => value !== null);
+        return targets.length ? targets.reduce((sum, value) => sum + value, 0) : null;
+    }
+
+    function renderTotalRow(data, useHours) {
+        const totalTarget = totalTargetOf(data.rows, useHours);
+        const overClass = (value) => (totalTarget !== null && value !== null && Number(value) > totalTarget ? "cell-over-target" : "");
+        const cells = (useHours ? data.total_row_hours : data.total_row).map((value) => `<td class="${overClass(value)}"><strong>${useHours ? (value === null ? "-" : Number(value).toFixed(2)) : `${Number(value).toFixed(1)}%`}</strong></td>`).join("");
+        const grandTotal = useHours ? data.kpis.downtime_hours_per_batch : data.kpis.downtime_rate_pct;
+        const grandText = useHours ? Number(grandTotal).toFixed(2) : `${Number(grandTotal).toFixed(1)}%`;
+        return `<tr class="total-row"><th>Total</th><td><strong>${formatTargetText(totalTarget, useHours)}</strong></td>${cells}<td class="${overClass(grandTotal)}"><strong>${grandText}</strong></td></tr>`;
     }
 
     function startEditingTarget(cell) {

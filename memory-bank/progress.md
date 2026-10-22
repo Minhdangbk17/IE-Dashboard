@@ -24,6 +24,9 @@
 - [x] (2026-10-20) Knitting Downtime: biểu đồ cột chồng nhóm (chọn tuỳ ý) + đường Total + Target
       Total; bộ lọc "Categories" gộp nhóm vào Others (server-side, áp pivot/achievement/drill/export).
       Token `--chart-1..12`, `--chart-other`. Test merge thêm vào `test_knitting_downtime_import.py`.
+- [x] (2026-10-22) Dyeing Downtime by Category: ô Target hàng Total trước bị hardcode "-" → nay =
+      Σ Target các category (theo đơn vị %/giờ đang xem, tự cập nhật khi admin sửa Target); ô hàng
+      Total vượt Target tổng được tô `cell-over-target` (`downtime.js::renderTotalRow`).
       CHƯA kiểm tra trên trình duyệt (máy không có Node để check cú pháp JS).
 - [x] (2026-10-09) Knitting thiết kế lại theo Dyeing: Engine `knitting.excel_import` + modal Import trên
       Hub, Dashboard Hub để trống, trang Downtime 3 tab (Overview / Standard Achievement Breakdown / Stop
