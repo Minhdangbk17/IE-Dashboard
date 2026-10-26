@@ -241,15 +241,71 @@ def get_targets() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def set_target(fabric_type: str, color_group: str, target_value: float) -> None:
+def set_target(fabric_type: str, color_group: str, target_value: float | None) -> None:
+    """`target_value=None` = xoá Target của ô (ô để trống người dùng nhập -> không tô màu)."""
     conn = get_db()
     _ensure_targets_table(conn)
+    if target_value is None:
+        conn.execute("DELETE FROM batch_matrix_targets WHERE fabric_type = ? AND color_group = ?", (fabric_type, color_group))
+        conn.commit()
+        return
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT INTO batch_matrix_targets (fabric_type, color_group, target_value, updated_at) VALUES (?, ?, ?, ?) "
         "ON CONFLICT(fabric_type, color_group) DO UPDATE SET target_value=excluded.target_value, updated_at=excluded.updated_at",
         (fabric_type, color_group, target_value, now_str),
     )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Shade nhập tay cho mẻ "Unclassified" (2026-10-26): batch_details.shade rỗng -> mẻ rơi vào
+# Color Group "Unclassified"; người dùng mở danh sách ô đó và tự chọn Shade cho từng Dyelot.
+# Khoá theo Dyelot (cùng Dyelot = cùng màu, kể cả mẻ chạy lại); ghi đè lên batch_details.shade
+# ở READ TIME nên không phải import/rebuild lại gì. Chỉ ảnh hưởng Fabric/Color Matrix.
+# ---------------------------------------------------------------------------
+
+SHADE_CHOICES: tuple[str, ...] = ("Dark", "Medium", "Light")
+
+
+def _ensure_shade_overrides_table(conn: Any) -> None:
+    """CHỈ chạy CREATE TABLE ở SQLite — ở Postgres bảng có sẵn qua `supabase/schema.sql`."""
+    if get_dialect() == "sqlite":
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS batch_shade_overrides (
+                dyelot TEXT PRIMARY KEY,
+                shade TEXT NOT NULL,
+                updated_by TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+    conn.commit()
+
+
+def _load_shade_overrides(conn: Any) -> dict[str, str]:
+    _ensure_shade_overrides_table(conn)
+    return {str(row["dyelot"]).strip(): row["shade"] for row in conn.execute("SELECT dyelot, shade FROM batch_shade_overrides").fetchall()}
+
+
+def set_shade_override(dyelot: str, shade: str | None, updated_by: str | None = None) -> None:
+    """Gán Shade cho 1 Dyelot; `shade` rỗng/None = xoá (trả về Shade gốc của Batch Detail)."""
+    dyelot = dyelot.strip()
+    if not dyelot:
+        raise ValueError("Missing dyelot.")
+    shade = (shade or "").strip()
+    if shade and shade not in SHADE_CHOICES:
+        raise ValueError(f"Shade must be one of: {', '.join(SHADE_CHOICES)}.")
+    conn = get_db()
+    _ensure_shade_overrides_table(conn)
+    if not shade:
+        conn.execute("DELETE FROM batch_shade_overrides WHERE dyelot = ?", (dyelot,))
+    else:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            "INSERT INTO batch_shade_overrides (dyelot, shade, updated_by, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(dyelot) DO UPDATE SET shade=excluded.shade, updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+            (dyelot, shade, updated_by, now_str),
+        )
     conn.commit()
 
 
@@ -353,24 +409,28 @@ def _raw_matrix_rows(date_from: str | None, date_to: str | None, require_redye_z
         sql += f" AND {shifted_date} <= ?"
         params.append(date_to)
 
+    shade_overrides = _load_shade_overrides(get_db())
     result: list[dict[str, Any]] = []
     for row in execute_query(sql, params):
         day = normalize_production_date(row["production_date"])
         machine = (row["machine"] or "").strip()
         if not day or not machine or row["dyelot"] is None:
             continue
-        if not _is_normal_batch(row, require_redye_zero):
+        if not _is_normal_batch(row, require_redye_zero):  # SapLot thiếu đã được coi như 1*/3* trong classify_batch_badge()
             continue
+        override = shade_overrides.get(str(row["dyelot"]).strip())
+        shade = override or row["shade"]
         result.append({
             "day": day,
             "fabric_type": row["fabric_type"].strip(),
-            "color_group": _classify_color_group(row["shade"], row["colour_no"]),
+            "color_group": _classify_color_group(shade, row["colour_no"]),
+            "shade_override": override,
             "capacity": None,  # gán từ Machine Master ở `_build_core()`
             "machine": machine,
             "brand_program": str(row["brand_program"] or "").strip(),
             "batch_no": row["batch_ref_no"] or row["batch"],
             "dyelot": row["dyelot"], "sap_lot": row["sap_lot"], "redye": row["redye"],
-            "shade": row["shade"], "colour_no": row["colour_no"],
+            "shade": shade, "colour_no": row["colour_no"],
             "start_time": row["start_time"], "end_time": row["end_time"],
         })
     return result
@@ -619,7 +679,7 @@ _BATCH_FIELDS: tuple[tuple[str, str], ...] = (
 
 
 def _public_batch(row: dict[str, Any]) -> dict[str, Any]:
-    return {key: row[key] for key, _ in _BATCH_FIELDS}
+    return {**{key: row[key] for key, _ in _BATCH_FIELDS}, "shade_override": row.get("shade_override")}
 
 
 def get_cell_batches(

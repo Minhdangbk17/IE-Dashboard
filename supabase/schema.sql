@@ -412,6 +412,15 @@ create table if not exists batch_matrix_targets (
     primary key (fabric_type, color_group)
 );
 
+-- Shade typed by hand for "Unclassified" batches of the Fabric/Color Matrix (batch_matrix
+-- engine), keyed by Dyelot; overrides batch_details.shade at read time.
+create table if not exists batch_shade_overrides (
+    dyelot text primary key,
+    shade text not null,
+    updated_by text,
+    updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+
 -- Batch/Day Trend tab (batch_matrix engine). Grain = 1 row per batch x production-day
 -- segment (07:00->07:00 split, source batch_details only). is_valid = normal batches counted
 -- on this segment (end day) with ReDye = 0; is_valid_any_redye = same without the ReDye
@@ -697,6 +706,7 @@ alter table downtime_case_notes enable row level security;
 alter table downtime_achievement_standards enable row level security;
 alter table batch_matrix_daily_summary enable row level security;
 alter table batch_matrix_targets enable row level security;
+alter table batch_shade_overrides enable row level security;
 alter table batch_day_trend_daily_summary enable row level security;
 alter table batch_day_trend_targets enable row level security;
 alter table cleaning_mc_daily_summary enable row level security;

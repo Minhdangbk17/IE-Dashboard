@@ -24,6 +24,7 @@
     .day-batches-body { overflow: auto; padding: 8px 16px 16px; }
     .day-batches-body table th, .day-batches-body table td { white-space: nowrap; }
     .batch-matrix-page[hidden] { display: none; }
+    #trend-table tr.trend-total-row th, #trend-table tr.trend-total-row td { background: var(--color-canvas-subtle, #161b22); font-weight: 700; border-top: 2px solid var(--color-border-default, #30363d); }
     .trend-kpis { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 12px; }
     .trend-kpis .widget-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
     .trend-kpis strong { font-size: 28px; line-height: 1.1; }
@@ -101,7 +102,7 @@
             <thead><tr id="trend-head"><th>Fabric Type</th><th>Target</th><th>Total</th></tr></thead>
             <tbody></tbody>
         </table>
-        <p class="f6 color-fg-muted mt-2 mb-0">Source: Batch Detail only. Blank/"Unknown" Fabric Type takes the Fabric Type of the next batch on the same machine. Batches spanning several production days (07:00→07:00) split their hours by day and are counted once, on the end day. Only Cotton/CVC/Polyester are shown; other fabric types are excluded from this report. Click a value or Total to see the batches behind it.</p>
+        <p class="f6 color-fg-muted mt-2 mb-0">Source: Batch Detail only. Blank/"Unknown" Fabric Type takes the Fabric Type of the next batch on the same machine. Batches spanning several production days (07:00→07:00) split their hours by day and are counted once, on the end day. Only Cotton/CVC/Polyester get their own row; the Total row adds up every batch regardless of Fabric Type (including other types). Click a value or Total to see the batches behind it.</p>
     </div>
 
     <div id="trend-batches-drawer" class="drawer-overlay" aria-hidden="true">
@@ -285,15 +286,48 @@
                 return;
             }
             const dash = (value) => (value === null || value === undefined || value === "" ? "-" : escHtml(value));
-            dayBatchesBody.innerHTML = `<p class="f6 color-fg-muted">${batches.length} Normal batches counted in this cell.</p>` +
-                `<table class="preview-table"><thead><tr><th>Production Date</th><th>Machine</th><th>Batch No</th><th>Dyelot</th><th>SapLot</th><th>ReDye</th><th>Shade</th><th>ColourNo</th><th>Capacity (Kg)</th><th>Tank</th><th>Start</th><th>End</th></tr></thead><tbody>` +
-                batches.map((batch) => `<tr><td>${dash(batch.day)}</td><td>${dash(batch.machine)}</td><td>${dash(batch.batch_no)}</td><td>${dash(batch.dyelot)}</td><td>${dash(batch.sap_lot)}</td><td>${dash(batch.redye)}</td><td>${dash(batch.shade)}</td><td>${dash(batch.colour_no)}</td><td>${dash(batch.capacity)}</td><td>${dash(batch.tank)}</td><td>${dash(batch.start_time)}</td><td>${dash(batch.end_time)}</td></tr>`).join("") +
+            // Ô "Unclassified": thêm cột để tự chọn Shade cho từng Dyelot (cần quyền edit).
+            const isUnclassified = colorGroup === "Unclassified";
+            const shadeCell = (batch) => {
+                if (!window.BATCH_DAY_TREND_CAN_EDIT) return `<td>-</td>`;
+                return `<td><select class="form-select shade-select" data-dyelot="${escAttr(batch.dyelot)}"><option value="">Set shade...</option>` +
+                    ["Dark", "Medium", "Light"].map((shade) => `<option value="${shade}">${shade}</option>`).join("") + `</select></td>`;
+            };
+            dayBatchesBody.innerHTML = `<p class="f6 color-fg-muted">${batches.length} Normal batches counted in this cell.${isUnclassified && window.BATCH_DAY_TREND_CAN_EDIT ? " Pick a Shade to move the Dyelot into its Color Group." : ""}</p>` +
+                `<table class="preview-table"><thead><tr><th>Production Date</th><th>Machine</th><th>Batch No</th><th>Dyelot</th><th>SapLot</th><th>ReDye</th><th>Shade</th><th>ColourNo</th><th>Capacity (Kg)</th><th>Tank</th><th>Start</th><th>End</th>${isUnclassified ? "<th>Set Shade</th>" : ""}</tr></thead><tbody>` +
+                batches.map((batch) => `<tr><td>${dash(batch.day)}</td><td>${dash(batch.machine)}</td><td>${dash(batch.batch_no)}</td><td>${dash(batch.dyelot)}</td><td>${dash(batch.sap_lot)}</td><td>${dash(batch.redye)}</td><td>${dash(batch.shade)}</td><td>${dash(batch.colour_no)}</td><td>${dash(batch.capacity)}</td><td>${dash(batch.tank)}</td><td>${dash(batch.start_time)}</td><td>${dash(batch.end_time)}</td>${isUnclassified ? shadeCell(batch) : ""}</tr>`).join("") +
                 `</tbody></table>`;
         }).catch(() => { dayBatchesBody.innerHTML = `<p class="color-fg-muted">Failed to load batches.</p>`; });
     }
 
+    // Lưu Shade nhập tay theo Dyelot rồi tải lại ma trận (mẻ rời khỏi Unclassified).
+    dayBatchesBody.addEventListener("change", (event) => {
+        const select = event.target.closest(".shade-select");
+        if (!select || !select.value) return;
+        select.disabled = true;
+        fetch(shadeOverrideUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dyelot: select.dataset.dyelot, shade: select.value }),
+        }).then((response) => response.json().catch(() => ({})).then((data) => {
+            if (!response.ok) throw new Error(data.error || "save failed");
+            showToast(`Dyelot ${select.dataset.dyelot} set to ${select.value}.`, "success");
+            // Mọi dòng cùng Dyelot cùng đổi nhóm -> bỏ hết khỏi danh sách Unclassified.
+            dayBatchesBody.querySelectorAll(".shade-select").forEach((other) => {
+                if (other.dataset.dyelot === select.dataset.dyelot) other.closest("tr").remove();
+            });
+            load();
+        })).catch((err) => {
+            select.disabled = false;
+            select.value = "";
+            showToast(err && err.message ? err.message : "Failed to save shade.", "error");
+        });
+    });
+
     const matrixTbody = document.querySelector("#matrix-table tbody");
     matrixTbody.addEventListener("click", (event) => {
+        const targetCell = event.target.closest(".case-note-cell");
+        if (targetCell && targetCell.dataset.fabricType) { startEditingMatrixTarget(targetCell); return; }
         const cell = event.target.closest("td.cell-clickable");
         if (!cell) return;
         openDayBatches(cell.dataset.periodKey, cell.dataset.periodLabel, cell.dataset.fabricType, cell.dataset.colorGroup);
@@ -316,7 +350,76 @@
         return `<td class="${cls} cell-clickable" tabindex="0" data-period-key="${escAttr(periodKey)}" data-period-label="${escAttr(periodLabel)}" data-fabric-type="${escAttr(row.fabric_type)}" data-color-group="${escAttr(row.color_group)}">${content}</td>`;
     }
 
+    // Target của từng dòng Fabric/Color: người có quyền edit bấm vào ô để nhập (để trống = xoá).
+    let lastMatrixData = null;
+    const targetsUrl = "{{ url_for('dyeing.batch_matrix.api_set_target') }}";
+    const shadeOverrideUrl = "{{ url_for('dyeing.batch_matrix.api_set_shade_override') }}";
+
+    function matrixTargetText(row) {
+        return row.target === null || row.target === undefined ? "-" : fmtValue(row.target);
+    }
+
+    function matrixTargetCell(row) {
+        const text = matrixTargetText(row);
+        if (!window.BATCH_DAY_TREND_CAN_EDIT) return `<td>${text}</td>`;
+        return `<td><span class="case-note-cell" title="Click to set Target" data-fabric-type="${escAttr(row.fabric_type)}" data-color-group="${escAttr(row.color_group)}">${text}</span></td>`;
+    }
+
+    function buildMatrixTargetSpan(row) {
+        const span = document.createElement("span");
+        span.className = "case-note-cell";
+        span.title = "Click to set Target";
+        span.dataset.fabricType = row.fabric_type;
+        span.dataset.colorGroup = row.color_group;
+        span.textContent = matrixTargetText(row);
+        return span;
+    }
+
+    function startEditingMatrixTarget(cell) {
+        const row = (lastMatrixData && lastMatrixData.rows || []).find((item) => item.row_type === "data" && item.fabric_type === cell.dataset.fabricType && item.color_group === cell.dataset.colorGroup);
+        if (!row) return;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.01";
+        input.className = "case-note-input";
+        input.value = row.target === null || row.target === undefined ? "" : row.target;
+        cell.replaceWith(input);
+        input.focus();
+        input.select();
+        let settled = false;
+        function commit() { if (settled) return; settled = true; saveMatrixTarget(input, row, input.value.trim()); }
+        function cancel() { if (settled) return; settled = true; input.replaceWith(buildMatrixTargetSpan(row)); }
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+        });
+    }
+
+    function saveMatrixTarget(inputEl, row, rawValue) {
+        const value = rawValue === "" ? null : Number(rawValue);
+        if (value !== null && Number.isNaN(value)) {
+            inputEl.replaceWith(buildMatrixTargetSpan(row));
+            showToast("Target must be a number.", "error");
+            return;
+        }
+        fetch(targetsUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fabric_type: row.fabric_type, color_group: row.color_group, target_value: value }),
+        }).then((response) => response.json().catch(() => ({})).then((data) => {
+            if (!response.ok) throw new Error(data.error || "save failed");
+            row.target = value;
+            showToast(`Target for ${row.fabric_type} / ${row.color_group} saved.`, "success");
+            renderTable(lastMatrixData); // tô lại màu ô theo Target mới
+        })).catch((err) => {
+            inputEl.replaceWith(buildMatrixTargetSpan(row));
+            showToast(err && err.message ? err.message : "Failed to save target.", "error");
+        });
+    }
+
     function renderTable(data) {
+        lastMatrixData = data;
         const head = document.getElementById("matrix-head");
         head.innerHTML = `<th>Fabric Type</th><th>Color Group</th><th>Target</th><th>Total</th>` + data.periods.map((label) => `<th>${label}</th>`).join("");
 
@@ -351,7 +454,7 @@
                 const fabricCell = isFirstOfGroup ? `<td class="col-fabric" rowspan="${fabricRowCount[row.fabric_type] + 1}">${row.fabric_type}</td>` : "";
                 const colorGroupClass = row.color_group === "Unclassified" ? "col-color color-group-unclassified" : "col-color";
                 const totalCell = row.total === null ? `<td><strong>${fmtValue(row.total)}</strong></td>` : matrixClickableCell("", row, "", "Total", `<strong>${fmtValue(row.total)}</strong>`);
-                return `<tr>${fabricCell}<td class="${colorGroupClass}">${row.color_group}</td><td>${row.target === null || row.target === undefined ? "-" : fmtValue(row.target)}</td>${totalCell}${dayCells}</tr>`;
+                return `<tr>${fabricCell}<td class="${colorGroupClass}">${row.color_group}</td>${matrixTargetCell(row)}${totalCell}${dayCells}</tr>`;
             }
             if (row.row_type === "fabric_total") {
                 return `<tr class="row-fabric-total"><td class="col-color" colspan="2">Total (${row.fabric_type})</td><td>-</td><td><strong>${fmtValue(row.total)}</strong></td>${dayCells}</tr>`;
@@ -537,7 +640,16 @@
             `<tr><th>${row.fabric_type}</th>${renderTrendTargetCell(row)}` +
             row.values.map((value, i) => trendBatchCell(row, data.period_keys[i], data.periods[i], value, false)).join("") +
             trendBatchCell(row, "", "Total", row.total, true) + `</tr>`
-        ).join("");
+        ).join("") + renderTrendTotalRow(data);
+    }
+
+    // Dòng Total cuối bảng: cộng MỌI Fabric Type (không chỉ Cotton/CVC/Polyester), không có Target.
+    function renderTrendTotalRow(data) {
+        const row = data.total_row;
+        if (!row) return "";
+        return `<tr class="trend-total-row"><th>${row.fabric_type}</th><td>-</td>` +
+            row.values.map((value, i) => trendBatchCell(row, data.period_keys[i], data.periods[i], value, false)).join("") +
+            trendBatchCell(row, "", "Total", row.total, true) + `</tr>`;
     }
 
     // -----------------------------------------------------------------

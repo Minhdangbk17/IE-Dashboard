@@ -1,5 +1,30 @@
 # Active Context — Trạng thái hiện tại
 
+**Cập nhật lần cuối:** 2026-10-26 (tiếp) — **Batch/Day Trend: thêm dòng "Total" dưới Polyester** (bảng chi tiết).
+Total KHÔNG quan tâm Fabric Type: cộng MỌI mẻ/giờ đã qua bộ lọc, kể cả loại ngoài Cotton/CVC/Polyester
+(Unknown, ...) vốn không có dòng riêng. `_load_filtered_rows()` giữ thêm `other_rows`; API trả `total_row`
+(values/counts/hours/total, không Target, không nằm trong `rows` nên biểu đồ/Target không đổi). **KPI 3 thẻ
+giờ = Total** (trước đây chỉ cộng 3 loại chính) => số mẻ/giờ KPI có thể tăng. Bấm ô Total -> drawer/Export
+nhận `fabric_type=Total`; Excel Trend có thêm dòng Total ở 3 khối. Không đổi schema, không cần rebuild.
+Test `test_batch_day_trend_recompute_all.py` cập nhật kỳ vọng (mẻ Unknown giờ được đếm) + kiểm tra total_row.
+
+**Cập nhật lần cuối:** 2026-10-26 — **Fabric/Color Matrix: nhập Target, tự nhập Shade cho Unclassified, SapLot trống = Normal.**
+(1) **Target**: trước đây cột Target của Matrix chỉ hiển thị "-" (backend `POST /api/targets` có sẵn nhưng
+UI chưa có ô nhập) -> giờ người có quyền `batch_matrix.edit` bấm ô Target để nhập (Enter/blur lưu, Esc huỷ),
+để TRỐNG = xoá Target (`set_target(..., None)` DELETE) và ô được tô lại xanh/đỏ ngay. (2) **Shade nhập tay**:
+bảng mới `batch_shade_overrides` (khoá `dyelot`, ghi đè `batch_details.shade` ở READ TIME trong
+`_raw_matrix_rows()`, không cần rebuild); bấm ô "Unclassified" -> thêm cột "Set Shade" (Dark/Medium/Light),
+chọn xong mẻ chuyển sang đúng Color Group (cùng Dyelot cùng chuyển), route `POST /api/shade-overrides`. CHỈ
+ảnh hưởng Fabric/Color Matrix (Trend / Batch Per Day không đọc bảng này). (3) **SapLot trống/khoảng trắng**
+tính như "1*/3*" -> Normal, ĐỒNG BỘ CẢ 3 báo cáo (Matrix, Batch/Day Trend, Batch Per Day by Machine) vì sửa
+ở `cleaning_matrix.py::_is_normal_dyeing()` dùng chung (người dùng chốt). SapLot "4*" vẫn Sample, "2*" vẫn
+Rework. Test `test_rework_classification.py` đã đổi case "SapLot rỗng" sang Normal. **Deploy: chạy
+`supabase/migrate_batch_shade_overrides.sql` VÀ `flask rebuild-summaries` (hoặc `/admin/data-tools`)** để
+summary Trend / Cleaning cũ tính lại theo quy tắc mới. Test `tests/test_batch_matrix_shade_sap_target.py` (16 kiểm
+tra) + 4 test Matrix/Trend cũ PASS; smoke Flask test client OK. Chưa test thao tác UI trên trình duyệt.
+
+**Bản ghi trước:**
+
 **Cập nhật lần cuối:** 2026-10-20 — **Knitting Downtime: biểu đồ cột chồng + gộp nhóm vào Others.**
 (1) Biểu đồ Overview: cột chồng % các nhóm (dropdown chọn TUỲ Ý, mặc định tất cả — lưu nhóm bị ẩn),
 đường Total = tổng MỌI nhóm (không phụ thuộc lựa chọn), CHỈ 1 đường Target Total nét đứt (không vẽ

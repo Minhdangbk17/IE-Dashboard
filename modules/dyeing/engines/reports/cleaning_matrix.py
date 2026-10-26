@@ -119,7 +119,8 @@ def _is_normal_dyeing(dyelot: str | None, sap_lot: str | None, redye: Any, requi
     dyelot_norm = (dyelot or "").strip()
     sap_lot_norm = (sap_lot or "").strip()
     dyelot_ok = bool(dyelot_norm) and dyelot_norm[-1] == "0"
-    sap_lot_ok = bool(sap_lot_norm) and sap_lot_norm[0] in ("1", "3")
+    # SapLot THIẾU (rỗng/khoảng trắng) được tính như 1*/3* (yêu cầu người dùng 2026-10-26).
+    sap_lot_ok = not sap_lot_norm or sap_lot_norm[0] in ("1", "3")
     if not require_redye_zero:
         return dyelot_ok and sap_lot_ok
     try:

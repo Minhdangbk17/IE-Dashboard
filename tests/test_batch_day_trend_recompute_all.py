@@ -160,11 +160,13 @@ def main() -> int:
             close_db()
         cvc = next(r for r in trend["rows"] if r["fabric_type"] == "CVC")
         _check("CVC tháng 6: 2 mẻ * 24 / 39h", cvc["total"], round(2 * 24 / 39, 2), failures)
-        _check("KPI số mẻ Normal (CVC 2 + Cotton 1)", trend["kpis"]["valid_batches"], 3, failures)
+        _check("KPI/Total số mẻ Normal (CVC 2 + Cotton 1 + Unknown 1: Total KHÔNG quan tâm Fabric Type)", trend["kpis"]["valid_batches"], 4, failures)
+        _check("total_row khớp KPI (4 mẻ, 39+6+2=47h)", (trend["total_row"]["total_count"], trend["total_row"]["total_hours"]), (4, 47.0), failures)
+        _check("total_row Batch/Day = 4*24/47", trend["total_row"]["total"], round(4 * 24 / 47, 2), failures)
 
         print("\n=== Bộ lọc Tank Type (tra machines.tank_type tại read time) ===")
         _check("available_tank_types", trend["available_tank_types"], ["J tank", "Unclassified"], failures)
-        _check("J tank: chỉ M1 (CVC 2 mẻ)", trend_j["kpis"]["valid_batches"], 2, failures)
+        _check("J tank: chỉ M1 (CVC 2 mẻ + Unknown 1)", trend_j["kpis"]["valid_batches"], 3, failures)
         _check("J tank: Cotton (M2) bị loại", next(r for r in trend_j["rows"] if r["fabric_type"] == "Cotton")["total"], 0.0, failures)
         _check("Unclassified: chỉ M2 (Cotton 1 mẻ / 6h)", trend_unclassified["kpis"]["valid_batches"], 1, failures)
         _check("Unclassified: Cotton = 1*24/6", next(r for r in trend_unclassified["rows"] if r["fabric_type"] == "Cotton")["total"], 4.0, failures)
@@ -173,7 +175,7 @@ def main() -> int:
         # D0030 (ReDye = 1) giờ là Normal, đếm ở day2 (ngày kết thúc thật, đoạn 0h day3 bị bỏ).
         cvc_any = next(r for r in trend_any_redye["rows"] if r["fabric_type"] == "CVC")
         _check("CVC tháng 6: 3 mẻ * 24 / 39h (giờ không đổi)", cvc_any["total"], round(3 * 24 / 39, 2), failures)
-        _check("KPI số mẻ Normal tăng 3 -> 4", trend_any_redye["kpis"]["valid_batches"], 4, failures)
+        _check("KPI số mẻ Normal tăng 4 -> 5", trend_any_redye["kpis"]["valid_batches"], 5, failures)
         _check("Tổng giờ KHÔNG đổi khi tắt ReDye", trend_any_redye["kpis"]["total_planned_hours"], trend["kpis"]["total_planned_hours"], failures)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

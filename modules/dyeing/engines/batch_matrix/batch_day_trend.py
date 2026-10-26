@@ -68,6 +68,8 @@ from modules.dyeing.engines.reports.cleaning_matrix import (
 # (xem `_normalize_main_fabric_type()`) — CHƯA xác nhận dữ liệu thật có biến thể viết khác
 # (VD viết tắt "PES" cho Polyester) hay không, nếu có sẽ cần bổ sung alias sau.
 MAIN_FABRIC_TYPES: tuple[str, ...] = ("Cotton", "CVC", "Polyester")
+TOTAL_ROW_LABEL = "Total"  # dòng cuối bảng Trend: cộng MỌI Fabric Type (kể cả ngoài 3 loại chính)
+OTHER_FABRIC_LABEL = "Other"
 _MAIN_FABRIC_TYPE_BY_NORM: dict[str, str] = {name.lower(): name for name in MAIN_FABRIC_TYPES}
 
 
@@ -333,6 +335,8 @@ def _empty_trend(group_by: str, targets: dict[str, float | None] | None = None) 
              "counts": [], "hours": [], "total_count": 0, "total_hours": 0.0}
             for name in MAIN_FABRIC_TYPES
         ],
+        "total_row": {"fabric_type": TOTAL_ROW_LABEL, "target": None, "values": [], "total": 0.0,
+                      "counts": [], "hours": [], "total_count": 0, "total_hours": 0.0},
         "chart": {"categories": [], "series": []},
         "kpis": {"batch_per_day": 0.0, "valid_batches": 0, "total_planned_hours": 0.0},
         "available_capacities": [],
@@ -392,13 +396,13 @@ def _load_filtered_rows(
     selected_tank_types = [value for value in _parse_brand_programs(tank_types) if value in _TANK_ORDER]
     tank_filter = set(selected_tank_types) if selected_tank_types else None
 
-    # Loại KHÁC 3 loại chính (`_normalize_main_fabric_type()` trả None) bị loại bỏ hoàn toàn
-    # khỏi báo cáo Trend.
+    # Loại KHÁC 3 loại chính (`_normalize_main_fabric_type()` trả None) KHÔNG có dòng riêng trong
+    # báo cáo Trend, nhưng được giữ ở `other_rows` để dòng "Total" (không quan tâm Fabric Type)
+    # cộng đủ mọi mẻ (2026-10-26).
     filtered: list[dict[str, Any]] = []
+    other_filtered: list[dict[str, Any]] = []
     for row in rows:
         fabric_type = _normalize_main_fabric_type(row["fabric_type"])
-        if fabric_type is None:
-            continue
         if capacity_filter is not None:
             row_capacity = round(float(row["capacity_kg"]), 2) if row["capacity_kg"] not in (None, "") else None
             if row_capacity not in capacity_filter:
@@ -410,10 +414,12 @@ def _load_filtered_rows(
             continue
         day = datetime.strptime(row["production_date"], "%Y-%m-%d").date()
         key, label = _period(day, group_by)
-        filtered.append({"row": row, "fabric_type": fabric_type, "period_key": key, "period_label": label, "tank": tank})
+        item = {"row": row, "fabric_type": fabric_type or OTHER_FABRIC_LABEL, "period_key": key, "period_label": label, "tank": tank}
+        (filtered if fabric_type else other_filtered).append(item)
 
     return {
         "rows": filtered,
+        "other_rows": other_filtered,
         "available_capacities": available_capacities,
         "available_brand_programs": available_brand_programs,
         "available_tank_types": available_tank_types,
@@ -449,12 +455,18 @@ def get_batch_day_trend(
     period_counts: dict[str, dict[str, int]] = {name: {} for name in MAIN_FABRIC_TYPES}
     period_hours: dict[str, dict[str, float]] = {name: {} for name in MAIN_FABRIC_TYPES}
     period_labels: dict[str, str] = {}
-    for item in loaded["rows"]:
+    all_counts: dict[str, int] = {}
+    all_hours: dict[str, float] = {}
+    for item in [*loaded["rows"], *loaded["other_rows"]]:
         row, fabric_type, key = item["row"], item["fabric_type"], item["period_key"]
         period_labels[key] = item["period_label"]
-        period_hours[fabric_type][key] = period_hours[fabric_type].get(key, 0.0) + float(row["hours"] or 0)
+        all_hours[key] = all_hours.get(key, 0.0) + float(row["hours"] or 0)
         if row["batch_count"]:
-            period_counts[fabric_type][key] = period_counts[fabric_type].get(key, 0) + int(row["batch_count"])
+            all_counts[key] = all_counts.get(key, 0) + int(row["batch_count"])
+        if fabric_type in period_hours:
+            period_hours[fabric_type][key] = period_hours[fabric_type].get(key, 0.0) + float(row["hours"] or 0)
+            if row["batch_count"]:
+                period_counts[fabric_type][key] = period_counts[fabric_type].get(key, 0) + int(row["batch_count"])
 
     if not period_labels:
         result = _empty_trend(group_by, trend_targets)
@@ -467,8 +479,6 @@ def get_batch_day_trend(
     labels = [period_labels[key] for key in ordered_keys]
 
     rows_out: list[dict[str, Any]] = []
-    total_count_all = 0
-    total_hours_all = 0.0
     for name in MAIN_FABRIC_TYPES:
         counts = period_counts[name]
         hours = period_hours[name]
@@ -483,10 +493,19 @@ def get_batch_day_trend(
             "hours": [round(hours.get(key, 0.0), 2) for key in ordered_keys],
             "total_count": total_count, "total_hours": round(total_hours, 2),
         })
-        total_count_all += total_count
-        total_hours_all += total_hours
 
+    # Dòng Total: không phân biệt Fabric Type (cả loại ngoài Cotton/CVC/Polyester).
+    total_count_all = sum(all_counts.values())
+    total_hours_all = sum(all_hours.values())
     overall_value = round(total_count_all * 24 / total_hours_all, 2) if total_hours_all else 0.0
+    total_row = {
+        "fabric_type": TOTAL_ROW_LABEL, "target": None,
+        "values": [round(all_counts.get(key, 0) * 24 / all_hours[key], 2) if all_hours.get(key) else 0.0 for key in ordered_keys],
+        "total": overall_value,
+        "counts": [all_counts.get(key, 0) for key in ordered_keys],
+        "hours": [round(all_hours.get(key, 0.0), 2) for key in ordered_keys],
+        "total_count": total_count_all, "total_hours": round(total_hours_all, 2),
+    }
 
     return {
         "filters": {
@@ -497,7 +516,7 @@ def get_batch_day_trend(
             "from_date": from_date, "to_date": to_date, "group_by": group_by,
         },
         "periods": labels, "period_keys": ordered_keys,
-        "rows": rows_out,
+        "rows": rows_out, "total_row": total_row,
         "chart": {"categories": labels, "series": [{"name": row["fabric_type"], "data": row["values"]} for row in rows_out]},
         "kpis": {
             "batch_per_day": overall_value,
@@ -584,7 +603,7 @@ def _collect_records(
     fabric_type: str | None = None, period_key: str | None = None,
 ) -> list[dict[str, Any]]:
     items = [
-        item for item in loaded["rows"]
+        item for item in [*loaded["rows"], *loaded["other_rows"]]
         if (fabric_type is None or item["fabric_type"] == fabric_type)
         and (period_key is None or item["period_key"] == period_key)
     ]
@@ -647,14 +666,15 @@ def get_trend_batches(
 ) -> dict[str, Any]:
     """Danh sách đoạn (mẻ x ngày) của 1 ô Trend (`period_key`) hoặc ô Total (`period_key`
     = None), theo ĐÚNG bộ lọc đang chọn trên UI."""
-    fabric = _normalize_main_fabric_type(fabric_type)
-    if fabric is None:
+    is_total = fabric_type == TOTAL_ROW_LABEL
+    fabric = None if is_total else _normalize_main_fabric_type(fabric_type)
+    if fabric is None and not is_total:
         raise ValueError(f"Fabric type không hợp lệ: {fabric_type}")
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
     loaded = _load_filtered_rows(capacities, brand_programs, tank_types, from_date, to_date, group_by, require_redye_zero)
     records = _collect_records(loaded, require_redye_zero, fabric, period_key) if loaded else []
     return {
-        "fabric_type": fabric,
+        "fabric_type": fabric or TOTAL_ROW_LABEL,
         "period_key": period_key,
         "batches": [{**record, "hours": round(record["hours"], 2)} for record in records],
         "summary": _summarize_records(records),
@@ -719,7 +739,8 @@ def export_batch_day_trend_excel(
     mở trên web (`period_key` rỗng = ô Total). Luôn kèm sheet "Filters" ghi bộ lọc đã dùng."""
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
     fabric = None
-    if fabric_type:
+    is_total = fabric_type == TOTAL_ROW_LABEL
+    if fabric_type and not is_total:
         fabric = _normalize_main_fabric_type(fabric_type)
         if fabric is None:
             raise ValueError(f"Fabric type không hợp lệ: {fabric_type}")
@@ -727,7 +748,7 @@ def export_batch_day_trend_excel(
     records = _collect_records(loaded, require_redye_zero, fabric, period_key) if loaded else []
 
     workbook = Workbook()
-    if fabric is None:
+    if fabric is None and not is_total:
         trend = get_batch_day_trend(capacities, brand_programs, tank_types, from_date, to_date, group_by, require_redye_zero)
         sheet = workbook.active
         sheet.title = "Trend"
@@ -740,13 +761,13 @@ def export_batch_day_trend_excel(
         ):
             sheet.cell(row=row_idx, column=1, value=title).font = _EXCEL_BOLD
             _write_header(sheet, row_idx + 1, ["Fabric Type", "Target", *periods, "Total"])
-            for offset, row in enumerate(trend["rows"], start=row_idx + 2):
+            for offset, row in enumerate([*trend["rows"], trend["total_row"]], start=row_idx + 2):
                 sheet.cell(row=offset, column=1, value=row["fabric_type"])
                 sheet.cell(row=offset, column=2, value=row["target"] if value_key == "values" else None)
                 for col, value in enumerate(row[value_key], start=3):
                     sheet.cell(row=offset, column=col, value=value)
                 sheet.cell(row=offset, column=3 + len(periods), value=row[total_key]).font = _EXCEL_BOLD
-            row_idx += len(trend["rows"]) + 3
+            row_idx += len(trend["rows"]) + 4
         for col in range(1, len(periods) + 4):
             sheet.column_dimensions[sheet.cell(row=1, column=col).column_letter].width = 13
         batches_sheet = workbook.create_sheet("Batches")
@@ -771,7 +792,7 @@ def export_batch_day_trend_excel(
         ("Tank Type", ", ".join(_parse_brand_programs(tank_types)) or "All"),
         ("ReDye = 0", "Yes" if require_redye_zero else "No"),
         ("Fabric Type", fabric or "All"),
-        ("Period", period_label if fabric else "All"),
+        ("Period", period_label if (fabric or is_total) else "All"),
     ]
     for row_idx, (label, value) in enumerate(filters, start=2):
         filters_sheet.cell(row=row_idx, column=1, value=label)

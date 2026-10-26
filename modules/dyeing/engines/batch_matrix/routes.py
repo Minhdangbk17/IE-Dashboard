@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from flask import Blueprint, jsonify, render_template, request, send_file
 
-from core.auth import permission_required
+from core.auth import get_current_user, permission_required
 
 from . import service
 from .batch_day_trend import export_batch_day_trend_excel, get_batch_day_trend, get_trend_batches, set_trend_target
@@ -170,11 +170,28 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         color_group = str(payload.get("color_group", "")).strip()
         if not fabric_type or not color_group:
             return jsonify({"error": "Missing fabric_type/color_group."}), 400
-        try:
-            target_value = float(payload.get("target_value"))
-        except (TypeError, ValueError):
-            return jsonify({"error": "target_value must be a number."}), 400
+        raw_value = payload.get("target_value")
+        if raw_value is None or str(raw_value).strip() == "":
+            target_value = None  # để trống = xoá Target của ô
+        else:
+            try:
+                target_value = float(raw_value)
+            except (TypeError, ValueError):
+                return jsonify({"error": "target_value must be a number."}), 400
         service.set_target(fabric_type, color_group, target_value)
+        return jsonify({"status": "success"})
+
+    @bp.route("/api/shade-overrides", methods=["POST"])
+    @permission_required("dyeing", "batch_matrix", "edit")
+    def api_set_shade_override() -> Any:
+        payload = request.get_json(silent=True) or {}
+        user = get_current_user()
+        try:
+            service.set_shade_override(
+                str(payload.get("dyelot", "")), payload.get("shade"), user["username"] if user else None,
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         return jsonify({"status": "success"})
 
     return bp
