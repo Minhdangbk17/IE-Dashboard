@@ -291,7 +291,7 @@
             const shadeCell = (batch) => {
                 if (!window.BATCH_DAY_TREND_CAN_EDIT) return `<td>-</td>`;
                 return `<td><select class="form-select shade-select" data-dyelot="${escAttr(batch.dyelot)}"><option value="">Set shade...</option>` +
-                    ["Dark", "Medium", "Light"].map((shade) => `<option value="${shade}">${shade}</option>`).join("") + `</select></td>`;
+                    ["Black", "Dark", "Medium", "Light", "White"].map((shade) => `<option value="${shade}">${shade}</option>`).join("") + `</select></td>`;
             };
             dayBatchesBody.innerHTML = `<p class="f6 color-fg-muted">${batches.length} Normal batches counted in this cell.${isUnclassified && window.BATCH_DAY_TREND_CAN_EDIT ? " Pick a Shade to move the Dyelot into its Color Group." : ""}</p>` +
                 `<table class="preview-table"><thead><tr><th>Production Date</th><th>Machine</th><th>Batch No</th><th>Dyelot</th><th>SapLot</th><th>ReDye</th><th>Shade</th><th>ColourNo</th><th>Capacity (Kg)</th><th>Tank</th><th>Start</th><th>End</th>${isUnclassified ? "<th>Set Shade</th>" : ""}</tr></thead><tbody>` +

@@ -1,5 +1,13 @@
 # Active Context — Trạng thái hiện tại
 
+**Cập nhật lần cuối:** 2026-10-26 (tiếp 5) — **Fabric/Color Matrix: Black/White cho mẻ Shade trống.**
+Nguyên nhân mẻ như `005-18-00-PUMA BLACK` "mất màu": Black/White chỉ suy ra từ Shade Dark/Light + tên màu
+(`service._classify_color_group()`), mẻ có `batch_details.shade` TRỐNG (local 2171/9720) rơi vào Unclassified.
+Đã sửa 2 việc (người dùng duyệt): (1) `SHADE_CHOICES` + dropdown "Set Shade" thêm **Black/White**; (2) **tự nhận**:
+Shade trống mà ColourNo chứa BLACK (không chứa WHITE) -> Black, chứa WHITE (không BLACK) -> White; chứa cả hai
+hoặc không chứa -> vẫn Unclassified. "OFF WHITE" tính là White (chờ người dùng xác nhận). Shade nhập tay vẫn ưu
+tiên. Đọc ở READ TIME => không cần rebuild/migration. Test `test_batch_matrix_shade_sap_target.py` PASS; chưa test UI.
+
 **Cập nhật lần cuối:** 2026-10-26 (tiếp 4) — **Matrix: dòng Total(Fabric) cũng = dòng cùng loại vải của Trend**
 (người dùng chốt). `build_matrix()` lấy `values/total` của Total(Cotton/CVC/Polyester) từ `get_batch_day_trend()`
 rows; loại khác (Unknown...) từ `trend["other_fabrics"]` (mới, cùng công thức mẻ*24/giờ chiếm máy của loại đó).

@@ -216,9 +216,13 @@ def _parse_capacities(capacities: str | list[str] | None) -> list[float]:
 
 def _classify_color_group(shade: Any, colour_no: Any) -> str:
     shade_norm = str(shade or "").strip()
-    if not shade_norm:
-        return UNCLASSIFIED_COLOR_GROUP
     colour_upper = str(colour_no or "").upper()
+    if not shade_norm:
+        # Shade trống: suy ra từ tên màu; tên chứa cả BLACK lẫn WHITE (hoặc không chứa) -> để người dùng tự chọn.
+        has_black, has_white = "BLACK" in colour_upper, "WHITE" in colour_upper
+        if has_black != has_white:
+            return "Black" if has_black else "White"
+        return UNCLASSIFIED_COLOR_GROUP
     shade_upper = shade_norm.upper()
     if shade_upper == "DARK":
         return "Black" if "BLACK" in colour_upper else "Dark"
@@ -260,7 +264,7 @@ def set_target(fabric_type: str, color_group: str, target_value: float | None) -
 # ở READ TIME nên không phải import/rebuild lại gì. Chỉ ảnh hưởng Fabric/Color Matrix.
 # ---------------------------------------------------------------------------
 
-SHADE_CHOICES: tuple[str, ...] = ("Dark", "Medium", "Light")
+SHADE_CHOICES: tuple[str, ...] = ("Black", "Dark", "Medium", "Light", "White")
 
 
 def _ensure_shade_overrides_table(conn: Any) -> None:
