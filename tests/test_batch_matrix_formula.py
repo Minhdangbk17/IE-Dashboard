@@ -51,7 +51,7 @@ def _init_schema(db_path: str) -> None:
     conn.execute("""
         CREATE TABLE batch_details (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            dyelot TEXT NOT NULL, shade TEXT, colour_no TEXT, batch_type TEXT, greige_code TEXT,
+            dyelot TEXT NOT NULL, shade TEXT, colour_no TEXT, batch_type TEXT, greige_code TEXT, fabric_type TEXT,
             machine TEXT, start_time TEXT, end_time TEXT, sap_lot TEXT, redye REAL DEFAULT 0
         )
     """)
@@ -209,6 +209,14 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
                 ("M2-DARK0", "Dark", "091-NAVY", "Normal"),
             ],
         )
+        # build_matrix() đọc batch_details (như Trend): đồng bộ Machine/Fabric/Start/End từ fixture availability.
+        conn.execute(
+            "UPDATE batch_details SET "
+            "machine = (SELECT a.machine FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+            "fabric_type = (SELECT a.fabric_type FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+            "start_time = (SELECT a.start_time FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+            "end_time = (SELECT a.end_time FROM availability_logs a WHERE a.batch = batch_details.dyelot)"
+        )
         conn.commit()
         recompute_daily(day, conn)
         conn.commit()  # PHẢI commit trước khi Flask app mở connection RIÊNG tới cùng file
@@ -219,6 +227,10 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
         medium_row = conn.execute(
             "SELECT batch_count, operating_hours FROM batch_matrix_daily_summary WHERE production_date=? AND fabric_type='CVC' AND color_group='Medium'", (day.isoformat(),)
         ).fetchone()
+        # Total(Fabric)/Grand Total của build_matrix() lấy từ Batch/Day Trend -> cần summary của Trend.
+        from modules.dyeing.engines.batch_matrix.batch_day_trend import recompute_all
+        recompute_all({day}, conn)
+        conn.commit()
         conn.close()
 
         print("\n=== Kịch bản 3: máy chạy ĐA MÀU/ngày — bẫy lỗi cộng trùng giờ ở Total(Fabric) ===")

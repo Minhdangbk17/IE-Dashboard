@@ -51,7 +51,7 @@ def _init_db(db_path: str) -> None:
     """)
     conn.execute(
         "CREATE TABLE batch_details (id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, shade TEXT, colour_no TEXT, "
-        "batch_type TEXT, greige_code TEXT, machine TEXT, start_time TEXT, end_time TEXT, sap_lot TEXT, redye REAL DEFAULT 0)"
+        "batch_type TEXT, greige_code TEXT, fabric_type TEXT, machine TEXT, start_time TEXT, end_time TEXT, sap_lot TEXT, redye REAL DEFAULT 0)"
     )
     conn.execute("CREATE TABLE machines (machine_code TEXT, machine_id TEXT, capacity_kg REAL, tank_type TEXT)")
     conn.execute("INSERT INTO machines (machine_code, capacity_kg, tank_type) VALUES ('M1', 600, 'J tank'), ('M2', 300, NULL)")
@@ -73,6 +73,14 @@ def _init_db(db_path: str) -> None:
     conn.executemany(
         "INSERT INTO batch_details (dyelot, shade, colour_no, batch_type, greige_code, sap_lot, redye) VALUES (?, 'Dark', '091-NAVY', 'Normal', ?, '1000', ?)",
         [("M1-UQ0", "G1", 0), ("M1-NIKE0", "G2", 0), ("M2-UQ0", "G1", 0), ("M2-RD0", "G1", 1), ("M2-RW1", "G1", 0)],
+    )
+    # Matrix đọc batch_details (như Trend): đồng bộ Machine/Fabric/Start/End từ bảng availability của fixture.
+    conn.execute(
+        "UPDATE batch_details SET "
+        "machine = (SELECT a.machine FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+        "fabric_type = (SELECT a.fabric_type FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+        "start_time = (SELECT a.start_time FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+        "end_time = (SELECT a.end_time FROM availability_logs a WHERE a.batch = batch_details.dyelot)"
     )
     conn.commit()
     conn.close()

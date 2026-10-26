@@ -68,18 +68,13 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
 from core.batch_details_match import batch_details_join_sql
+from core.batch_source import load_resolved_batches
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import execute_query, get_db, get_dialect, sql_datetime
 from core.production_time import get_production_date, normalize_production_date, production_bounds, production_date_sql_expr
 from modules.dyeing.engines.reports.cleaning_matrix import UNCLASSIFIED_TANK_LABEL
 
-from .batch_day_trend import _TANK_ORDER, _is_normal_batch, _machine_capacities, _machine_tank_labels, _period
-
-# Nhãn "Brand - Program" suy từ batch/dyelot -> greige_code -> brand_program_mapping (cùng
-# cơ chế `downtime/service.py`/`reports/cleaning_matrix.py`) — reuse alias `b` (batch_details)
-# đã có sẵn ở mọi câu SQL trong file này (JOIN thêm brand_program_mapping AS bpm off `b`).
-_BRAND_PROGRAM_LABEL_SQL = "CASE WHEN COALESCE(bpm.brand, '') <> '' AND COALESCE(bpm.brand_program, '') <> '' THEN bpm.brand || ' - ' || bpm.brand_program ELSE '' END"
-_BRAND_PROGRAM_JOIN_SQL = "LEFT JOIN brand_program_mapping bpm ON lower(trim(bpm.greige_code)) = lower(trim(b.greige_code))"
+from .batch_day_trend import _TANK_ORDER, _brand_program_label, get_batch_day_trend, _is_normal_batch, _machine_capacities, _machine_tank_labels, _period
 
 
 def _parse_text_filter(value: str | list[str] | None) -> list[str]:
@@ -386,110 +381,51 @@ def recompute_daily(production_date: date, conn: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _raw_matrix_rows(date_from: str | None, date_to: str | None, require_redye_zero: bool = True) -> list[dict[str, Any]]:
-    """TOÀN BỘ mẻ Normal (theo quy tắc Trend) có FabricType hợp lệ trong khoảng ngày, ĐÃ phân
-    loại color_group + suy Brand Program. KHÔNG lọc capacity/brand_program/tank ở đây — lọc ở
-    `_build_core()` để `available_*` phản ánh toàn bộ khoảng ngày (giống Trend)."""
-    shifted_date = production_date_sql_expr("a.end_time")
-    sql = f"""
-        SELECT {shifted_date} AS production_date, a.fabric_type, a.machine,
-               a.batch, a.batch_ref_no, a.start_time, a.end_time,
-               b.dyelot, b.sap_lot, b.redye, b.shade, b.colour_no, {_BRAND_PROGRAM_LABEL_SQL} AS brand_program
-        FROM availability_logs a
-        {batch_details_join_sql("a.batch", "a.end_time")}
-        {_BRAND_PROGRAM_JOIN_SQL}
-        WHERE a.end_time IS NOT NULL AND a.end_time != ''
-          AND a.fabric_type IS NOT NULL AND lower(trim(a.fabric_type)) NOT IN (?, ?, ?)
-    """
-    params: list[Any] = list(_INVALID_FABRIC_TYPES)
-    if date_from:
-        sql += f" AND {shifted_date} >= ?"
-        params.append(date_from)
-    if date_to:
-        sql += f" AND {shifted_date} <= ?"
-        params.append(date_to)
+def _load_matrix_source(
+    date_from: str | None, date_to: str | None, require_redye_zero: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, float]]]:
+    """Nguồn Matrix (2026-10-26): `batch_details` qua `core/batch_source.py::load_resolved_batches()`
+    — CÙNG nguồn + CÙNG chuẩn hoá với Batch/Day Trend (Machine fill-down, FabricType fill-up,
+    production_date = ngày kết thúc theo khung 07:00) nên tập mẻ Normal của Matrix == Trend.
+    (Trước đây Matrix đọc `availability_logs` nên thiếu/lệch mẻ so với Trend — local: 3252 so 5219.)
 
-    shade_overrides = _load_shade_overrides(get_db())
-    result: list[dict[str, Any]] = []
-    for row in execute_query(sql, params):
-        day = normalize_production_date(row["production_date"])
-        machine = (row["machine"] or "").strip()
-        if not day or not machine or row["dyelot"] is None:
+    Trả (rows, hours): `rows` = mọi mẻ Normal (quy tắc `classify_batch_badge()`) ĐÃ phân loại
+    color_group + Brand Program, KHÔNG lọc capacity/brand/tank (lọc ở `_build_core()` để
+    `available_*` phản ánh toàn khoảng ngày); `hours` = {ngày: {máy: giờ chiếm máy}} của TẤT CẢ mẻ
+    (mọi loại vải, kể cả CM/Sample/Rework) — nguồn mẫu số, cắt theo khung 07:00."""
+    conn = get_db()
+    shade_overrides = _load_shade_overrides(conn)
+    rows: list[dict[str, Any]] = []
+    hours: dict[str, dict[str, float]] = {}
+    for batch in load_resolved_batches(conn):
+        segments = batch["_segments"]
+        if not segments:
             continue
-        if not _is_normal_batch(row, require_redye_zero):  # SapLot thiếu đã được coi như 1*/3* trong classify_batch_badge()
+        machine = batch["machine"]
+        for seg_day, seg_hours in segments:
+            day_bucket = hours.setdefault(seg_day.isoformat(), {})
+            day_bucket[machine] = day_bucket.get(machine, 0.0) + seg_hours
+        day = segments[-1][0].isoformat()
+        if (date_from and day < date_from) or (date_to and day > date_to):
             continue
-        override = shade_overrides.get(str(row["dyelot"]).strip())
-        shade = override or row["shade"]
-        result.append({
+        if not _is_normal_batch(batch, require_redye_zero):
+            continue
+        override = shade_overrides.get(str(batch["dyelot"]).strip())
+        shade = override or batch["shade"]
+        rows.append({
             "day": day,
-            "fabric_type": row["fabric_type"].strip(),
-            "color_group": _classify_color_group(shade, row["colour_no"]),
+            "fabric_type": batch["fabric_type"],
+            "color_group": _classify_color_group(shade, batch["colour_no"]),
             "shade_override": override,
             "capacity": None,  # gán từ Machine Master ở `_build_core()`
             "machine": machine,
-            "brand_program": str(row["brand_program"] or "").strip(),
-            "batch_no": row["batch_ref_no"] or row["batch"],
-            "dyelot": row["dyelot"], "sap_lot": row["sap_lot"], "redye": row["redye"],
-            "shade": shade, "colour_no": row["colour_no"],
-            "start_time": row["start_time"], "end_time": row["end_time"],
+            "brand_program": _brand_program_label(batch),
+            "batch_no": batch["dyelot"],
+            "dyelot": batch["dyelot"], "sap_lot": batch["sap_lot"], "redye": batch["redye"],
+            "shade": shade, "colour_no": batch["colour_no"],
+            "start_time": batch["start_time"], "end_time": batch["end_time"],
         })
-    return result
-
-
-def _machine_hours_by_day_for_range(days: list[str]) -> dict[str, dict[str, float]]:
-    """Giờ hoạt động của TỪNG MÁY theo TỪNG NGÀY trong `days` — 1 query duy nhất quét cả
-    khoảng ngày (không lặp N lần theo từng ngày); mỗi dòng raw chỉ được prorate vào ĐÚNG
-    các ngày nó thực sự overlap (dùng production_date của StartTime/EndTime để giới hạn
-    vòng lặp, thường chỉ 1-2 ngày mỗi dòng, không duyệt hết cả khoảng hiển thị)."""
-    if not days:
-        return {}
-    range_start, _ = production_bounds(days[0], days[0])
-    _, range_end = production_bounds(days[-1], days[-1])
-    rows = execute_query(
-        f"""
-        SELECT machine, start_time, end_time
-        FROM availability_logs
-        WHERE machine IS NOT NULL AND machine != ''
-          AND start_time IS NOT NULL AND start_time != ''
-          AND {sql_datetime("COALESCE(end_time, start_time)")} > {sql_datetime("?")}
-          AND {sql_datetime("start_time")} < {sql_datetime("?")}
-        """,
-        (range_start, range_end),
-    )
-    day_set = set(days)
-    day_windows: dict[str, tuple[datetime, datetime]] = {}
-    for day in days:
-        window_start, window_end = production_bounds(day, day)
-        day_windows[day] = (datetime.strptime(window_start, "%Y-%m-%d %H:%M:%S"), datetime.strptime(window_end, "%Y-%m-%d %H:%M:%S"))
-
-    result: dict[str, dict[str, float]] = {}
-    for row in rows:
-        machine = (row["machine"] or "").strip()
-        if not machine:
-            continue
-        try:
-            start_dt = datetime.strptime(row["start_time"], "%Y-%m-%d %H:%M:%S")
-        except (TypeError, ValueError):
-            continue
-        end_raw = row["end_time"] or row["start_time"]
-        try:
-            end_dt = datetime.strptime(end_raw, "%Y-%m-%d %H:%M:%S")
-        except (TypeError, ValueError):
-            end_dt = start_dt
-        current = get_production_date(start_dt)
-        last_day = get_production_date(end_dt)
-        while current <= last_day:
-            day_str = current.isoformat()
-            if day_str in day_set:
-                window_start_dt, window_end_dt = day_windows[day_str]
-                overlap_start = max(start_dt, window_start_dt)
-                overlap_end = min(end_dt, window_end_dt)
-                overlap_hours = (overlap_end - overlap_start).total_seconds() / 3600.0
-                if overlap_hours > 0:
-                    day_bucket = result.setdefault(day_str, {})
-                    day_bucket[machine] = day_bucket.get(machine, 0.0) + overlap_hours
-            current += timedelta(days=1)
-    return result
+    return rows, hours
 
 
 def _empty_result(date_from: str | None = None, date_to: str | None = None, group_by: str = "date", error: str | None = None) -> dict[str, Any]:
@@ -513,7 +449,7 @@ def _build_core(
     Excel export. Trả `None` khi không có dữ liệu trong khoảng ngày."""
     conn = get_db()
     ensure_brand_program_table(conn)
-    raw_rows = _raw_matrix_rows(date_from, date_to, require_redye_zero)
+    raw_rows, machine_hours_by_day = _load_matrix_source(date_from, date_to, require_redye_zero)
     if not raw_rows:
         return None
     # Capacity + Tank tra Machine Master (`machines`) tại read time — GIỐNG Trend; máy chưa khai
@@ -560,6 +496,7 @@ def _build_core(
     period_keys = sorted(period_labels)
     return {
         "rows": [row for row in rows if row["period_key"] is not None],
+        "machine_hours_by_day": machine_hours_by_day,
         "days": days,
         "period_of_day": period_of_day,
         "period_keys": period_keys,
@@ -590,7 +527,7 @@ def build_matrix(
         return _empty_result(date_from, date_to, group_by)
 
     days, period_keys = core["days"], core["period_keys"]
-    machine_hours_by_day = _machine_hours_by_day_for_range(days)
+    machine_hours_by_day = core["machine_hours_by_day"]
 
     # Đếm mẻ + TẬP MÁY theo (cấp gộp, ngày). Mẫu số của mọi cấp = giờ máy của ĐÚNG tập máy đó
     # trong ngày, mỗi máy cộng 1 lần (khử trùng máy — xem docstring đầu file).
@@ -632,6 +569,28 @@ def build_matrix(
     def color_group_sort_key(name: str) -> tuple[int, str]:
         return (1, name) if name == UNCLASSIFIED_COLOR_GROUP else (0, name)
 
+    # Grand Total = ĐÚNG dòng Total của Batch/Day Trend cùng bộ lọc (yêu cầu người dùng 2026-10-26:
+    # 2 báo cáo phải bằng nhau, số của Trend là số đúng) — KHÔNG tự tính từ tập máy như các dòng trên.
+    trend = get_batch_day_trend(
+        capacities=capacities, brand_programs=brand_programs, tank_types=tank_types,
+        from_date=date_from, to_date=date_to, group_by=group_by, require_redye_zero=require_redye_zero,
+    )
+    trend_total = trend["total_row"]
+    trend_by_key = {
+        key: value for key, value, hours in zip(trend["period_keys"], trend_total["values"], trend_total["hours"]) if hours
+    }
+    # Dòng Total(Fabric) = ĐÚNG dòng cùng loại vải của Trend (Cotton/CVC/Polyester, hoặc loại khác như
+    # Unknown) — số mẻ * 24 / giờ chiếm máy; chỉ ô data (Fabric x Color) giữ công thức tập máy.
+    trend_fabric = {row["fabric_type"]: row for row in trend["rows"]}
+    trend_fabric.update(trend["other_fabrics"])
+
+    def trend_fabric_values(fabric_type: str) -> tuple[dict[str, float | None], float | None] | None:
+        source = trend_fabric.get(fabric_type)
+        if source is None:
+            return None
+        by_key = {key: value for key, value, hours in zip(trend["period_keys"], source["values"], source["hours"]) if hours}
+        return {key: by_key.get(key) for key in period_keys}, (source["total"] if source.get("total_hours", 1) else None)
+
     rows: list[dict[str, Any]] = []
     for fabric_type in sorted(fabric_count):
         color_groups = sorted({color_group for (ft, color_group) in cell_count if ft == fabric_type}, key=color_group_sort_key)
@@ -643,15 +602,16 @@ def build_matrix(
                 "values": values(cell_count[cell_key], cell_machines[cell_key]),
                 "total": ratio(cell_count[cell_key], cell_machines[cell_key], None),
             })
+        from_trend = trend_fabric_values(fabric_type)
         rows.append({
             "row_type": "fabric_total", "fabric_type": fabric_type, "color_group": None, "target": None,
-            "values": values(fabric_count[fabric_type], fabric_machines[fabric_type]),
-            "total": ratio(fabric_count[fabric_type], fabric_machines[fabric_type], None),
+            "values": from_trend[0] if from_trend else values(fabric_count[fabric_type], fabric_machines[fabric_type]),
+            "total": from_trend[1] if from_trend else ratio(fabric_count[fabric_type], fabric_machines[fabric_type], None),
         })
-    grand_total = ratio(grand_count, grand_machines, None)
+    grand_total = trend_total["total"] if trend_total["total_hours"] else None
     rows.append({
         "row_type": "grand_total", "fabric_type": None, "color_group": None, "target": None,
-        "values": values(grand_count, grand_machines), "total": grand_total,
+        "values": {key: trend_by_key.get(key) for key in period_keys}, "total": grand_total,
     })
 
     return {

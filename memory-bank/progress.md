@@ -1232,3 +1232,26 @@
 - Route `/api/import/<schema_key>` (Telemetry/Downtime, `ImportSchema`-based)
   không được UI nào gọi tới hiện tại — giữ lại vì chưa xác nhận có còn cần
   không, không phải bug nhưng là code "mồ côi" cần lưu ý khi audit.
+
+## Nợ kỹ thuật cần kiểm tra sau (ghi 2026-10-26 — Fabric/Color Matrix đồng bộ với Batch/Day Trend)
+- **Công thức Matrix không còn nhất quán nội bộ**: dòng Total(Fabric) + Grand Total lấy THẲNG từ Batch/Day Trend
+  (mẻ*24 / giờ chiếm máy), còn ô data (Fabric x Color) vẫn dùng công thức "giờ cả ngày của TẬP MÁY"
+  (`build_matrix()`). Hệ quả: tổng các ô con KHÔNG khớp dòng Total (mẫu số khác nhau). Cần người dùng xác nhận
+  có muốn ô data cũng chuyển sang giờ chiếm máy của riêng Fabric x Color (nhất quán, nhưng đổi thang đo Target
+  `batch_matrix_targets`) hay giữ nguyên như hiện tại.
+- **Matrix phụ thuộc `batch_day_trend_daily_summary`**: Total lấy từ rollup của Trend, nên summary cũ/chưa
+  rebuild -> Matrix sai theo. Mọi lần đổi quy tắc phân loại (vd SapLot trống 2026-10-26) PHẢI `flask
+  rebuild-summaries`. Chưa có cảnh báo trên UI khi summary lệch nguồn.
+- **Rollup cũ vô chủ**: `batch_matrix.service.recompute_daily()` + bảng `batch_matrix_daily_summary` (đọc
+  `availability_logs`) vẫn chạy mỗi lần import nhưng KHÔNG báo cáo nào đọc nữa; `_ensure_summary_table`,
+  `_compute_operating_hours_by_machine` cũng dead code. Nên xoá hoặc ghi rõ lý do giữ.
+- **Matrix không còn dùng `availability_logs`**; mẻ có Availability nhưng thiếu trong Batch sẽ không hiện (đúng
+  như Trend). Chưa kiểm tra dữ liệu production xem có mất mẻ nào đáng kể không.
+- **Nhóm "Unknown" mới xuất hiện trong Matrix** (mẻ cuối máy không có mẻ sau để lấy FabricType) — cần xác nhận
+  có nên ẩn/gộp thay vì hiện như 1 nhóm vải riêng.
+- **SapLot trống = Normal áp cho cả 3 báo cáo** (quyết định người dùng) — nếu SapLot trống do lỗi import chứ không
+  phải mẻ hợp lệ thì sẽ đếm nhầm; nên đối chiếu số mẻ SapLot trống trên dữ liệu thật.
+- **Shade nhập tay (`batch_shade_overrides`) chỉ ảnh hưởng Matrix**, không đổi `batch_details.shade` nên Trend /
+  Batch Per Day by Machine vẫn thấy Shade gốc; chưa có màn hình xem/xoá danh sách override.
+- `tests/test_batch_source_consistency.py` báo `PermissionError` khi xoá file DB tạm trên Windows (sau khi mọi
+  kiểm tra PASS) — lỗi dọn dẹp test, chưa sửa.

@@ -335,6 +335,7 @@ def _empty_trend(group_by: str, targets: dict[str, float | None] | None = None) 
              "counts": [], "hours": [], "total_count": 0, "total_hours": 0.0}
             for name in MAIN_FABRIC_TYPES
         ],
+        "other_fabrics": {},
         "total_row": {"fabric_type": TOTAL_ROW_LABEL, "target": None, "values": [], "total": 0.0,
                       "counts": [], "hours": [], "total_count": 0, "total_hours": 0.0},
         "chart": {"categories": [], "series": []},
@@ -414,7 +415,7 @@ def _load_filtered_rows(
             continue
         day = datetime.strptime(row["production_date"], "%Y-%m-%d").date()
         key, label = _period(day, group_by)
-        item = {"row": row, "fabric_type": fabric_type or OTHER_FABRIC_LABEL, "period_key": key, "period_label": label, "tank": tank}
+        item = {"row": row, "fabric_type": fabric_type or str(row["fabric_type"] or "").strip() or OTHER_FABRIC_LABEL, "period_key": key, "period_label": label, "tank": tank}
         (filtered if fabric_type else other_filtered).append(item)
 
     return {
@@ -457,6 +458,8 @@ def get_batch_day_trend(
     period_labels: dict[str, str] = {}
     all_counts: dict[str, int] = {}
     all_hours: dict[str, float] = {}
+    other_counts: dict[str, dict[str, int]] = {}
+    other_hours: dict[str, dict[str, float]] = {}
     for item in [*loaded["rows"], *loaded["other_rows"]]:
         row, fabric_type, key = item["row"], item["fabric_type"], item["period_key"]
         period_labels[key] = item["period_label"]
@@ -467,6 +470,11 @@ def get_batch_day_trend(
             period_hours[fabric_type][key] = period_hours[fabric_type].get(key, 0.0) + float(row["hours"] or 0)
             if row["batch_count"]:
                 period_counts[fabric_type][key] = period_counts[fabric_type].get(key, 0) + int(row["batch_count"])
+        else:  # loại vải ngoài 3 loại chính (Unknown, ...): gom riêng để Fabric/Color Matrix dùng lại
+            other_hours.setdefault(fabric_type, {})[key] = other_hours.get(fabric_type, {}).get(key, 0.0) + float(row["hours"] or 0)
+            other_counts.setdefault(fabric_type, {})
+            if row["batch_count"]:
+                other_counts[fabric_type][key] = other_counts[fabric_type].get(key, 0) + int(row["batch_count"])
 
     if not period_labels:
         result = _empty_trend(group_by, trend_targets)
@@ -498,6 +506,17 @@ def get_batch_day_trend(
     total_count_all = sum(all_counts.values())
     total_hours_all = sum(all_hours.values())
     overall_value = round(total_count_all * 24 / total_hours_all, 2) if total_hours_all else 0.0
+    # Loại vải ngoài 3 loại chính: cùng công thức (mẻ * 24 / giờ chiếm máy của riêng loại đó).
+    other_fabrics = {}
+    for name, hours in other_hours.items():
+        counts = other_counts.get(name, {})
+        total_hours_f = sum(hours.values())
+        other_fabrics[name] = {
+            "values": [round(counts.get(key, 0) * 24 / hours[key], 2) if hours.get(key) else 0.0 for key in ordered_keys],
+            "hours": [round(hours.get(key, 0.0), 2) for key in ordered_keys],
+            "total": round(sum(counts.values()) * 24 / total_hours_f, 2) if total_hours_f else 0.0,
+            "total_hours": round(total_hours_f, 2),
+        }
     total_row = {
         "fabric_type": TOTAL_ROW_LABEL, "target": None,
         "values": [round(all_counts.get(key, 0) * 24 / all_hours[key], 2) if all_hours.get(key) else 0.0 for key in ordered_keys],
@@ -516,7 +535,7 @@ def get_batch_day_trend(
             "from_date": from_date, "to_date": to_date, "group_by": group_by,
         },
         "periods": labels, "period_keys": ordered_keys,
-        "rows": rows_out, "total_row": total_row,
+        "rows": rows_out, "total_row": total_row, "other_fabrics": other_fabrics,
         "chart": {"categories": labels, "series": [{"name": row["fabric_type"], "data": row["values"]} for row in rows_out]},
         "kpis": {
             "batch_per_day": overall_value,

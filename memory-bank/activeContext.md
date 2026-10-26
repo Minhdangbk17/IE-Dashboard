@@ -1,5 +1,28 @@
 # Active Context — Trạng thái hiện tại
 
+**Cập nhật lần cuối:** 2026-10-26 (tiếp 4) — **Matrix: dòng Total(Fabric) cũng = dòng cùng loại vải của Trend**
+(người dùng chốt). `build_matrix()` lấy `values/total` của Total(Cotton/CVC/Polyester) từ `get_batch_day_trend()`
+rows; loại khác (Unknown...) từ `trend["other_fabrics"]` (mới, cùng công thức mẻ*24/giờ chiếm máy của loại đó).
+CHỈ ô data (Fabric x Color) còn dùng công thức tập máy => Total(Fabric) KHÔNG còn bằng tổng/khử trùng các ô con.
+Đã đối chiếu 3 bộ lọc trên bản sao DB local sau rebuild: Grand + 3 dòng vải == Trend. Test formula scenario 3 giờ
+seed summary Trend (`recompute_all`) vì Total lấy từ Trend.
+
+**Bản ghi trước:** 2026-10-26 (tiếp 3) — **Fabric/Color Matrix đổi NGUỒN sang `batch_details`** (cùng
+`core/batch_source.py::load_resolved_batches()` với Trend). Nguyên nhân Matrix != Trend KHÔNG phải phân loại
+Shade mà là nguồn: Matrix đọc `availability_logs` nên local chỉ có 3252 mẻ Normal (Trend 5219, sau rebuild
+5453; 2151 mẻ chỉ có ở Trend, 184 chỉ có ở Matrix). Giờ `service._load_matrix_source()` trả (mẻ Normal,
+giờ máy theo ngày từ đoạn 07:00) => tập mẻ Matrix == Trend, đã đối chiếu từng loại vải 3 bộ lọc (khớp tuyệt
+đối sau `rebuild-summaries`). Mẻ FabricType "Unknown" (mẻ cuối máy) giờ HIỆN thành nhóm riêng trong Matrix.
+`availability_logs` không còn ảnh hưởng Matrix (mẫu số tập máy dùng giờ batch). Fixture 3 test Matrix đổi sang
+đồng bộ batch_details; thêm kiểm tra parity Matrix==Trend vào `test_batch_matrix_shade_sap_target.py`.
+
+**Bản ghi trước:** 2026-10-26 (tiếp 2) — **Fabric/Color Matrix: Grand Total = dòng Total của Batch/Day Trend.**
+Người dùng chốt: 2 số phải bằng nhau, số của Trend là đúng (Grand Total cũ tự khử trùng tập máy nên lớn hơn cả
+3 dòng Total theo vải, vd 1.71 so với Trend 1.27). `build_matrix()` giờ gọi `get_batch_day_trend()` cùng bộ lọc
+và lấy `total_row` (cột Total + từng kỳ; kỳ không có giờ -> trống). Dòng Total(Fabric)/ô data GIỮ công thức tập
+máy cũ => Grand Total KHÔNG còn là "khử trùng của các dòng trên" và có thể lệch tổng các dòng vải. Phụ thuộc
+`batch_day_trend_daily_summary` (cần rebuild sau thay đổi quy tắc). Đã đối chiếu 3 bộ lọc trên dữ liệu local: bằng nhau.
+
 **Cập nhật lần cuối:** 2026-10-26 (tiếp) — **Batch/Day Trend: thêm dòng "Total" dưới Polyester** (bảng chi tiết).
 Total KHÔNG quan tâm Fabric Type: cộng MỌI mẻ/giờ đã qua bộ lọc, kể cả loại ngoài Cotton/CVC/Polyester
 (Unknown, ...) vốn không có dòng riêng. `_load_filtered_rows()` giữ thêm `other_rows`; API trả `total_row`

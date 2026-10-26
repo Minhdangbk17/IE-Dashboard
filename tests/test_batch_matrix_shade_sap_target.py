@@ -26,6 +26,7 @@ from flask import Flask  # noqa: E402
 from modules.dyeing.engines.batch_matrix.service import (  # noqa: E402
     build_matrix, get_cell_batches, get_targets, set_shade_override, set_target,
 )
+from modules.dyeing.engines.batch_matrix.batch_day_trend import get_batch_day_trend, recompute_all  # noqa: E402
 
 DAY = "2026-09-01"
 
@@ -41,7 +42,7 @@ def _init_db(db_path: str) -> None:
     """)
     conn.execute(
         "CREATE TABLE batch_details (id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, shade TEXT, colour_no TEXT, "
-        "batch_type TEXT, greige_code TEXT, machine TEXT, start_time TEXT, end_time TEXT, sap_lot TEXT, redye REAL DEFAULT 0)"
+        "batch_type TEXT, greige_code TEXT, fabric_type TEXT, machine TEXT, start_time TEXT, end_time TEXT, sap_lot TEXT, redye REAL DEFAULT 0)"
     )
     conn.execute("CREATE TABLE machines (machine_code TEXT, machine_id TEXT, capacity_kg REAL, tank_type TEXT)")
     conn.execute("INSERT INTO machines (machine_code, capacity_kg) VALUES ('M1', 600)")
@@ -63,6 +64,14 @@ def _init_db(db_path: str) -> None:
             "INSERT INTO batch_details (dyelot, shade, colour_no, batch_type, sap_lot, redye) VALUES (?, ?, '091-NAVY', 'Normal', ?, 0)",
             (dyelot, shade, sap_lot),
         )
+    # Matrix đọc batch_details (như Trend): đồng bộ Machine/Fabric/Start/End từ bảng availability của fixture.
+    conn.execute(
+        "UPDATE batch_details SET "
+        "machine = (SELECT a.machine FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+        "fabric_type = (SELECT a.fabric_type FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+        "start_time = (SELECT a.start_time FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
+        "end_time = (SELECT a.end_time FROM availability_logs a WHERE a.batch = batch_details.dyelot)"
+    )
     conn.commit()
     conn.close()
 
@@ -127,6 +136,20 @@ def main() -> int:
             set_target("CVC", "Dark", None)
             _check("xoá Target (để trống)", get_targets(), [], failures)
             _check("ma trận hết Target", _groups(build_matrix(group_by="date"))["Dark"]["target"], None, failures)
+
+            print("\n=== 4. Matrix và Batch/Day Trend cùng tập mẻ Normal / cùng Total ===")
+            from datetime import date
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            recompute_all({date(2026, 9, 1)}, conn)
+            conn.commit()
+            conn.close()
+            trend = get_batch_day_trend(group_by="date")
+            matrix = build_matrix(group_by="date")
+            matrix_count = sum(len(get_cell_batches(r["fabric_type"], r["color_group"])) for r in matrix["rows"] if r["row_type"] == "data")
+            _check("tổng số mẻ Normal Matrix == Trend", matrix_count, trend["total_row"]["total_count"], failures)
+            grand = next(r for r in matrix["rows"] if r["row_type"] == "grand_total")
+            _check("Grand Total Matrix == Total Trend", grand["total"], trend["total_row"]["total"], failures)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
