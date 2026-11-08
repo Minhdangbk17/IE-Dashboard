@@ -421,10 +421,25 @@ create table if not exists batch_shade_overrides (
     updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
 
+-- BatchType / FabricType / Shade typed by hand for batches whose BatchType is blank or
+-- "Unknown" (Data Quality tab of Batch Per Day by Machine); overrides batch_details at read time.
+create table if not exists batch_manual_overrides (
+    id bigserial primary key,
+    dyelot text not null,
+    machine text not null,
+    start_time text not null,
+    batch_type text not null,
+    fabric_type text not null,
+    shade text not null,
+    updated_by text,
+    updated_at text not null default to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+    unique (dyelot, machine, start_time)
+);
+
 -- Batch/Day Trend tab (batch_matrix engine). Grain = 1 row per batch x production-day
 -- segment (07:00->07:00 split, source batch_details only). is_valid = normal batches counted
--- on this segment (end day) with ReDye = 0; is_valid_any_redye = same without the ReDye
--- condition — see batch_day_trend.py module docstring.
+-- on this segment (end day). is_valid_any_redye is a legacy column no longer written
+-- (default 0).
 create table if not exists batch_day_trend_daily_summary (
     production_date text not null,
     machine text not null,
@@ -707,6 +722,7 @@ alter table downtime_achievement_standards enable row level security;
 alter table batch_matrix_daily_summary enable row level security;
 alter table batch_matrix_targets enable row level security;
 alter table batch_shade_overrides enable row level security;
+alter table batch_manual_overrides enable row level security;
 alter table batch_day_trend_daily_summary enable row level security;
 alter table batch_day_trend_targets enable row level security;
 alter table cleaning_mc_daily_summary enable row level security;

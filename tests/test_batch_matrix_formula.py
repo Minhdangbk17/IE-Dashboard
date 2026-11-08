@@ -1,20 +1,3 @@
-"""
-tests/test_batch_matrix_formula.py
-------------------------------------
-Đối chiếu công thức mẫu số THỨ 3 (2026-09-10) của `batch_matrix`: với 1 ô (fabric_type,
-color_group, capacity_kg, ngày), mẫu số = tổng giờ hoạt động (prorate theo ranh giới 7h
-sáng) của ĐÚNG TẬP MÁY đã chạy các mẻ được đếm ở tử số của ô đó — bao gồm cả giờ mẻ KHÁC
-màu/vải mà chính các máy này cũng chạy hôm đó. Ở cấp Total(Fabric)/Grand Total, PHẢI khử
-trùng máy (tập máy = hợp của mọi ColorGroup con) trước khi cộng giờ — nếu không sẽ đếm
-trùng giờ của máy chạy đa màu/ngày (đúng loại bug COUNT DISTINCT đã bắt được trước đây, ở
-"giờ" thay vì "đếm máy").
-
-Dùng DB TẠM (file SQLite tạm + Flask app context tạm trỏ vào file đó, KHÔNG đụng DB thật)
-để test được cả `recompute_daily()` (nhận `conn` trực tiếp) lẫn `build_matrix()` (cần
-`get_db()`/`execute_query()` qua Flask app context).
-
-Chạy: python tests/test_batch_matrix_formula.py
-"""
 from __future__ import annotations
 
 import os
@@ -69,12 +52,6 @@ def _check(label: str, actual, expected, failures: list[str], tolerance: float =
 
 
 def _scenario_basic_cell(failures: list[str]) -> None:
-    """Ví dụ số gốc: 1 ô (CVC/Dark/capacity=600) có ĐÚNG 2 máy D507, D511 trong toàn bộ DB
-    tạm — tập máy của ô này = {D507, D511} = MỌI máy có trong DB, nên mẫu số bằng đúng tổng
-    giờ 2 máy này (16h) như ví dụ gốc, không phân biệt được với thiết kế "giờ dùng chung"
-    (đã đổi ở lần trước) khi chỉ có 1 ô duy nhất — case này XÁC NHẬN công thức verbatim
-    không đổi khi không có giao thoa máy giữa các ô, còn case đa màu bên dưới mới bẫy đúng
-    khác biệt giữa 2 thiết kế."""
     fd, db_path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     try:
@@ -123,19 +100,6 @@ def _scenario_basic_cell(failures: list[str]) -> None:
 
 
 def _scenario_overnight_split(failures: list[str]) -> None:
-    """Mẻ chạy qua đêm — CHIA NHỎ operating_hours theo ranh giới 7h sáng. Máy D999 cần CÓ
-    thêm 1 mẻ hoàn tất ngay trong từng ngày (Batch X ngày trước, Batch Z ngày sau) để tạo
-    "neo" tử số cho cả 2 ngày — vì ở thiết kế mới, mẫu số CHỈ tồn tại cho ô nào tử số > 0
-    (tập máy được xác định TỪ chính các mẻ đã đếm), nên 1 mẻ qua đêm ĐƠN LẺ không có mẻ nào
-    khác hoàn tất cùng ngày sẽ không tạo ra ô nào để hiển thị — đây là hệ quả ĐÚNG của thiết
-    kế (không phải bug): không có mẻ nào hoàn tất hôm đó nghĩa là không có gì để chia tỷ lệ.
-
-    - Batch X: 07:00-12:00 ngày trước (5h, hoàn tất ngày trước -> neo tử số ngày trước).
-    - Batch Y (qua đêm): 22:00 ngày trước -> 10:00 ngày sau (12h, tách 9h/3h theo ranh giới 7h).
-    - Batch Z: 11:00-15:00 ngày sau (4h, hoàn tất ngày sau -> neo tử số ngày sau).
-    - operating_hours ngày trước = X(5h) + phần Y trước 7h(9h) = 14h.
-    - operating_hours ngày sau = phần Y từ 7h(3h) + Z(4h) = 7h.
-    - Tổng 3 mẻ = 5+12+4 = 21h = 14+7 (không mất/thừa giờ khi chia theo 2 ngày)."""
     fd, db_path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     try:
@@ -173,18 +137,6 @@ def _scenario_overnight_split(failures: list[str]) -> None:
 
 
 def _scenario_multicolor_dedup(failures: list[str]) -> None:
-    """BẪY LỖI CỘNG TRÙNG: máy M1 chạy CẢ 2 màu (Dark + Medium) cùng ngày. Nếu Total(Fabric)
-    cộng THẲNG operating_hours của 2 dòng ColorGroup con, giờ của M1 sẽ bị cộng 2 LẦN.
-
-    - M1: mẻ Dark 4h (07:00-11:00) + mẻ Medium 5h (11:00-16:00) = 9h/ngày.
-    - M2: mẻ Dark 6h (07:00-13:00) = 6h/ngày.
-    - Dòng Dark: tử số=2 (M1+M2), tập máy={M1,M2}, operating_hours = 9+6 = 15h (LƯU Ý: giờ
-      CỦA M1 Ở ĐÂY LÀ TOÀN BỘ 9h trong ngày, không phải chỉ 4h phần Dark).
-    - Dòng Medium: tử số=1 (M1), tập máy={M1}, operating_hours = 9h (toàn bộ ngày của M1).
-    - Total(CVC) SAI (cộng thẳng 2 dòng trên) = 15 + 9 = 24h -> giá trị SAI = 3*24/24 = 3.0.
-    - Total(CVC) ĐÚNG (khử trùng M1, chỉ cộng 1 lần) = tập máy hợp {M1,M2} = 9+6 = 15h
-      -> giá trị ĐÚNG = 3*24/15 = 4.8.
-    `build_matrix()` PHẢI trả về 4.8 (không phải 3.0) để xác nhận không cộng trùng."""
     fd, db_path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     try:
@@ -195,7 +147,6 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
         conn.executemany(
             "INSERT INTO availability_logs (batch, fabric_type, machine, capacity_kg, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)",
             [
-                # Dyelot *0 + SapLot 1* = mẻ Normal theo quy tắc Trend (build_matrix từ 2026-10-06).
                 ("M1-DARK0", "CVC", "M1", 700, "2026-09-10 07:00:00", "2026-09-10 11:00:00"),
                 ("M1-MED0", "CVC", "M1", 700, "2026-09-10 11:00:00", "2026-09-10 16:00:00"),
                 ("M2-DARK0", "CVC", "M2", 700, "2026-09-10 07:00:00", "2026-09-10 13:00:00"),
@@ -209,7 +160,6 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
                 ("M2-DARK0", "Dark", "091-NAVY", "Normal"),
             ],
         )
-        # build_matrix() đọc batch_details (như Trend): đồng bộ Machine/Fabric/Start/End từ fixture availability.
         conn.execute(
             "UPDATE batch_details SET "
             "machine = (SELECT a.machine FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
@@ -219,7 +169,7 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
         )
         conn.commit()
         recompute_daily(day, conn)
-        conn.commit()  # PHẢI commit trước khi Flask app mở connection RIÊNG tới cùng file
+        conn.commit()
 
         dark_row = conn.execute(
             "SELECT batch_count, operating_hours FROM batch_matrix_daily_summary WHERE production_date=? AND fabric_type='CVC' AND color_group='Dark'", (day.isoformat(),)
@@ -227,7 +177,6 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
         medium_row = conn.execute(
             "SELECT batch_count, operating_hours FROM batch_matrix_daily_summary WHERE production_date=? AND fabric_type='CVC' AND color_group='Medium'", (day.isoformat(),)
         ).fetchone()
-        # Total(Fabric)/Grand Total của build_matrix() lấy từ Batch/Day Trend -> cần summary của Trend.
         from modules.dyeing.engines.batch_matrix.batch_day_trend import recompute_all
         recompute_all({day}, conn)
         conn.commit()
@@ -262,13 +211,6 @@ def _scenario_multicolor_dedup(failures: list[str]) -> None:
 
 
 def _scenario_duplicate_dyelot_redye(failures: list[str]) -> None:
-    """BẪY LỖI ĐẾM TRÙNG: 1 Dyelot có 2 dòng batch_details (mẻ gốc bị NG + mẻ redye chạy lại,
-    xem điều tra mẻ C260659920 trong memory-bank/activeContext.md) — availability_logs CHỈ có
-    1 dòng lịch máy, khớp lần chạy REDYE (end_time khớp chính xác dòng redye). JOIN theo dyelot
-    ĐƠN THUẦN sẽ khớp CẢ 2 dòng batch_details, nhân đôi dòng availability_logs này -> batch_count
-    của ô đó bị đếm 2 thay vì 1. `batch_details_join_sql()` phải chọn ĐÚNG dòng redye (end_time
-    khớp chính xác) — không chỉ tránh đếm trùng mà còn gán ĐÚNG màu (Dark, của mẻ redye) chứ
-    không phải màu của mẻ gốc (Medium)."""
     fd, db_path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     try:
@@ -283,9 +225,7 @@ def _scenario_duplicate_dyelot_redye(failures: list[str]) -> None:
         conn.executemany(
             "INSERT INTO batch_details (dyelot, shade, colour_no, batch_type, machine, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                # Mẻ gốc NG — kết thúc SỚM HƠN, KHÔNG khớp end_time của dòng availability_logs.
                 ("C-REDYE", "Medium", "500-GREY", "Normal", "D600", "2026-09-01 06:00:00", "2026-09-01 08:00:00"),
-                # Mẻ redye — end_time KHỚP CHÍNH XÁC dòng availability_logs.
                 ("C-REDYE", "Dark", "091-NAVY", "Normal", "D600", "2026-09-12 06:00:00", "2026-09-12 10:00:00"),
             ],
         )
@@ -306,12 +246,80 @@ def _scenario_duplicate_dyelot_redye(failures: list[str]) -> None:
         os.unlink(db_path)
 
 
+def _scenario_color_formula(failures: list[str]) -> None:
+    from modules.dyeing.engines.batch_matrix.service import _classify_color_group
+
+    print("\n=== Kịch bản 5: phân màu theo công thức `Color` (ColourNo, Shade; không có nhóm Non-dyed) ===")
+    lookup = {"RED 123": "Dark"}
+    cases = [
+        (("PUMA BLACK", "Medium"), "Black", "1. ColourNo BLACK thắng Shade Medium"),
+        (("BLACK/WHITE", ""), "Black", "1. chứa cả BLACK lẫn WHITE -> Black"),
+        (("OFF WHITE", "Light"), "White", "2. ColourNo WHITE"),
+        (("RED 123", "medium"), "Medium", "3. Shade (Proper)"),
+        (("  ", ""), "Unclassified", "4. ColourNo trống"),
+        (("red 123", ""), "Dark", "5. mượn Shade mẻ khác cùng ColourNo (không phân biệt hoa/thường)"),
+        (("005-18-00 PUMA RED", ""), "Dark", "6. mã số: 18 <= 30 -> Dark"),
+        (("123-45-67", ""), "Medium", "6. mã số: 45 <= 50 -> Medium"),
+        (("123-60-00", ""), "Light", "6. mã số: 60 -> Light"),
+        (("NAVY 19-4052 TCX", ""), "Dark", "7. Pantone TCX 19 -> Dark"),
+        (("CORAL 16-1546  TCX", ""), "Light", "7. Pantone TCX 16 -> Light (TRIM gộp khoảng trắng)"),
+        (("DK GREEN", ""), "Dark", "8. từ khoá DK"),
+        (("CREAM", ""), "Light", "8. từ khoá CREAM"),
+        (("RED", ""), "Unclassified", "8. không khớp gì"),
+    ]
+    for (colour, shade), expected, label in cases:
+        _check(label, _classify_color_group(colour, shade, lookup), expected, failures)
+
+
+def _scenario_formula_v4_cm_next_color(failures: list[str]) -> None:
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _init_schema(db_path)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.executemany(
+            "INSERT INTO batch_details (dyelot, shade, colour_no, fabric_type, machine, start_time, end_time, sap_lot, batch_type) "
+            "VALUES (?, ?, ?, 'CVC', ?, ?, ?, '1000', ?)",
+            [
+                ("M1-WA", "", "", "M1", "2026-09-15 07:00:00", "2026-09-15 08:00:00", "Unknown"),
+                ("M1-L0", "Light", "SKY", "M1", "2026-09-15 08:00:00", "2026-09-15 12:00:00", "Normal"),
+                ("M1-D0", "Dark", "RED", "M1", "2026-09-15 12:00:00", "2026-09-15 17:00:00", "Normal"),
+                ("M2-D1", "Dark", "RED", "M2", "2026-09-15 07:00:00", "2026-09-15 13:00:00", "Rework"),
+                ("M2-WA", "", "", "M2", "2026-09-15 13:00:00", "2026-09-15 14:00:00", "Unknown"),
+            ],
+        )
+        conn.commit()
+        from modules.dyeing.engines.batch_matrix.batch_day_trend import recompute_all
+        recompute_all({date(2026, 9, 15)}, conn)
+        conn.commit()
+        conn.close()
+
+        app = _make_temp_app(db_path)
+        with app.app_context():
+            data = build_matrix()
+            close_db()
+        cells = {r["color_group"]: r for r in data["rows"] if r["row_type"] == "data" and r["fabric_type"] == "CVC"}
+        fabric_total = next(r for r in data["rows"] if r["row_type"] == "fabric_total" and r["fabric_type"] == "CVC")
+
+        print("\n=== Kịch bản 6: công thức bản 4 + CM lấy màu mẻ kế tiếp ===")
+        _check("Light = 1*24/(CM 1h + 4h)", cells["Light"]["total"], 4.8, failures, tolerance=0.01)
+        _check("Dark = 1*24/(5h + Rework 6h)", cells["Dark"]["total"], 2.18, failures, tolerance=0.01)
+        _check("Unclassified (CM cuối máy) = 0", cells["Unclassified"]["total"], 0.0, failures)
+        _check("tổng giờ các ô = 17h", round(sum(r["hours"] for r in cells.values()), 2), 17.0, failures, tolerance=0.01)
+        _check("Total(CVC) từ Trend = 2*24/17", fabric_total["total"], 2.82, failures, tolerance=0.01)
+    finally:
+        os.unlink(db_path)
+
+
 def main() -> int:
     failures: list[str] = []
     _scenario_basic_cell(failures)
     _scenario_overnight_split(failures)
     _scenario_multicolor_dedup(failures)
     _scenario_duplicate_dyelot_redye(failures)
+    _scenario_color_formula(failures)
+    _scenario_formula_v4_cm_next_color(failures)
     print(f"\n{'='*60}\nKẾT QUẢ: {'TẤT CẢ KHỚP' if not failures else f'{len(failures)} CASE LỆCH'}\n{'='*60}")
     return 1 if failures else 0
 

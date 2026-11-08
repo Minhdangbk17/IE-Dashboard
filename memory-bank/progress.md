@@ -27,6 +27,15 @@
 - [x] (2026-10-26) Fabric/Color Matrix: nhập Target inline (trống = xoá), Shade nhập tay theo Dyelot cho ô
       Unclassified (`batch_shade_overrides`), SapLot trống tính Normal (cả Matrix, Trend, Batch Per
       Day by Machine). Cần chạy `supabase/migrate_batch_shade_overrides.sql` + `flask rebuild-summaries`. Test `tests/test_batch_matrix_shade_sap_target.py`.
+- [x] (2026-11-08) Phân loại mẻ theo BatchType cho Batch Per Day by Machine + Trend + Matrix (xem `design/BATCH_CLASSIFICATION.md`): badge mới `SC`/`RD`/`?`,
+      Rework đếm theo lần chạy, bỏ checkbox "ReDye = 0", nhập tay mẻ `?` (`batch_manual_overrides`), tab Data Quality, sheet Excel "Data". Cần chạy
+      `supabase/migrate_batch_manual_overrides.sql` + `flask rebuild-summaries`. Backlog: duyệt màu badge mới; tooltip RecipeNo/nhập tay; Export Excel cho tab Data
+      Quality; cập nhật tài liệu gửi IT; test UI trình duyệt; `tests/verify_rollup_parity.py` vẫn lỗi từ trước.
+- [x] (2026-10-27) Fabric/Color Matrix công thức bản 4: ô = mẻ Normal * 24 / giờ của MỌI mẻ cùng Fabric x
+      Color (tổng giờ các ô = Total/Trend); Color Group theo công thức Excel `Color` của người dùng (bỏ bước
+      Non-dyed — mẻ tinh luyện phân màu như mọi mẻ); CM lấy màu mẻ kế tiếp cùng máy. Không đổi schema, không
+      cần rebuild. Test `test_batch_matrix_formula.py` (kịch bản 5-6) + cập nhật 2 test Matrix. Backlog:
+      `_shade_by_colour` tra toàn lịch sử (Excel chỉ trong file tháng); test UI.
 - [x] (2026-10-26) Fabric/Color Matrix: thêm Black/White vào Set Shade thủ công + tự nhận Black/White từ ColourNo
       khi Shade trống (hết Unclassified oan). Backlog: xác nhận "OFF WHITE" -> White; test thao tác UI.
 - [x] (2026-10-22) Dyeing Downtime by Category: ô Target hàng Total trước bị hardcode "-" → nay =

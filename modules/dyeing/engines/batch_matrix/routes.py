@@ -1,27 +1,3 @@
-"""
-modules/dyeing/engines/batch_matrix/routes.py
---------------------------------------------------
-Blueprint & Route (API + View) của Engine "batch_matrix".
-
-- `GET /dyeing/batch_matrix/`               -> View trang Ma trận Số mẻ/Máy theo Ngày.
-- `GET /dyeing/batch_matrix/api/matrix?<filter Trend>` -> API JSON dựng ma trận Fabric/Color.
-  Bộ lọc GIỐNG HỆT tab Trend: from_date, to_date, capacities, brand_programs, tank_types,
-  group_by, require_redye_zero (2026-10-06).
-- `GET /dyeing/batch_matrix/api/matrix/batches?fabric_type=&color_group=&period_key=&<filter>`
-  -> danh sách mẻ của 1 ô ma trận (`period_key` rỗng = ô Total).
-- `GET /dyeing/batch_matrix/api/matrix/export?<filter>` -> .xlsx (Matrix + Batches + Filters).
-- `GET  /dyeing/batch_matrix/api/targets`   -> API JSON danh sách Target đã cấu hình.
-- `POST /dyeing/batch_matrix/api/targets`   -> Set/update 1 Target (fabric_type, color_group).
-- `GET  /dyeing/batch_matrix/api/batch-day-trend?capacities=&brand_programs=&tank_types=&require_redye_zero=1&from_date=&to_date=&group_by=`
-  -> API JSON tab "Batch/Day Trend" (LUÔN 3 dòng Cotton/CVC/Polyester cố định — xem
-  `batch_day_trend.py` cho công thức đầy đủ).
-- `GET  /dyeing/batch_matrix/api/batch-day-trend/batches?fabric_type=&period_key=&<filter Trend>`
-  -> API JSON danh sách đoạn (mẻ x ngày) của 1 ô Trend (`period_key` rỗng = ô Total).
-- `GET  /dyeing/batch_matrix/api/batch-day-trend/export?<filter Trend>[&fabric_type=&period_key=]`
-  -> File .xlsx: không có `fabric_type` = cả báo cáo (Trend + Batches), có = danh sách mẻ 1 ô.
-- `POST /dyeing/batch_matrix/api/batch-day-trend/targets/<fabric_type>` -> Set/update
-  Target (giờ/kỳ) của 1 trong 3 loại vải chính cho báo cáo Batch/Day Trend.
-"""
 from __future__ import annotations
 
 import io
@@ -48,7 +24,6 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         return render_template("batch_matrix_view.html")
 
     def _matrix_filters() -> dict[str, Any]:
-        """Bộ lọc tab Matrix — CÙNG tên tham số với tab Trend (xem `_trend_filters()`)."""
         return {
             "date_from": request.args.get("from_date") or None,
             "date_to": request.args.get("to_date") or None,
@@ -56,7 +31,6 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             "brand_programs": request.args.get("brand_programs") or None,
             "tank_types": request.args.get("tank_types") or None,
             "group_by": request.args.get("group_by", "date"),
-            "require_redye_zero": request.args.get("require_redye_zero", "1") != "0",
         }
 
     @bp.route("/api/matrix")
@@ -92,7 +66,6 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         )
 
     def _trend_filters() -> dict[str, Any]:
-        """Bộ lọc tab Trend — dùng CHUNG cho bảng, drill-down và Export để luôn khớp nhau."""
         return {
             "capacities": request.args.get("capacities") or None,
             "brand_programs": request.args.get("brand_programs") or None,
@@ -100,7 +73,6 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             "from_date": request.args.get("from_date") or None,
             "to_date": request.args.get("to_date") or None,
             "group_by": request.args.get("group_by", "date"),
-            "require_redye_zero": request.args.get("require_redye_zero", "1") != "0",
         }
 
     @bp.route("/api/batch-day-trend")
@@ -172,7 +144,7 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             return jsonify({"error": "Missing fabric_type/color_group."}), 400
         raw_value = payload.get("target_value")
         if raw_value is None or str(raw_value).strip() == "":
-            target_value = None  # để trống = xoá Target của ô
+            target_value = None
         else:
             try:
                 target_value = float(raw_value)

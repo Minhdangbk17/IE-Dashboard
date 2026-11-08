@@ -68,14 +68,13 @@
                 <div id="trend-tank-menu" class="capacity-menu" hidden></div>
             </div>
             <div class="form-group mb-0"><label for="trend-group-by">Group By</label><select id="trend-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
-            <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="trend-require-redye-zero" checked> ReDye = 0</label>
             <button id="trend-export" class="btn" type="button" title="Trend table + every batch in the filtered range">Export Excel</button>
         </div>
     </section>
 
     <div class="trend-kpis mb-4">
         <div class="widget-card"><span class="f6 color-fg-muted">BATCH/DAY</span><strong class="kpi-batch-per-day">--</strong><span class="f6 color-fg-muted">Normal batches * 24 / total occupied hours</span></div>
-        <div class="widget-card"><span class="f6 color-fg-muted">NORMAL DYEING BATCHES</span><strong class="kpi-valid-batches">--</strong><span class="f6 color-fg-muted">Dyelot *0, SapLot 1*/3* (+ ReDye = 0 if ticked); counted on end day</span></div>
+        <div class="widget-card"><span class="f6 color-fg-muted">NORMAL DYEING BATCHES</span><strong class="kpi-valid-batches">--</strong><span class="f6 color-fg-muted">BatchType Normal; counted on end day</span></div>
         <div class="widget-card"><span class="f6 color-fg-muted">TOTAL OCCUPIED HOURS</span><strong class="kpi-total-hours">--</strong><span class="f6 color-fg-muted">End − Start, split 07:00→07:00, all batches</span></div>
     </div>
 
@@ -141,7 +140,6 @@
                 <div id="matrix-tank-menu" class="capacity-menu" hidden></div>
             </div>
             <div class="form-group mb-0"><label for="matrix-group-by">Group By</label><select id="matrix-group-by" class="form-select"><option value="date">Day</option><option value="week" selected>Week</option><option value="month">Month</option></select></div>
-            <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="matrix-require-redye-zero" checked> ReDye = 0</label>
             <button id="matrix-export" class="btn" type="button" title="Matrix table + every counted batch in the filtered range">Export Excel</button>
         </div>
     </section>
@@ -153,7 +151,7 @@
         <thead><tr id="matrix-head"></tr></thead>
         <tbody></tbody>
     </table>
-    <p class="f6 color-fg-muted mt-2 mb-0">Normal dyeing batches only (Dyelot *0, SapLot 1*/3*, + ReDye = 0 if ticked). Week/Month = batches in period × 24 / machine hours in period. Click a cell or Total to see the batches behind that number.</p>
+    <p class="f6 color-fg-muted mt-2 mb-0">Normal dyeing batches only (BatchType Normal). Cell = Normal batches × 24 / occupied hours of all batches (incl. CM, Rework, Sample) in the same Fabric × Color; CM takes the colour of the next batch on its machine. Click a cell or Total to see the batches behind that number.</p>
     </div>
 
     <div id="day-batches-overlay" class="day-batches-overlay" hidden>
@@ -203,9 +201,6 @@
         return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    // Dropdown multi-select CHUẨN (cùng cách trình bày với báo cáo Downtime): nút hiện nhãn
-    // gọn ("All ..."/"N selected") + panel xổ xuống có checkbox "Select All" ở đầu. Dùng
-    // chung cho MỌI filter data-driven (Capacity/Fabric Type/Brand Program) ở CẢ 2 tab.
     function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, onChange) {
         const toggle = document.getElementById(toggleId);
         const menu = document.getElementById(menuId);
@@ -269,8 +264,6 @@
     dayBatchesOverlay.addEventListener("click", (event) => { if (event.target === dayBatchesOverlay) closeDayBatches(); });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !dayBatchesOverlay.hidden) closeDayBatches(); });
 
-    // Drill-down 1 ô ma trận (kỳ đang bấm, `period_key` rỗng = ô Total) — dùng ĐÚNG bộ tham
-    // số của lần tải bảng gần nhất để danh sách luôn khớp con số đang hiển thị.
     let lastMatrixParams = null;
     function openDayBatches(periodKey, periodLabel, fabricType, colorGroup) {
         dayBatchesTitle.textContent = `${fabricType} / ${colorGroup} — ${periodLabel}`;
@@ -286,7 +279,6 @@
                 return;
             }
             const dash = (value) => (value === null || value === undefined || value === "" ? "-" : escHtml(value));
-            // Ô "Unclassified": thêm cột để tự chọn Shade cho từng Dyelot (cần quyền edit).
             const isUnclassified = colorGroup === "Unclassified";
             const shadeCell = (batch) => {
                 if (!window.BATCH_DAY_TREND_CAN_EDIT) return `<td>-</td>`;
@@ -300,7 +292,6 @@
         }).catch(() => { dayBatchesBody.innerHTML = `<p class="color-fg-muted">Failed to load batches.</p>`; });
     }
 
-    // Lưu Shade nhập tay theo Dyelot rồi tải lại ma trận (mẻ rời khỏi Unclassified).
     dayBatchesBody.addEventListener("change", (event) => {
         const select = event.target.closest(".shade-select");
         if (!select || !select.value) return;
@@ -312,7 +303,6 @@
         }).then((response) => response.json().catch(() => ({})).then((data) => {
             if (!response.ok) throw new Error(data.error || "save failed");
             showToast(`Dyelot ${select.dataset.dyelot} set to ${select.value}.`, "success");
-            // Mọi dòng cùng Dyelot cùng đổi nhóm -> bỏ hết khỏi danh sách Unclassified.
             dayBatchesBody.querySelectorAll(".shade-select").forEach((other) => {
                 if (other.dataset.dyelot === select.dataset.dyelot) other.closest("tr").remove();
             });
@@ -350,7 +340,6 @@
         return `<td class="${cls} cell-clickable" tabindex="0" data-period-key="${escAttr(periodKey)}" data-period-label="${escAttr(periodLabel)}" data-fabric-type="${escAttr(row.fabric_type)}" data-color-group="${escAttr(row.color_group)}">${content}</td>`;
     }
 
-    // Target của từng dòng Fabric/Color: người có quyền edit bấm vào ô để nhập (để trống = xoá).
     let lastMatrixData = null;
     const targetsUrl = "{{ url_for('dyeing.batch_matrix.api_set_target') }}";
     const shadeOverrideUrl = "{{ url_for('dyeing.batch_matrix.api_set_shade_override') }}";
@@ -411,7 +400,7 @@
             if (!response.ok) throw new Error(data.error || "save failed");
             row.target = value;
             showToast(`Target for ${row.fabric_type} / ${row.color_group} saved.`, "success");
-            renderTable(lastMatrixData); // tô lại màu ô theo Target mới
+            renderTable(lastMatrixData);
         })).catch((err) => {
             inputEl.replaceWith(buildMatrixTargetSpan(row));
             showToast(err && err.message ? err.message : "Failed to save target.", "error");
@@ -428,7 +417,6 @@
             return;
         }
 
-        // Đếm số dòng Color Group của từng Fabric Type để set rowspan cho cột Fabric Type gộp nhóm.
         const fabricRowCount = {};
         data.rows.forEach((row) => {
             if (row.row_type === "data") fabricRowCount[row.fabric_type] = (fabricRowCount[row.fabric_type] || 0) + 1;
@@ -469,8 +457,6 @@
     const matrixTankFilter = makeMultiSelectDropdown("matrix-tank-toggle", "matrix-tank-menu", "All tanks", load);
     let matrixCapacityDefaultApplied = false;
 
-    // Bộ lọc + tên tham số GIỐNG HỆT tab Trend (`trendParams()`), dùng chung cho bảng,
-    // drill-down và Export.
     function matrixParams() {
         return new URLSearchParams({
             from_date: document.getElementById("matrix-from").value,
@@ -479,7 +465,6 @@
             capacities: capacityFilter.selected().join(","),
             brand_programs: brandProgramFilter.selected().join(","),
             tank_types: matrixTankFilter.selected().join(","),
-            require_redye_zero: document.getElementById("matrix-require-redye-zero").checked ? "1" : "0",
         });
     }
 
@@ -489,7 +474,6 @@
             capacityFilter.setOptions((data.available_capacities || []).map(String));
             brandProgramFilter.setOptions(data.available_brand_programs || []);
             matrixTankFilter.setOptions(data.available_tank_types || []);
-            // Mặc định giống Trend: lần tải đầu tự chọn Capacity >= 500Kg.
             if (!matrixCapacityDefaultApplied) {
                 matrixCapacityDefaultApplied = true;
                 const defaultCapacities = (data.available_capacities || []).filter((value) => Number(value) >= 500).map(String);
@@ -505,17 +489,14 @@
         }).catch((error) => { console.error("Fabric/Color Matrix load failed:", error); });
     }
 
-    ["matrix-from", "matrix-to", "matrix-group-by", "matrix-require-redye-zero"].forEach((id) => {
+    ["matrix-from", "matrix-to", "matrix-group-by"].forEach((id) => {
         document.getElementById(id).addEventListener("change", load);
     });
     document.getElementById("matrix-export").addEventListener("click", () => {
         window.location.href = `${matrixExportUrl}?${matrixParams()}`;
     });
 
-    // -----------------------------------------------------------------
-    // Tab "Batch/Day Trend"
-    // -----------------------------------------------------------------
-    let trendCharts = {}; // fabric_type -> Chart instance (1 biểu đồ riêng/loại vải)
+    let trendCharts = {};
 
     function pad2(value) { return String(value).padStart(2, "0"); }
     function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
@@ -542,8 +523,6 @@
         return { textColor, gridColor };
     }
 
-    // Màu cố định theo loại vải — DÙNG CHUNG cho cả đường số liệu (nét liền) lẫn đường
-    // Target tương ứng (nét đứt, cùng màu) để dễ đối chiếu bằng mắt trên chart.
     const TREND_FABRIC_COLORS = { Cotton: "#3fb950", CVC: "#2862d7", Polyester: "#f778ba" };
     let lastTrendData = null;
 
@@ -627,7 +606,6 @@
         if (batchCell && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openTrendBatches(batchCell); }
     });
 
-    // Ô số liệu + ô Total bấm được -> drawer danh sách mẻ (period_key rỗng = Total).
     function trendBatchCell(row, periodKey, periodLabel, value, isTotal) {
         const text = Number(value).toFixed(2);
         return `<td class="cell-clickable" tabindex="0" title="Click to see batches" data-fabric-type="${escAttr(row.fabric_type)}" data-period-key="${escAttr(periodKey)}" data-period-label="${escAttr(periodLabel)}" data-value="${text}">${isTotal ? `<strong>${text}</strong>` : text}</td>`;
@@ -643,7 +621,6 @@
         ).join("") + renderTrendTotalRow(data);
     }
 
-    // Dòng Total cuối bảng: cộng MỌI Fabric Type (không chỉ Cotton/CVC/Polyester), không có Target.
     function renderTrendTotalRow(data) {
         const row = data.total_row;
         if (!row) return "";
@@ -652,11 +629,8 @@
             trendBatchCell(row, "", "Total", row.total, true) + `</tr>`;
     }
 
-    // -----------------------------------------------------------------
-    // Drawer danh sách mẻ của 1 ô Trend + Export Excel
-    // -----------------------------------------------------------------
     let lastTrendParams = null;
-    let trendBatchesCell = null; // { fabricType, periodKey, periodLabel, webValue }
+    let trendBatchesCell = null;
     let trendBatchesData = null;
     const trendDrawer = document.getElementById("trend-batches-drawer");
     function closeTrendBatches() { trendDrawer.classList.remove("is-open"); trendDrawer.setAttribute("aria-hidden", "true"); }
@@ -734,9 +708,6 @@
         return `trend-chart-${fabricType.toLowerCase()}`;
     }
 
-    // 3 biểu đồ RIÊNG BIỆT (trái=Cotton, giữa=CVC, phải=Polyester, theo đúng thứ tự
-    // MAIN_FABRIC_TYPES) — mỗi biểu đồ chỉ có 1 đường số liệu + 1 đường Target đứt nét
-    // của ĐÚNG loại đó, không còn gộp chung 1 chart 3 màu như bản trước.
     function updateTrendChart(data) {
         if (typeof Chart === "undefined") return;
         const { textColor, gridColor } = chartTextColors();
@@ -782,14 +753,8 @@
     const trendBrandProgramFilter = makeMultiSelectDropdown("trend-brand-program-toggle", "trend-brand-program-menu", "All brand programs", loadTrend);
     const trendTankFilter = makeMultiSelectDropdown("trend-tank-toggle", "trend-tank-menu", "All tanks", loadTrend);
 
-    // Mặc định lọc Capacity >= 500Kg khi vào trang lần đầu (chưa ai chỉnh filter) — dropdown
-    // này data-driven (option lấy từ `available_capacities` thật trong DB, KHÔNG phải danh
-    // sách checkbox cố định như RFT/%Tank Loading), nên phải chờ có response ĐẦU TIÊN mới
-    // biết được các mức Capacity thật để chọn đúng, rồi gọi lại `loadTrend()` 1 lần với filter
-    // đã áp — sau đó cờ này khoá lại, không tự áp lại nữa dù người dùng có xoá hết lựa chọn.
     let trendCapacityDefaultApplied = false;
 
-    // 1 bộ tham số lọc DUY NHẤT cho bảng Trend, drill-down và Export (UI_GUIDELINES 5.4).
     function trendParams() {
         return new URLSearchParams({
             from_date: document.getElementById("trend-from").value,
@@ -798,7 +763,6 @@
             capacities: trendCapacityFilter.selected().join(","),
             brand_programs: trendBrandProgramFilter.selected().join(","),
             tank_types: trendTankFilter.selected().join(","),
-            require_redye_zero: document.getElementById("trend-require-redye-zero").checked ? "1" : "0",
         });
     }
 
@@ -830,12 +794,8 @@
     document.getElementById("trend-group-by").addEventListener("change", loadTrend);
     document.getElementById("trend-from").addEventListener("change", loadTrend);
     document.getElementById("trend-to").addEventListener("change", loadTrend);
-    document.getElementById("trend-require-redye-zero").addEventListener("change", loadTrend);
     document.addEventListener("colormodechange", loadTrend);
 
-    // -----------------------------------------------------------------
-    // Tab switching
-    // -----------------------------------------------------------------
     const tabsNav = document.getElementById("batch-day-tabs");
     const tabs = [...tabsNav.querySelectorAll(".page-tab")];
     const pages = [...document.querySelectorAll(".batch-matrix-page")];

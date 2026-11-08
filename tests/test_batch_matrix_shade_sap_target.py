@@ -1,15 +1,3 @@
-"""
-tests/test_batch_matrix_shade_sap_target.py
---------------------------------------------------
-Verify 3 thay đổi của Fabric/Color Matrix (2026-10-26):
-  1. Mẻ THIẾU SapLot được tính Normal như SapLot 1*/3* (nhưng SapLot "2000" vẫn là Rework,
-     "4*" vẫn là Sample).
-  2. Shade nhập tay theo Dyelot: mẻ "Unclassified" chuyển sang đúng Color Group, xoá override
-     thì quay lại Unclassified; Shade không hợp lệ bị từ chối.
-  3. Target: lưu / sửa / xoá (None) cho 1 ô Fabric x Color.
-
-Chạy: python tests/test_batch_matrix_shade_sap_target.py
-"""
 from __future__ import annotations
 
 import os
@@ -46,25 +34,23 @@ def _init_db(db_path: str) -> None:
     )
     conn.execute("CREATE TABLE machines (machine_code TEXT, machine_id TEXT, capacity_kg REAL, tank_type TEXT)")
     conn.execute("INSERT INTO machines (machine_code, capacity_kg) VALUES ('M1', 600)")
-    # (dyelot, shade, sap_lot): cùng M1 nối tiếp nhau, mỗi mẻ 2h.
     batches = [
-        ("A0", "Dark", "1000"),     # Normal (SapLot 1*)
-        ("B0", "", None),           # THIẾU SapLot, Shade rỗng -> Normal + Unclassified
-        ("C0", "Light", "  "),      # SapLot toàn khoảng trắng -> coi là thiếu -> Normal
-        ("D0", "Dark", "2000"),     # SapLot 2* -> Rework (không đếm)
-        ("E0", "Dark", "4000"),     # SapLot 4* -> Sample (không đếm)
+        ("A0", "Dark", "1000", "091-NAVY"),
+        ("B0", "", None, ""),
+        ("C0", "Light", "  ", "091-NAVY"),
+        ("D0", "Dark", "2000", "091-NAVY"),
+        ("E0", "Dark", "4000", "091-NAVY"),
     ]
-    for i, (dyelot, shade, sap_lot) in enumerate(batches):
+    for i, (dyelot, shade, sap_lot, colour_no) in enumerate(batches):
         start, end = f"{DAY} {7 + 2 * i:02d}:00:00", f"{DAY} {9 + 2 * i:02d}:00:00"
         conn.execute(
             "INSERT INTO availability_logs (batch, fabric_type, machine, capacity_kg, start_time, end_time) VALUES (?, 'CVC', 'M1', 600, ?, ?)",
             (dyelot, start, end),
         )
         conn.execute(
-            "INSERT INTO batch_details (dyelot, shade, colour_no, batch_type, sap_lot, redye) VALUES (?, ?, '091-NAVY', 'Normal', ?, 0)",
-            (dyelot, shade, sap_lot),
+            "INSERT INTO batch_details (dyelot, shade, colour_no, batch_type, sap_lot, redye) VALUES (?, ?, ?, ?, ?, 0)",
+            (dyelot, shade, colour_no, "Rework" if dyelot == "D0" else "Normal", sap_lot),
         )
-    # Matrix đọc batch_details (như Trend): đồng bộ Machine/Fabric/Start/End từ bảng availability của fixture.
     conn.execute(
         "UPDATE batch_details SET "
         "machine = (SELECT a.machine FROM availability_logs a WHERE a.batch = batch_details.dyelot), "
@@ -84,7 +70,6 @@ def _check(label: str, actual, expected, failures: list[str]) -> None:
 
 
 def _groups(data: dict) -> dict[str, int | None]:
-    """{color_group: tổng mẻ} suy từ drill-down cho tiện — dùng get_cell_batches()."""
     return {row["color_group"]: row for row in data["rows"] if row["row_type"] == "data"}
 
 
@@ -112,9 +97,9 @@ def main() -> int:
             _check("B0 chuyển sang Medium", [b["dyelot"] for b in get_cell_batches("CVC", "Medium")], ["B0"], failures)
             _check("Unclassified hết mẻ", get_cell_batches("CVC", "Unclassified"), [], failures)
             _check("shade_override có trong drill-down", get_cell_batches("CVC", "Medium")[0]["shade_override"], "Medium", failures)
-            set_shade_override("B0", "Dark", "tester")  # sửa lại -> UPSERT
+            set_shade_override("B0", "Dark", "tester")
             _check("sửa lại B0 -> Dark (A0 + B0)", sorted(b["dyelot"] for b in get_cell_batches("CVC", "Dark")), ["A0", "B0"], failures)
-            set_shade_override("B0", "", "tester")  # xoá
+            set_shade_override("B0", "", "tester")
             _check("xoá override -> quay lại Unclassified", [b["dyelot"] for b in get_cell_batches("CVC", "Unclassified")], ["B0"], failures)
             try:
                 set_shade_override("B0", "Purple", "tester")
@@ -150,6 +135,9 @@ def main() -> int:
             _check("tổng số mẻ Normal Matrix == Trend", matrix_count, trend["total_row"]["total_count"], failures)
             grand = next(r for r in matrix["rows"] if r["row_type"] == "grand_total")
             _check("Grand Total Matrix == Total Trend", grand["total"], trend["total_row"]["total"], failures)
+            cvc_trend = next(r for r in trend["rows"] if r["fabric_type"] == "CVC")
+            cell_hours = round(sum(r["hours"] for r in matrix["rows"] if r["row_type"] == "data" and r["fabric_type"] == "CVC"), 4)
+            _check("tổng giờ các ô CVC == giờ dòng CVC của Trend (công thức bản 4)", cell_hours, round(cvc_trend["total_hours"], 4), failures)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

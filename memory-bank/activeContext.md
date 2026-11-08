@@ -1,5 +1,37 @@
 # Active Context — Trạng thái hiện tại
 
+**Cập nhật lần cuối:** 2026-11-08 — **Phân loại mẻ theo BatchType (Batch Per Day by Machine + Batch/Day Trend + Fabric/Color Matrix).**
+Chi tiết quy tắc và lý do: `design/BATCH_CLASSIFICATION.md`. Người dùng chốt sau khi đối chiếu 2 file mẫu (`batch_2026-11-01_to_2026-11-06.xlsx`,
+sheet Batch của `batch_2026-08-01_to_2026-08-31 (1).xlsx`) và Availability: `classify_batch_badge()` (`reports/cleaning_matrix.py`) xét theo thứ tự
+CM (Dyelot đuôi `WA`/bắt đầu `CL`) -> Sample `S` (đuôi `DU`/`KN` hoặc SapLot `4*`) -> tinh luyện `SC` (RecipeNo `DG01`/`TLDT`/`TINHLUYEN`; KHÔNG đếm Normal)
+-> `RD` (BatchType `Redye`, không đếm nhưng vẫn hiện) -> `Rework` (BatchType Rework, mỗi lần chạy = 1) -> `Normal` (BatchType Normal) -> `?` (BatchType
+trống/Unknown, chờ nhập tay, không đếm). KHÔNG còn dùng đuôi Dyelot `0`, SapLot `1*/3*`, cột `ReDye`, mã DG07/09/10, ghi chú NG, FuyangRequest; bỏ checkbox
+"ReDye = 0" ở cả 4 nơi và tham số `require_redye_zero`. `badge_group()` đổi badge -> CM/S/SC/RD/PENDING/REWORK/NORMAL dùng chung 3 báo cáo. Rework theo
+lần chạy khớp Availability (`rework_hour` > 0 ở 100% dòng BatchType Rework, 0 ở Normal/Redye). Giờ máy của MỌI lần chạy vẫn vào mẫu số.
+Nhập tay mẻ `?`: bảng `batch_manual_overrides` (khoá dyelot+machine+start_time; BatchType Normal/Rework + FabricType + Shade), áp trong `core/batch_source.py::
+load_resolved_batches()` TRƯỚC fill-up FabricType; route `GET /dyeing/reports/api/data-quality`, `POST /api/manual-overrides` (quyền edit), `DELETE
+/api/manual-overrides/<id>` (quyền delete) rồi `trigger_recompute()` ngày của mẻ + chuỗi mẻ liền trước đang mượn FabricType. Tab "Data Quality" mới (Missing batch
+type / Scouring marked Normal / Dyelot with several Normal runs). Excel thêm sheet "Data" (`Normal_Cnt`, `RW_Cnt`, `CM_Cnt`). Verify: 2 file mẫu import qua
+`sync_batch_details()` ra đúng Normal/Rework/CM/Sample/SC/RD/Pending = 316/117/79/10/14/5/22 (tháng 11) và 1974/641/436/99/122/16/130 (tháng 8); 10 test cập nhật +
+`test_rework_classification.py` viết lại; smoke test app đầy đủ (trang, API, nhập tay, quyền operator). **Deploy: chạy `supabase/migrate_batch_manual_overrides.sql`
+rồi `flask rebuild-summaries`; cấp quyền `reports` edit/delete cho người nhập tay.** Số các kỳ cũ đổi (tháng 8: Normal 1956 -> 1974, Rework 927 -> 641).
+**Chưa làm / lệch so với hướng dẫn**: màu badge `SC`/`RD`/`?` đang là đề xuất, CHƯA được người dùng duyệt; tooltip badge chưa hiện RecipeNo/nguồn nhập tay
+(summary không lưu RecipeNo); tab Data Quality chưa có nút Export Excel; chưa test thao tác UI trên trình duyệt. Dyelot nhuộm nhiều lần cùng mang BatchType Normal
+vẫn bị đếm nhiều Normal (tháng 11: 9 Dyelot, tháng 8: 70) và tinh luyện mang BatchType Normal (12 / 110 dòng) — hiện ở tab Data Quality để IT sửa nguồn
+(IT cần: BatchType bắt buộc, `Pre-treatment` cho tinh luyện, mỗi Dyelot 1 Normal; tài liệu gửi IT trên artifact chưa cập nhật theo quyết định 2026-11-08).
+
+**Cập nhật lần cuối:** 2026-10-27 — **Fabric/Color Matrix công thức bản 4 (thống nhất với file Excel của người dùng).**
+Đối chiếu tháng 1/2026 trên Supabase (O tank >= 500kg): tử số 806 mẻ (797 SapLot 1* + 9 SapLot 3*) và tổng giờ
+16,634.22 khớp tuyệt đối file thủ công; lệch ở mẫu số ô + phân màu. Người dùng chốt: (1) ô = mẻ Normal * 24 /
+Occupied Hours của MỌI mẻ cùng Fabric x Color (bỏ "tập máy" bản 3 — tập máy bỏ sót ngày chỉ Rework/CM nên mọi ô
+CVC 1.05-1.33 > Total 0.95); (2) giờ CM thuộc màu mẻ KẾ TIẾP cùng máy; (3) Color Group = công thức Excel cột
+`Color` NHƯNG BỎ bước Non-dyed (RecipeNo T11111111*/TINHLUYEN) — người dùng chốt mẻ tinh luyện cũng phải có
+Shade, phân màu như mọi mẻ (ColourNo BLACK/WHITE thắng Shade; Shade; mượn Shade cùng ColourNo; mã số "NNN-LL-" /
+Pantone TCX; từ khoá). Shade nhập tay ưu tiên cao nhất. Màu chỉ có giờ vẫn hiện (=0) để tổng giờ ô = Total. Khi
+không chọn From/To, khoảng cột tính cả ngày chỉ có giờ máy. Local tháng 8/9: tổng giờ ô == Trend mọi loại vải.
+Không đổi schema/không rebuild. Đã gửi người dùng Power Query hoàn chỉnh (cột Color Final, Badge, Normal Count) —
+người dùng cần bỏ dòng Non-dyed khỏi công thức Excel cột `Color`. Chưa test UI trình duyệt.
+
 **Cập nhật lần cuối:** 2026-10-26 (tiếp 5) — **Fabric/Color Matrix: Black/White cho mẻ Shade trống.**
 Nguyên nhân mẻ như `005-18-00-PUMA BLACK` "mất màu": Black/White chỉ suy ra từ Shade Dark/Light + tên màu
 (`service._classify_color_group()`), mẻ có `batch_details.shade` TRỐNG (local 2171/9720) rơi vào Unclassified.

@@ -1,18 +1,3 @@
-"""
-tests/test_cleaning_matrix_tank_filter.py
--------------------------------------------
-2026-10-05 — filter Tank Type (J tank / O tank) cho Batch Per Day by Machine
-(`get_cleaning_matrix(tank_types=...)` + Excel export). Kiểm tra:
-
-  1. `available_tank_types` theo thứ tự J tank -> O tank -> Unclassified; Tank trong Machine
-     Master được chuẩn hoá không phân biệt hoa/thường + khoảng trắng ("o TANK " -> "O tank").
-  2. Lọc J tank -> chỉ còn máy J tank; KPI + bảng Colour chỉ đếm mẻ của máy đó.
-  3. Máy Tank trống + máy unmapped (không có trong Machine Master) -> "Unclassified": bị loại
-     khi lọc J/O tank, hiện khi chọn Unclassified.
-  4. Excel export theo đúng filter Tank.
-
-Chạy: python tests/test_cleaning_matrix_tank_filter.py
-"""
 from __future__ import annotations
 
 import io
@@ -32,9 +17,7 @@ from openpyxl import load_workbook  # noqa: E402
 from core.database import close_db  # noqa: E402
 from modules.dyeing.engines.reports import cleaning_matrix  # noqa: E402
 
-# (machine_code, tank_type)
 MACHINES = [("M1", "J tank"), ("M2", "o TANK "), ("M3", None)]
-# (dyelot, machine, fabric_type, sap_lot, shade, start, end) — mọi mẻ đều Normal.
 BATCHES = [
     ("C100000", "M1", "Cotton", "1000000001", "Dark", "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
     ("C100010", "M1", "Cotton", "1000000002", "Light", "2026-09-01 11:00:00", "2026-09-01 13:00:00"),
@@ -68,8 +51,8 @@ def _init_db(db_path: str) -> None:
         [(code, code, tank) for code, tank in MACHINES],
     )
     conn.executemany(
-        "INSERT INTO batch_details (dyelot, machine, fabric_type, sap_lot, shade, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        BATCHES,
+        "INSERT INTO batch_details (dyelot, machine, fabric_type, sap_lot, shade, start_time, end_time, batch_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [(*batch, "Normal" if batch[0][-1] == "0" and batch[3][:1] in ("1", "3") else "Rework") for batch in BATCHES],
     )
     conn.commit()
     conn.close()

@@ -11,13 +11,13 @@
 <div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Batch Per Day by Machine</h2></div><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div>
 
 <nav class="page-tabs mb-3" id="report-tabs" aria-label="Batch Per Day by Machine report pages">
-    {% for slug, label in [("detail", "Detail"), ("summary", "Summary")] %}
+    {% for slug, label in [("detail", "Detail"), ("summary", "Summary"), ("data-quality", "Data Quality")] %}
     <button class="page-tab{% if loop.first %} is-active{% endif %}" type="button" data-page="{{ slug }}">{{ label }}</button>
     {% endfor %}
 </nav>
 
 <section class="report-page" id="page-detail" data-page="detail">
-<section class="Box p-3 mb-3"><h3 class="mt-0">Color Legend</h3><div class="legend-row">{% for code, label in [("CM", "Cleaning machine"), ("S", "Sample batch"), ("B", "Black colour"), ("D", "Dark colour"), ("M", "Middle colour"), ("L", "Light colour"), ("W", "White colour"), ("BR", "Black rework"), ("DR", "Dark rework"), ("MR", "Middle rework"), ("LR", "Light rework"), ("WR", "White rework")] %}<span class="legend-item"><span class="badge-code code-{{ code }}">{{ code }}</span>{{ label }}</span>{% endfor %}</div></section>
+<section class="Box p-3 mb-3"><h3 class="mt-0">Color Legend</h3><div class="legend-row">{% for code, label in [("CM", "Cleaning machine"), ("S", "Sample batch"), ("SC", "Scouring"), ("RD", "Redye (not counted)"), ("?", "Missing batch type"), ("B", "Black colour"), ("D", "Dark colour"), ("M", "Middle colour"), ("L", "Light colour"), ("W", "White colour"), ("BR", "Black rework"), ("DR", "Dark rework"), ("MR", "Middle rework"), ("LR", "Light rework"), ("WR", "White rework")] %}<span class="legend-item"><span class="badge-code code-{{ "PENDING" if code == "?" else code }}">{{ code }}</span>{{ label }}</span>{% endfor %}</div></section>
 <section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px">
     <div class="form-group mb-0"><label for="matrix-from">From Date</label><input id="matrix-from" class="form-control" type="date"></div>
     <div class="form-group mb-0"><label for="matrix-to">To Date</label><input id="matrix-to" class="form-control" type="date"></div>
@@ -40,9 +40,6 @@
         <label for="brand-program-toggle">Brand Program</label>
         <button id="brand-program-toggle" class="form-select text-left" type="button" aria-haspopup="true" aria-expanded="false">All brand programs</button>
         <div id="brand-program-menu" class="capacity-menu" hidden></div>
-    </div>
-    <div class="form-group mb-0" style="display:flex;align-items:center;gap:10px;padding-bottom:6px">
-        <label class="mb-0" style="display:flex;align-items:center;gap:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="matrix-require-redye-zero" checked> ReDye = 0</label>
     </div>
     <button id="matrix-load" class="btn btn-primary">Load Matrix</button>
     <a id="matrix-export-btn" class="btn btn-sm" href="#">Export Excel</a>
@@ -68,7 +65,6 @@
 <section class="Box p-3 mb-3"><div class="d-flex flex-justify-between flex-items-end flex-wrap" style="gap:12px">
     <div class="d-flex flex-items-end flex-wrap" style="gap:12px">
         <div class="form-group mb-0"><label for="summary-year">Year</label><select id="summary-year" class="form-select"></select></div>
-        <label class="mb-0" style="display:flex;align-items:center;gap:6px;padding-bottom:6px" title="Yêu cầu ReDye = 0 mới tính là Normal dyeing batch — tắt để bỏ điều kiện này"><input type="checkbox" id="summary-require-redye-zero" checked> ReDye = 0</label>
     </div>
     <a id="summary-export-btn" class="btn btn-sm" href="#">Export Excel</a>
 </div></section>
@@ -81,9 +77,33 @@
 </div>
 </section>
 
-<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-S{background:#8250DF;color:#fff}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}.report-page[hidden]{display:none}.summary-group-cell{font-weight:600;vertical-align:middle;background:var(--bg-surface-raised, rgba(110,118,129,.06))}.summary-total-group td{font-weight:600}.summary-subtotal-row td{font-style:italic}</style>
+<section class="report-page" id="page-data-quality" data-page="data-quality" hidden>
+<section class="Box p-3 mb-3"><div class="d-flex flex-items-end flex-wrap" style="gap:12px">
+    <div class="form-group mb-0"><label for="dq-from">From Date</label><input id="dq-from" class="form-control" type="date"></div>
+    <div class="form-group mb-0"><label for="dq-to">To Date</label><input id="dq-to" class="form-control" type="date"></div>
+    <button id="dq-load" class="btn btn-primary" type="button">Load</button>
+</div></section>
+<div class="Box p-3 mb-3" style="overflow-x:auto">
+    <h3 class="mt-0">Missing batch type <span id="dq-pending-count" class="f6 color-fg-muted"></span></h3>
+    <p class="f6 color-fg-muted">Batches with no usable batch type are not counted until Batch Type, Fabric Type and Shade are entered here.</p>
+    <table class="preview-table matrix-table" id="dq-pending-table"><thead><tr><th>Production Date</th><th>Machine</th><th>Dyelot</th><th>Start</th><th>RecipeNo</th><th>ColourNo</th><th>SapLot</th><th>Source Type</th><th>Batch Type</th><th>Fabric Type</th><th>Shade</th><th></th></tr></thead><tbody></tbody></table>
+</div>
+<div class="Box p-3 mb-3" style="overflow-x:auto">
+    <h3 class="mt-0">Scouring marked Normal <span id="dq-scouring-count" class="f6 color-fg-muted"></span></h3>
+    <p class="f6 color-fg-muted">Scouring runs (badge SC) still carry batch type Normal in the source data. They are not counted as Normal. Ask IT to correct the source.</p>
+    <table class="preview-table matrix-table" id="dq-scouring-table"><thead><tr><th>Production Date</th><th>Machine</th><th>Dyelot</th><th>Start</th><th>End</th><th>RecipeNo</th></tr></thead><tbody></tbody></table>
+</div>
+<div class="Box p-3" style="overflow-x:auto">
+    <h3 class="mt-0">Dyelot with several Normal runs <span id="dq-multi-count" class="f6 color-fg-muted"></span></h3>
+    <p class="f6 color-fg-muted">Each Normal run is counted once, so a Dyelot listed here adds more than one Normal batch. Ask IT to correct the source.</p>
+    <table class="preview-table matrix-table" id="dq-multi-table"><thead><tr><th>Dyelot</th><th>Runs</th></tr></thead><tbody></tbody></table>
+</div>
+</section>
+
+<style>.legend-row{display:flex;flex-wrap:wrap;gap:8px 16px}.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px}.badge-code{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:1px solid transparent;border-radius:3px;font-weight:700;font-size:11px}.code-CM{background:#4B7931;color:#fff}.code-S{background:#8250DF;color:#fff}.code-SC{background:#0F8B8D;color:#fff}.code-RD{background:#6E7781;color:#fff}.code-PENDING{background:#fff;color:#BF5B04;border:1px dashed #BF5B04}.code-B,.code-BR{background:#000;color:#fff}.code-D,.code-DR{background:#5A738E;color:#fff}.code-M,.code-MR{background:#F6A97A;color:#000}.code-L,.code-LR{background:#FFF5CD;color:#000}.code-W,.code-WR{background:#fff;color:#000;border-color:#CCC}.code-BR,.code-DR,.code-MR,.code-LR,.code-WR{border:2px solid #FF0000}.matrix-sequence{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:180px}.matrix-day{display:inline-flex;align-items:center;gap:3px;margin-right:8px}.matrix-day-label{font-size:11px;color:#8b949e}.ratio-good{background:var(--success-bg)!important;color:var(--success)!important}.ratio-warning{background:var(--danger-bg)!important;color:var(--danger)!important}.matrix-table td,.matrix-table th{white-space:nowrap;vertical-align:middle}.matrix-table.mc-columns-collapsed .mc-config-col{display:none}.report-page[hidden]{display:none}.summary-group-cell{font-weight:600;vertical-align:middle;background:var(--bg-surface-raised, rgba(110,118,129,.06))}.summary-total-group td{font-weight:600}.summary-subtotal-row td{font-style:italic}</style>
 <script>
     window.REPORTS_CAN_EDIT_MACHINES = {{ "true" if current_user_can('dyeing', 'reports', 'edit') else "false" }};
+    window.REPORTS_CAN_DELETE_OVERRIDES = {{ "true" if current_user_can('dyeing', 'reports', 'delete') else "false" }};
     window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE = "{{ url_for('dyeing.reports.api_update_machine', machine_code='__MACHINE__') }}";
 </script>
 <script>
@@ -108,10 +128,6 @@
     const MACHINE_FIELD_LABELS = { group_mc: "Group MC", mc_brand: "MC brand", tank_type: "Tank", mc_quantity: "MC quantity", tube_no: "Tube no", capacity_kg: "Capacity (Kg)", status: "Status", production_status: "Production Status", orgatex: "Orgatex" };
     const PRODUCTION_STATUS_OPTIONS = ["Sample", "Bulk", "No production"];
     const ORGATEX_OPTIONS = ["No", "Yes"];
-    // Field nào render bằng <select> thay vì <input> tự do khi inline-edit. Status KHÔNG có
-    // trong danh sách này (2026-09-22, đổi từ dropdown 2 giá trị ban đầu) — dữ liệu máy thật
-    // có tới 6 giá trị Status khác nhau (gồm mô tả gộp/tách máy như "Grouped to D514"),
-    // không fit vào tập cố định nhỏ — Status giờ là text tự do như MC brand/Tank.
     const SELECT_FIELD_OPTIONS = { production_status: PRODUCTION_STATUS_OPTIONS, orgatex: ORGATEX_OPTIONS };
     function machineUpdateUrl(code) { return window.REPORTS_MACHINE_UPDATE_URL_TEMPLATE.replace("__MACHINE__", encodeURIComponent(code)); }
     function displayFieldValue(field, rawValue) {
@@ -156,12 +172,6 @@
             if (!response.ok) throw new Error(data.error || "save failed");
             inputEl.replaceWith(buildMachineCellSpan(machine, field, value));
             showToast(`${MACHINE_FIELD_LABELS[field]} saved.`, "success");
-            // CHỈ Capacity ảnh hưởng tới số liệu tính toán khác của báo cáo (Cleaning MC
-            // Ratio, danh sách filter Capacity — xem `get_cleaning_matrix()`), nên CHỈ field
-            // này mới cần load lại dữ liệu. MC brand/Tank/MC quantity/Tube no THUẦN mô tả,
-            // không ảnh hưởng phép tính nào khác -> cập nhật ngay tại ô (trên), không load
-            // lại cả bảng (tránh xoá mất ô khác đang gõ dở — bug đã sửa, xem
-            // `reloadPreservingOpenEdits()`).
             if (field === "capacity_kg") reloadPreservingOpenEdits();
         })).catch((err) => {
             inputEl.replaceWith(buildMachineCellSpan(machine, field, rawValue));
@@ -198,11 +208,6 @@
             if (event.key === "Escape") { event.preventDefault(); cancel(); }
         });
     }
-    // Reload lại dữ liệu (cần cho Capacity, xem `saveMachineField()`) nhưng KHÔNG xoá mất
-    // ô nào đang được gõ dở ở chỗ khác trên bảng: chụp lại danh sách (machine, field, giá
-    // trị đang gõ) TRƯỚC khi gọi load(), rồi mở lại ĐÚNG các ô đó với ĐÚNG giá trị dở dang
-    // sau khi bảng render xong (thay vì mất trắng như hành vi cũ — `load()` từng thay
-    // nguyên `innerHTML` của tbody, xoá luôn mọi <input> đang mở).
     function reloadPreservingOpenEdits() {
         const drafts = [];
         document.querySelectorAll("#matrix-table tbody input.case-note-input").forEach((input) => {
@@ -217,13 +222,10 @@
         if (!cell || !cell.dataset.machine) return;
         startEditingMachineCell(cell);
     });
+    const badgeClass = (code) => code === "?" ? "PENDING" : code;
     const formatRatio = (value) => value === null || value === undefined ? "-" : Number(value).toFixed(2);
     const ratioClass = (value) => value === null || value === undefined ? "" : value >= 50 ? "ratio-good" : value <= 5 ? "ratio-warning" : "";
 
-    // Dropdown multi-select CHUẨN (cùng cách trình bày với báo cáo Downtime): nút hiện nhãn
-    // gọn ("All ..."/"N selected") + panel xổ xuống có checkbox "Select All" ở đầu — trước
-    // đây nút hiện LIỆT KÊ hết giá trị đã chọn (VD "300kg, 500kg, 600kg, 1200kg, 2400kg"),
-    // khiến trông "xổ ngang" khác hẳn Downtime dù cùng là dropdown.
     function makeMultiSelectDropdown(toggleId, menuId, defaultLabel, initialSelected, onChange) {
         const toggle = document.getElementById(toggleId);
         const menu = document.getElementById(menuId);
@@ -274,14 +276,7 @@
         };
     }
 
-    // Mặc định Capacity = "All" (2026-09-22, đổi từ preset 300/500/600/1200/2400 cố định) —
-    // danh sách máy giờ luôn xuất phát từ Machine Master (xem get_cleaning_matrix()), preset
-    // cũ sẽ ẩn mất bất kỳ máy nào chưa kịp khai báo Capacity hoặc có Capacity ngoài 5 mức đó,
-    // đúng nguyên nhân gây "thiếu machine" đã báo. "All" luôn hiện đủ mọi máy trong Machine
-    // Master; người dùng tự thu hẹp bằng dropdown khi cần.
     const capacityFilter = makeMultiSelectDropdown("capacity-toggle", "capacity-menu", "All capacities", [], load);
-    // Tank Type (2026-10-05): J tank / O tank (+ Unclassified nếu có máy chưa khai báo Tank),
-    // lọc cấp máy theo Machine Master giống Capacity.
     const tankTypeFilter = makeMultiSelectDropdown("tank-type-toggle", "tank-type-menu", "All tanks", [], load);
     const fabricTypeFilter = makeMultiSelectDropdown("fabric-type-toggle", "fabric-type-menu", "All fabric types", [], load);
     const brandProgramFilter = makeMultiSelectDropdown("brand-program-toggle", "brand-program-menu", "All brand programs", [], load);
@@ -292,7 +287,6 @@
         tankTypeFilter.selected().forEach((value) => params.append("tank_type", value));
         fabricTypeFilter.selected().forEach((value) => params.append("fabric_type", value));
         brandProgramFilter.selected().forEach((value) => params.append("brand_program", value));
-        params.set("require_redye_zero", document.getElementById("matrix-require-redye-zero").checked ? "1" : "0");
         matrixExportBtn.href = `${matrixExportEndpoint}?${params}`;
         fetch(`${endpoint}?${params}`).then((response) => response.json()).then((data) => {
             render(data);
@@ -315,9 +309,6 @@
         el.style.display = "block";
         el.innerHTML = `<strong>Missing color data:</strong> ${coverage.missing}/${coverage.missing + coverage.present} batches (${coverage.missing_pct}%) in this range have no matching ColourNo/Shade in Batch Detail — shown with default badge 'M'. Import the missing Dyelots' Batch Detail (.xlsx) to fix classification.`;
     }
-    // Máy có mẻ THẬT trong dữ liệu nhưng chưa được khai báo trong Machine Master — vẫn
-    // được tính vào KPI/bảng "Normal Dyeing Batches by Colour" (không âm thầm bỏ dữ liệu),
-    // nhưng cần cảnh báo rõ để người dùng bấm "+ Add Machine" khai báo chính thức.
     function renderUnmappedWarning(unmappedMachines) {
         const el = document.getElementById("unmapped-machine-warning");
         if (!unmappedMachines || !unmappedMachines.length) { el.style.display = "none"; return; }
@@ -326,9 +317,6 @@
         el.innerHTML = `<strong>Machines not in Machine Master:</strong> ${names} — batches from these machines are still counted above, but shown as separate rows at the end of the table. Use "+ Add Machine" to register them properly.`;
     }
     function renderColorSummary(data) {
-        // Tách theo loại vải (2026-10-05): Fabric (rowspan) -> 5 dòng màu + "Subtotal"; dòng
-        // "Total" cuối lấy từ `by_day` tổng (mọi loại vải) để luôn khớp KPI "Normal Dyeing".
-        // Bố cục y hệt sheet "Color Summary" của Excel export.
         const summary = data.color_summary || { labels: [], by_day: {}, fabric_groups: [] };
         const head = document.getElementById("color-summary-head");
         const body = document.querySelector("#color-summary-table tbody");
@@ -355,13 +343,13 @@
         const machineCell = row.is_unmapped
             ? `<td>${escHtml(machineLabel)} <span class="f6" style="color:var(--warning)" title="Not in Machine Master yet">(unmapped)</span></td>`
             : `<td>${escHtml(machineLabel)}</td>`;
-        return `<tr>${machineCell}${renderMachineCell(row, "group_mc", row.group_mc, true)}${renderMachineCell(row, "mc_brand", row.mc_brand)}${renderMachineCell(row, "tank_type", row.tank_type)}${renderMachineCell(row, "mc_quantity", row.mc_quantity)}${renderMachineCell(row, "tube_no", row.tube_no)}${renderMachineCell(row, "capacity_kg", row.capacity)}${renderMachineCell(row, "status", row.status)}${renderMachineCell(row, "production_status", row.production_status)}${renderMachineCell(row, "orgatex", row.orgatex)}<td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${dayLabels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${batch.color_code_display}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}${batch.brand_program ? ` | ${batch.brand} - ${batch.brand_program}` : ""}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`;
+        return `<tr>${machineCell}${renderMachineCell(row, "group_mc", row.group_mc, true)}${renderMachineCell(row, "mc_brand", row.mc_brand)}${renderMachineCell(row, "tank_type", row.tank_type)}${renderMachineCell(row, "mc_quantity", row.mc_quantity)}${renderMachineCell(row, "tube_no", row.tube_no)}${renderMachineCell(row, "capacity_kg", row.capacity)}${renderMachineCell(row, "status", row.status)}${renderMachineCell(row, "production_status", row.production_status)}${renderMachineCell(row, "orgatex", row.orgatex)}<td>${row.cleaning_count}</td><td>${row.normal_batches}</td><td class="${ratioClass(row.cleaning_ratio)}">${formatRatio(row.cleaning_ratio)}</td><td>${row.rd_batches || 0}</td><td>${row.rework_batches}</td>${dayLabels.map((day) => `<td><div class="matrix-sequence">${(row.batches.filter((batch) => batch.production_date === day).map((batch) => `<span class="badge-code code-${badgeClass(batch.color_code_display)}" title="${batch.color_code_display} | ${batch.batch_no} | ${batch.shade_raw || "-"} | ${batch.colour_no || "-"} | ${batch.batch_type} | ${batch.start_time || "-"} - ${batch.end_time || "-"}${batch.brand_program ? ` | ${batch.brand} - ${batch.brand_program}` : ""}">${batch.color_code_display}</span>`).join(""))}</div></td>`).join("")}</tr>`;
     }
     function render(data) {
         renderCoverageWarning(data.color_data_coverage);
         renderUnmappedWarning(data.unmapped_machines);
         renderColorSummary(data);
-        document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join("");
+        document.getElementById("matrix-kpis").innerHTML = [["Normal Dyeing", data.kpis.normal_batches], ["Cleaning MC", data.kpis.cleaning_count], ["Cleaning MC Ratio", formatRatio(data.kpis.cleaning_ratio)], ["Rework Batch", data.kpis.rework_batches], ["Pending entry", data.kpis.pending_batches || 0]].map((item) => `<div class="Box p-3" style="min-width:180px"><span class="f6 color-fg-muted">${item[0]}</span><strong class="h2 d-block">${item[1]}</strong></div>`).join("");
         const head = document.getElementById("matrix-head");
         head.innerHTML = MATRIX_HEAD_HTML + data.time_labels.map((day) => `<th>${day}</th>`).join("");
         document.querySelector("#matrix-table tbody").innerHTML = data.matrix.map((row) => renderMatrixRow(row, data.time_labels)).join("");
@@ -372,13 +360,8 @@
     document.getElementById("matrix-from").value = formatDate(new Date(today.getFullYear(), today.getMonth(), 1));
     document.getElementById("matrix-to").value = formatDate(today);
     document.getElementById("matrix-load").addEventListener("click", load);
-    document.getElementById("matrix-require-redye-zero").addEventListener("change", () => load());
     load();
 
-    // "+ Add Machine": khai báo máy MỚI vào Machine Master TRƯỚC KHI có dữ liệu batch nào —
-    // dùng lại ĐÚNG endpoint upsert đã có (api_update_machine), Machine code chưa từng tồn
-    // tại sẽ tự rơi vào nhánh INSERT (xem upsert_machine_config()). Group MC bắt buộc để
-    // updates không rỗng (upsert_machine_config() từ chối payload rỗng).
     const addMachineFormEl = document.getElementById("add-machine-form");
     if (!window.REPORTS_CAN_EDIT_MACHINES) {
         addMachineFormEl.style.display = "none";
@@ -406,17 +389,12 @@
         });
     }
 
-    // Thu gọn/mở rộng tuỳ ý 5 cột cấu hình máy (MC brand/Tank/MC quantity/Tube no/
-    // Capacity) — bảng có thêm rất nhiều cột ngày bên phải, thu gọn nhóm cột này giúp
-    // đỡ phải cuộn ngang khi không cần sửa cấu hình máy. Trạng thái lưu localStorage
-    // (tiện ích hiển thị riêng của trình duyệt, không phải dữ liệu nghiệp vụ nên không
-    // cần lưu server) — bọc try/catch vì localStorage có thể bị chặn (private window...).
     const MC_COLUMNS_COLLAPSED_KEY = "reports.cleaningMatrix.mcColumnsCollapsed";
     function readMcColumnsCollapsed() {
         try { return localStorage.getItem(MC_COLUMNS_COLLAPSED_KEY) === "1"; } catch (err) { return false; }
     }
     function writeMcColumnsCollapsed(collapsed) {
-        try { localStorage.setItem(MC_COLUMNS_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch (err) { /* ignore */ }
+        try { localStorage.setItem(MC_COLUMNS_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch (err) { }
     }
     const matrixTableEl = document.getElementById("matrix-table");
     const toggleMcColumnsBtn = document.getElementById("toggle-mc-columns");
@@ -431,37 +409,100 @@
         writeMcColumnsCollapsed(collapsed);
     });
 
-    // Tab "Detail"/"Summary" — cùng pattern .page-tabs/.page-tab đã dùng ở RFT/DCA Cost.
-    // Summary không có canvas Chart.js nên không cần resize() khi hiện lại như 2 Engine kia.
+
+    const dqEndpoint = "{{ url_for('dyeing.reports.api_data_quality') }}";
+    const dqSaveEndpoint = "{{ url_for('dyeing.reports.api_save_manual_override') }}";
+    const dqDeleteEndpointTemplate = "{{ url_for('dyeing.reports.api_delete_manual_override', override_id=0) }}";
+    document.getElementById("dq-from").value = document.getElementById("matrix-from").value;
+    document.getElementById("dq-to").value = document.getElementById("matrix-to").value;
+    function dqOptionsHtml(values, selected, placeholder) {
+        return `<option value="">${placeholder}</option>` + values.map((value) => `<option value="${escAttr(value)}"${value === selected ? " selected" : ""}>${escHtml(value)}</option>`).join("");
+    }
+    function renderDqPending(rows, options) {
+        const body = document.querySelector("#dq-pending-table tbody");
+        document.getElementById("dq-pending-count").textContent = `(${rows.length})`;
+        if (!rows.length) { body.innerHTML = `<tr><td colspan="12" class="f6 color-fg-muted">Nothing to enter.</td></tr>`; return; }
+        const canEdit = window.REPORTS_CAN_EDIT_MACHINES;
+        body.innerHTML = rows.map((row) => {
+            const manual = row.status === "manual";
+            const entry = canEdit
+                ? `<td><select class="form-select dq-type">${dqOptionsHtml(options.batch_types, manual ? row.batch_type : "", "Batch type")}</select></td><td><select class="form-select dq-fabric">${dqOptionsHtml(options.fabric_types, manual ? row.fabric_type : "", "Fabric type")}</select></td><td><select class="form-select dq-shade">${dqOptionsHtml(options.shades, manual ? row.shade : "", "Shade")}</select></td><td><button class="btn btn-sm btn-primary dq-save" type="button">Save</button>${manual && window.REPORTS_CAN_DELETE_OVERRIDES ? ` <button class="btn btn-sm dq-clear" type="button" data-override="${row.override_id}">Clear</button>` : ""}</td>`
+                : `<td>${manual ? escHtml(row.batch_type) : "-"}</td><td>${manual ? escHtml(row.fabric_type) : "-"}</td><td>${manual ? escHtml(row.shade) : "-"}</td><td></td>`;
+            return `<tr data-batch="${row.batch_id}"><td>${escHtml(row.production_date)}</td><td>${escHtml(row.machine)}</td><td>${escHtml(row.dyelot)}</td><td>${escHtml(row.start_time)}</td><td>${escHtml(row.recipe_no)}</td><td>${escHtml(row.colour_no)}</td><td>${escHtml(row.sap_lot)}</td><td>${escHtml(row.original_batch_type || "-")}</td>${entry}</tr>`;
+        }).join("");
+    }
+    function renderDqScouring(rows) {
+        document.getElementById("dq-scouring-count").textContent = `(${rows.length})`;
+        document.querySelector("#dq-scouring-table tbody").innerHTML = rows.length
+            ? rows.map((row) => `<tr><td>${escHtml(row.production_date)}</td><td>${escHtml(row.machine)}</td><td>${escHtml(row.dyelot)}</td><td>${escHtml(row.start_time)}</td><td>${escHtml(row.end_time)}</td><td>${escHtml(row.recipe_no)}</td></tr>`).join("")
+            : `<tr><td colspan="6" class="f6 color-fg-muted">None.</td></tr>`;
+    }
+    function renderDqMulti(rows) {
+        document.getElementById("dq-multi-count").textContent = `(${rows.length})`;
+        document.querySelector("#dq-multi-table tbody").innerHTML = rows.length
+            ? rows.map((row) => `<tr><td>${escHtml(row.dyelot)}</td><td>${row.runs.map((run) => `${escHtml(run.production_date)} ${escHtml(run.machine)} ${escHtml(run.start_time.slice(11, 16))} ${escHtml(run.recipe_no || "-")}`).join("<br>")}</td></tr>`).join("")
+            : `<tr><td colspan="2" class="f6 color-fg-muted">None.</td></tr>`;
+    }
+    function loadDataQuality() {
+        const params = new URLSearchParams({ from_date: document.getElementById("dq-from").value, to_date: document.getElementById("dq-to").value });
+        fetch(`${dqEndpoint}?${params}`).then((response) => response.json()).then((data) => {
+            renderDqPending(data.pending || [], data.options || { batch_types: [], fabric_types: [], shades: [] });
+            renderDqScouring(data.scouring_normal || []);
+            renderDqMulti(data.multi_normal || []);
+        });
+    }
+    function sendDqRequest(url, method, payload, successMessage) {
+        fetch(url, { method, headers: { "Content-Type": "application/json" }, body: payload ? JSON.stringify(payload) : undefined })
+            .then((response) => response.json().catch(() => ({})).then((data) => {
+                if (!response.ok) throw new Error(data.error || "save failed");
+                detailStale = true;
+                showToast(successMessage, "success");
+                loadDataQuality();
+            }))
+            .catch((err) => showToast(err && err.message ? err.message : "Request failed.", "error"));
+    }
+    document.querySelector("#dq-pending-table tbody").addEventListener("click", (event) => {
+        const saveBtn = event.target.closest(".dq-save");
+        const clearBtn = event.target.closest(".dq-clear");
+        if (saveBtn) {
+            const tr = saveBtn.closest("tr");
+            const payload = {
+                batch_id: Number(tr.dataset.batch),
+                batch_type: tr.querySelector(".dq-type").value,
+                fabric_type: tr.querySelector(".dq-fabric").value,
+                shade: tr.querySelector(".dq-shade").value,
+            };
+            if (!payload.batch_type || !payload.fabric_type || !payload.shade) { showToast("Select Batch type, Fabric type and Shade.", "error"); return; }
+            sendDqRequest(dqSaveEndpoint, "POST", payload, "Saved.");
+        } else if (clearBtn) {
+            sendDqRequest(dqDeleteEndpointTemplate.replace(/0$/, clearBtn.dataset.override), "DELETE", null, "Entry cleared.");
+        }
+    });
+    document.getElementById("dq-load").addEventListener("click", loadDataQuality);
+
     const pageTabsNav = document.getElementById("report-tabs");
     const pageTabs = pageTabsNav ? [...pageTabsNav.querySelectorAll(".page-tab")] : [];
     const reportPages = [...document.querySelectorAll(".report-page")];
     let summaryLoaded = false;
+    let detailStale = false;
     function activatePage(slug) {
         pageTabs.forEach((tab) => tab.classList.toggle("is-active", tab.dataset.page === slug));
         reportPages.forEach((page) => { page.hidden = page.dataset.page !== slug; });
         if (slug === "summary" && !summaryLoaded) { summaryLoaded = true; loadSummary(); }
+        if (slug === "data-quality") loadDataQuality();
+        if (slug === "detail" && detailStale) { detailStale = false; load(); }
     }
     pageTabs.forEach((tab) => tab.addEventListener("click", () => activatePage(tab.dataset.page)));
 
-    // Tab "Summary": Group Machine x Category (8 dòng cố định) x 12 tháng — xem
-    // get_batch_summary() (cleaning_matrix.py) để biết công thức từng Category. Chỉ có filter
-    // Năm riêng (KHÔNG dùng Capacity/Fabric Type/Brand Program của tab Detail — Summary đã tự
-    // nhóm theo Group Machine suy từ Capacity, giữ ý nghĩa "toàn cảnh cả năm" đơn giản).
     const summaryEndpoint = "{{ url_for('dyeing.reports.api_batch_summary') }}";
     const summaryExportEndpoint = "{{ url_for('dyeing.reports.api_batch_summary_export') }}";
     const summaryYearSelect = document.getElementById("summary-year");
     const summaryExportBtn = document.getElementById("summary-export-btn");
-    const summaryRequireRedyeZero = document.getElementById("summary-require-redye-zero");
     const RATIO_CATEGORIES = new Set(["Cleaning MC Ratio", "Rework ratio", "Daily batch/day", "Plan PRD time", "Batch/day (Plan PRD)"]);
     const formatSummaryValue = (category, value) => {
         if (value === null || value === undefined) return "-";
         return RATIO_CATEGORIES.has(category) ? Number(value).toFixed(2) : value;
     };
-    // Bảng Summary 3 tầng (2026-09-24): Group Machine -> Tank Type ("Subtotal"/"J tank"/
-    // "O tank"/"Unclassified") -> 9 dòng Category. Cột Group Machine rowspan theo TỔNG số
-    // dòng của MỌI khối Tank trong group đó; cột Tank rowspan theo 9 dòng của riêng khối đó.
-    // "All Groups" cuối bảng chỉ có 1 khối Tank duy nhất (`tank: null`) — hiện "-" ở cột Tank.
     function renderSummary(data) {
         const head = document.getElementById("summary-head");
         head.innerHTML = "<th>Group Machine</th><th>Tank</th><th>Category</th>" + data.months.map((month) => `<th>${month}</th>`).join("");
@@ -487,24 +528,16 @@
     function loadSummary() {
         const params = new URLSearchParams();
         if (summaryYearSelect.value) params.set("year", summaryYearSelect.value);
-        params.set("require_redye_zero", summaryRequireRedyeZero.checked ? "1" : "0");
         fetch(`${summaryEndpoint}?${params}`).then((response) => response.json()).then((data) => {
             if (!summaryYearSelect.options.length) {
                 summaryYearSelect.innerHTML = (data.available_years || [data.year]).map((y) => `<option value="${y}" ${y === data.year ? "selected" : ""}>${y}</option>`).join("");
             }
             renderSummary(data);
-            const exportParams = new URLSearchParams({ year: data.year, require_redye_zero: summaryRequireRedyeZero.checked ? "1" : "0" });
+            const exportParams = new URLSearchParams({ year: data.year });
             summaryExportBtn.href = `${summaryExportEndpoint}?${exportParams}`;
         });
     }
     summaryYearSelect.addEventListener("change", loadSummary);
-    // "ReDye = 0" (2026-09-25, thay THẾ nút "Ignore SapLot" cũ) — checkbox mặc định BẬT khớp
-    // ĐÚNG giá trị đã lưu sẵn trong DB (`recompute_daily()` luôn dùng require_redye_zero=True).
-    // Tắt đi sẽ tính lại ranh giới Normal/Rework NGAY TẠI READ TIME, ẢNH HƯỞNG "No. of normal
-    // dyeing batch"/"Rework batch"/"Rework ratio"/"Cleaning MC Ratio" — áp dụng CẢ 2 tab
-    // Detail/Summary (khác "Ignore SapLot" cũ chỉ áp dụng tab Summary). Bật/tắt tự load lại
-    // ngay, không cần bấm nút riêng.
-    summaryRequireRedyeZero.addEventListener("change", loadSummary);
 }());
 </script>
 {% endblock %}

@@ -264,7 +264,13 @@ từ bảng đã tổng hợp sẵn.
        công thức bản 2), nhưng người dùng quyết định ĐẢO NGƯỢC vì mẫu số "dùng chung toàn
        bảng" không phản ánh đúng bản chất nghiệp vụ (1 dòng Color Group chỉ nên bị ảnh
        hưởng bởi các máy THỰC SỰ chạy màu đó, không phải mọi máy cùng Capacity).
-    3. **Bản 3 (2026-09-10, chiều — HIỆN TẠI)**: mẫu số = giờ hoạt động của ĐÚNG **TẬP MÁY**
+    4. **Bản 4 (2026-10-27 — HIỆN TẠI, thay bản 3)**: ô = mẻ Normal * 24 / Occupied Hours (khung
+       07:00) của MỌI mẻ (kể cả CM/Sample/Rework) cùng Fabric x Color — công thức Trend áp xuống
+       ô; tổng giờ các ô = giờ dòng Total(Fabric) (lấy từ Trend). Bỏ bản 3 vì tập máy chỉ lấy giờ
+       ngày CÓ mẻ Normal kết thúc (bỏ sót ngày chỉ Rework/CM) -> ô luôn cao hơn Total. Color Group
+       = công thức Excel `Color` của người dùng, bỏ bước Non-dyed (`_classify_color_group()`), mẻ CM lấy màu mẻ KẾ
+       TIẾP cùng máy (`_assign_color_groups()`). Đối chiếu pivot thủ công T1/2026 trên Supabase.
+    3. **Bản 3 (2026-09-10, chiều — đã thay bằng bản 4)**: mẫu số = giờ hoạt động của ĐÚNG **TẬP MÁY**
        đã chạy các mẻ được đếm ở tử số của CHÍNH Ô ĐÓ (không phải toàn bảng theo Capacity+
        ngày nữa) — nhưng vẫn tính CẢ giờ mẻ khác màu/vải mà chính các máy này chạy hôm đó
        (không giới hạn theo ColorGroup/FabricType ở bước TÍNH GIỜ, chỉ giới hạn theo TẬP
@@ -466,6 +472,10 @@ từ bảng đã tổng hợp sẵn.
   `batch_details.id`; `capacity_kg` = capacity Machine Master; `program` = NULL.
 - `availability_logs` KHÔNG còn ảnh hưởng 2 báo cáo này (vẫn là nguồn chính của Batch Matrix,
   Downtime, OEE...). Mẻ chỉ có trong Availability mà không có trong Batch -> không hiện.
+
+- **Cập nhật 2026-11-08**: `load_resolved_batches()` áp thêm bảng `batch_manual_overrides` (BatchType/FabricType/Shade nhập tay cho mẻ BatchType trống/Unknown,
+  khoá dyelot+machine+start_time) ngay sau fill-down Machine và TRƯỚC fill-up FabricType; mỗi mẻ có thêm `_override_id`, `_original_batch_type`, `_fabric_filled`.
+  Phân loại mẻ (`classify_batch_badge()` + `badge_group()`) theo BatchType, xem `design/BATCH_CLASSIFICATION.md`.
 
 ### 6.2.2 Idle Time đọc lại rollup của Batch/Day — không có rollup riêng (2026-10-05)
 

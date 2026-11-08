@@ -1,17 +1,3 @@
-"""
-tests/test_batch_source_consistency.py
----------------------------------------
-2026-10-02 — báo cáo Batch (`batch_details`) là NGUỒN SỰ THẬT DUY NHẤT cho CẢ "Batch/Day Trend"
-lẫn "Batch Per Day by Machine" (`core/batch_source.py`). Kiểm tra:
-
-  1. Batch Per Day by Machine KHÔNG đọc `availability_logs` (dòng Availability mâu thuẫn bị bỏ qua).
-  2. Machine trống -> Machine dòng phía trên; FabricType trống -> FabricType mẻ kế tiếp cùng máy.
-  3. production_date = ngày kết thúc 07:00->07:00 (mẻ qua đêm -> ngày sau; kết thúc đúng
-     07:00:00 -> ngày trước).
-  4. Số mẻ Normal theo (ngày, loại vải) của 2 báo cáo KHỚP NHAU.
-
-Chạy: python tests/test_batch_source_consistency.py
-"""
 from __future__ import annotations
 
 import os
@@ -27,14 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from modules.dyeing.engines.batch_matrix import batch_day_trend  # noqa: E402
 from modules.dyeing.engines.reports import cleaning_matrix  # noqa: E402
 
-# (dyelot, machine, fabric_type, sap_lot, redye, start, end)
 BATCHES = [
     ("C100000", "M1", "Cotton", "1000000001", 0, "2026-09-01 08:00:00", "2026-09-01 10:00:00"),
-    # Machine trống -> M1 (dòng trên); FabricType trống -> CVC (mẻ kế tiếp trên M1).
     ("C100010", "", "", "1000000002", 0, "2026-09-01 11:00:00", "2026-09-01 13:00:00"),
-    # Rework (Dyelot không kết thúc bằng 0), kết thúc ĐÚNG 07:00:00 -> thuộc ngày 2026-09-01.
     ("C100021", "M1", "CVC", "1000000003", 0, "2026-09-01 14:00:00", "2026-09-02 07:00:00"),
-    # Qua đêm -> ngày kết thúc 2026-09-02.
     ("C100030", "M2", "Polyester", "3000000004", 0, "2026-09-01 22:00:00", "2026-09-02 09:00:00"),
 ]
 
@@ -64,10 +46,9 @@ def _init_db(db_path: str) -> None:
     """)
     conn.execute("CREATE TABLE machines (machine_id TEXT, machine_code TEXT, mc_brand TEXT, tank_type TEXT, mc_quantity INTEGER, tube_no INTEGER, capacity_kg REAL, domain TEXT)")
     conn.executemany(
-        "INSERT INTO batch_details (dyelot, machine, fabric_type, sap_lot, redye, start_time, end_time, shade) VALUES (?, ?, ?, ?, ?, ?, ?, 'Dark')",
-        BATCHES,
+        "INSERT INTO batch_details (dyelot, machine, fabric_type, sap_lot, redye, start_time, end_time, shade, batch_type) VALUES (?, ?, ?, ?, ?, ?, ?, 'Dark', ?)",
+        [(*batch, "Normal" if batch[0][-1] == "0" and batch[4] == 0 else "Rework") for batch in BATCHES],
     )
-    # Dòng Availability MÂU THUẪN (máy/loại vải/ngày khác) — phải bị bỏ qua hoàn toàn.
     conn.execute(
         "INSERT INTO availability_logs (batch, machine, capacity_kg, fabric_type, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)",
         ("C100000", "M9", 600, "Polyester", "2026-09-05 08:00:00", "2026-09-05 10:00:00"),
@@ -109,7 +90,7 @@ def main() -> int:
         print("\n=== Số mẻ Normal 2 báo cáo khớp nhau theo (ngày, loại vải) ===")
         cleaning_normal = Counter(
             (r["production_date"], r["fabric_type"]) for r in rows.values()
-            if r["badge"] not in ("CM", "S") and not r["badge"].endswith("R")
+            if cleaning_matrix.badge_group(r["badge"]) == "NORMAL"
         )
         trend_normal: Counter = Counter()
         for r in conn.execute("SELECT production_date, fabric_type, is_valid FROM batch_day_trend_daily_summary"):

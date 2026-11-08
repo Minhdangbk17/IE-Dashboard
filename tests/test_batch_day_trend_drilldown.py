@@ -1,17 +1,3 @@
-"""
-tests/test_batch_day_trend_drilldown.py
------------------------------------------
-Verify drill-down danh sách mẻ + Excel export của tab Batch/Day Trend (2026-10-06):
-
-- Bấm 1 ô (loại vải x kỳ) / ô Total -> liệt kê TẤT CẢ đoạn (mẻ x ngày) góp giờ, cờ Counted.
-- Tổng giờ / số mẻ Counted / Batch/Day tính lại khớp ĐÚNG giá trị ô trên bảng Trend.
-- Mẻ qua đêm: hiện ở cả 2 ngày, chỉ Counted ở ngày kết thúc.
-- Machine trống ở raw (fill-down) vẫn tra được Dyelot; FabricType trống đánh dấu "from next".
-- 2 mẻ trùng (machine, start_time) -> tách lại giờ/Counted riêng từng mẻ.
-- Excel: cả báo cáo (Trend + Batches + Filters) và 1 ô (Batches + Filters), có khối Check.
-
-Chạy: python tests/test_batch_day_trend_drilldown.py
-"""
 from __future__ import annotations
 
 import io
@@ -49,25 +35,24 @@ def _init_db(db_path: str) -> None:
     conn.execute(
         "CREATE TABLE batch_details (id INTEGER PRIMARY KEY AUTOINCREMENT, dyelot TEXT NOT NULL, sap_lot TEXT, "
         "redye REAL DEFAULT 0, greige_code TEXT, fabric_type TEXT, machine TEXT, start_time TEXT, end_time TEXT, "
-        "run_time REAL)"
+        "run_time REAL, batch_type TEXT)"
     )
     conn.execute("CREATE TABLE machines (machine_code TEXT, machine_id TEXT, capacity_kg REAL, tank_type TEXT)")
     conn.execute("INSERT INTO machines (machine_code, capacity_kg, tank_type) VALUES ('M1', 500, 'J tank'), ('M2', 300, NULL)")
-    # (dyelot, sap_lot, redye, fabric_type, machine, start, end) — thứ tự INSERT = thứ tự import.
     rows = [
-        ("CL001", "", 0, "", "M1", "2026-06-01 07:00:00", "2026-06-01 09:00:00"),       # CM, Fabric từ mẻ sau (CVC), 2h day1
-        ("D0010", "1000", 0, "CVC", "M1", "2026-06-01 09:00:00", "2026-06-01 13:00:00"),  # Normal 4h day1
-        ("D0020", "3000", 0, "CVC", "M1", "2026-06-01 22:00:00", "2026-06-02 10:00:00"),  # Normal 9h day1 + 3h day2, đếm day2
-        ("D0021", "1000", 0, "CVC", "", "2026-06-02 10:00:00", "2026-06-02 12:00:00"),    # Machine trống -> M1, Rework 2h
-        ("D0030", "1000", 1, "CVC", "M1", "2026-06-02 12:00:00", "2026-06-03 07:00:00"),  # ReDye 1, 19h day2
-        ("D0050", "1000", 0, "Cotton", "M2", "2026-06-03 07:00:00", "2026-06-03 12:00:00"),  # Normal 5h day3
-        ("D0051", "1000", 0, "Cotton", "M2", "2026-06-03 07:00:00", "2026-06-03 09:00:00"),  # TRÙNG start M2, Rework 2h
-        ("D0060", "4000", 0, "Cotton", "M2", "2026-06-03 12:00:00", "2026-06-03 13:00:00"),  # Sample 1h
+        ("CL001", "", 0, "", "M1", "2026-06-01 07:00:00", "2026-06-01 09:00:00"),
+        ("D0010", "1000", 0, "CVC", "M1", "2026-06-01 09:00:00", "2026-06-01 13:00:00"),
+        ("D0020", "3000", 0, "CVC", "M1", "2026-06-01 22:00:00", "2026-06-02 10:00:00"),
+        ("D0021", "1000", 0, "CVC", "", "2026-06-02 10:00:00", "2026-06-02 12:00:00"),
+        ("D0030", "1000", 1, "CVC", "M1", "2026-06-02 12:00:00", "2026-06-03 07:00:00"),
+        ("D0050", "1000", 0, "Cotton", "M2", "2026-06-03 07:00:00", "2026-06-03 12:00:00"),
+        ("D0051", "1000", 0, "Cotton", "M2", "2026-06-03 07:00:00", "2026-06-03 09:00:00"),
+        ("D0060", "4000", 0, "Cotton", "M2", "2026-06-03 12:00:00", "2026-06-03 13:00:00"),
     ]
     conn.executemany(
-        "INSERT INTO batch_details (dyelot, sap_lot, redye, fabric_type, machine, start_time, end_time, run_time) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-        rows,
+        "INSERT INTO batch_details (dyelot, sap_lot, redye, fabric_type, machine, start_time, end_time, run_time, batch_type) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+        [(*row, "Normal" if row[0][-1] == "0" and not row[2] else "Rework") for row in rows],
     )
     conn.commit()
     conn.close()
@@ -110,9 +95,7 @@ def main() -> int:
             rows = _by_dyelot(day2)
             _check("D0020 Counted ở ngày kết thúc, 3h", (rows["D0020"]["counted"], rows["D0020"]["hours"]), (True, 3.0), failures)
             _check("D0021 Machine trống vẫn tra được, = M1, Rework", (rows["D0021"]["machine"], rows["D0021"]["classification"]), ("M1", "Rework"), failures)
-            _check("D0030 ReDye 1 -> Rework", rows["D0030"]["classification"], "Rework", failures)
-            day2_any = _by_dyelot(get_trend_batches("CVC", "2026-06-02", group_by="date", require_redye_zero=False))
-            _check("Tắt ReDye = 0 -> D0030 Normal + Counted", (day2_any["D0030"]["classification"], day2_any["D0030"]["counted"]), ("Normal", True), failures)
+            _check("D0030 BatchType Rework", rows["D0030"]["classification"], "Rework", failures)
 
             print("\n=== 2 mẻ trùng (M2, 03/06 07:00) ===")
             day3 = _by_dyelot(get_trend_batches("Cotton", "2026-06-03", group_by="date"))

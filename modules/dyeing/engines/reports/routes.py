@@ -8,7 +8,11 @@ from flask import Blueprint, current_app, jsonify, render_template, request, sen
 from core.auth import get_current_user, permission_required
 from core.batch_importer import sync_batch_details
 from core.database import DatabaseError
-from .cleaning_matrix import export_batch_summary_excel, export_cleaning_matrix_excel, get_batch_summary, get_cleaning_matrix, list_machine_configs, upsert_machine_config
+from core.rollup import trigger_recompute
+from .cleaning_matrix import (
+    delete_manual_override, export_batch_summary_excel, export_cleaning_matrix_excel, get_batch_summary, get_cleaning_matrix, get_data_quality,
+    list_machine_configs, save_manual_override, upsert_machine_config,
+)
 
 if TYPE_CHECKING:
     from core.engine_base import BaseEngine
@@ -39,9 +43,8 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         brand_programs = [value for value in request.args.getlist("brand_program") if value]
         fabric_types = [value for value in request.args.getlist("fabric_type") if value]
         tank_types = [value for value in request.args.getlist("tank_type") if value]
-        require_redye_zero = request.args.get("require_redye_zero", "1") != "0"
         try:
-            return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None, fabric_types or None, require_redye_zero, tank_types or None))
+            return jsonify(get_cleaning_matrix(request.args.get("from_date"), request.args.get("to_date"), capacities or None, brand_programs or None, fabric_types or None, tank_types or None))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -57,10 +60,9 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
         brand_programs = [value for value in request.args.getlist("brand_program") if value]
         fabric_types = [value for value in request.args.getlist("fabric_type") if value]
         tank_types = [value for value in request.args.getlist("tank_type") if value]
-        require_redye_zero = request.args.get("require_redye_zero", "1") != "0"
         from_date = request.args.get("from_date")
         to_date = request.args.get("to_date")
-        content = export_cleaning_matrix_excel(from_date, to_date, capacities or None, brand_programs or None, fabric_types or None, require_redye_zero, tank_types or None)
+        content = export_cleaning_matrix_excel(from_date, to_date, capacities or None, brand_programs or None, fabric_types or None, tank_types or None)
         name_range = f"{from_date}_to_{to_date}" if from_date and to_date else datetime.now().strftime("%Y-%m-%d")
         return send_file(
             io.BytesIO(content),
@@ -76,8 +78,7 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             year = int(request.args.get("year") or datetime.now().year)
         except ValueError:
             year = datetime.now().year
-        require_redye_zero = request.args.get("require_redye_zero", "1") != "0"
-        return jsonify(get_batch_summary(year, require_redye_zero=require_redye_zero))
+        return jsonify(get_batch_summary(year))
 
     @bp.route("/api/batch-summary/export")
     @permission_required("dyeing", "reports", "view")
@@ -86,14 +87,43 @@ def build_blueprint(_engine: "BaseEngine") -> Blueprint:
             year = int(request.args.get("year") or datetime.now().year)
         except ValueError:
             year = datetime.now().year
-        require_redye_zero = request.args.get("require_redye_zero", "1") != "0"
-        content = export_batch_summary_excel(year, require_redye_zero=require_redye_zero)
+        content = export_batch_summary_excel(year)
         return send_file(
             io.BytesIO(content),
             as_attachment=True,
             download_name=f"batch_summary_{year}.xlsx",
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+    @bp.route("/api/data-quality")
+    @permission_required("dyeing", "reports", "view")
+    def api_data_quality() -> Any:
+        return jsonify(get_data_quality(request.args.get("from_date"), request.args.get("to_date")))
+
+    @bp.route("/api/manual-overrides", methods=["POST"])
+    @permission_required("dyeing", "reports", "edit")
+    def api_save_manual_override() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            batch_id = int(payload.get("batch_id"))
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "error": "batch_id is required."}), 400
+        try:
+            affected = save_manual_override(batch_id, payload.get("batch_type"), payload.get("fabric_type"), payload.get("shade"), (get_current_user() or {}).get("username"))
+            trigger_recompute(affected)
+        except (ValueError, *DatabaseError) as exc:
+            return jsonify({"status": "error", "error": str(exc)}), 400
+        return jsonify({"status": "ok", "recomputed_days": len(affected)})
+
+    @bp.route("/api/manual-overrides/<int:override_id>", methods=["DELETE"])
+    @permission_required("dyeing", "reports", "delete")
+    def api_delete_manual_override(override_id: int) -> Any:
+        try:
+            affected = delete_manual_override(override_id)
+            trigger_recompute(affected)
+        except (ValueError, *DatabaseError) as exc:
+            return jsonify({"status": "error", "error": str(exc)}), 400
+        return jsonify({"status": "ok", "recomputed_days": len(affected)})
 
     @bp.route("/api/machines")
     @permission_required("dyeing", "reports", "view")

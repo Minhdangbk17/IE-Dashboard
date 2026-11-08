@@ -1,46 +1,3 @@
-"""Batch/Day Trend — tab thứ 2 của Engine `batch_matrix` (theo yêu cầu người dùng).
-
-CÔNG THỨC (mỗi kỳ Day/Week/Month, tính riêng từng loại vải Cotton/CVC/Polyester):
-    Batch/Day = [Số mẻ Normal dyeing] * 24 / [Tổng Occupied Hours của TẤT CẢ mẻ trong kỳ]
-
-2026-09-29 — VIẾT LẠI HOÀN TOÀN theo Power Query người dùng cung cấp (thay thế bản cũ dùng
-`availability_logs.planned_prd_time_hour` + carry-forward giờ của mẻ FabricType rỗng):
-
-1. **Nguồn dữ liệu DUY NHẤT: `batch_details`** (sheet "Batch") — BỎ HẲN `availability_logs`.
-   Bước 2-3 + ngày kết thúc nằm ở `core/batch_source.py::load_resolved_batches()` (2026-10-02),
-   dùng CHUNG với "Batch Per Day by Machine" để 2 báo cáo luôn cùng 1 tập mẻ.
-2. **Machine trống** -> lấy Machine của dòng NGAY PHÍA TRÊN (fill-down theo thứ tự `id`,
-   tức thứ tự dòng lúc import — khớp `Table.FillDown` trên sheet gốc).
-3. **FabricType trống/"Unknown"** -> lấy FabricType của mẻ KẾ TIẾP trên CÙNG máy (sắp theo
-   StartTime, khớp `Table.FillUp`); mẻ cuối cùng của máy không có mẻ sau -> giữ "Unknown"
-   (bị loại khỏi báo cáo vì không thuộc 3 loại vải chính). Dòng được điền này VẪN là 1 mẻ
-   riêng (giờ + đếm của CHÍNH nó), KHÔNG còn cộng dồn giờ sang mẻ sau như bản cũ.
-4. **Occupied Hours**: mỗi mẻ được TÁCH theo khung Production Date 07:00 -> 07:00 (không giới
-   hạn số ngày); giờ mỗi đoạn = thời gian THỰC (EndTime - StartTime) nằm trong khung đó, KHÔNG
-   dùng cột RunTime. Đoạn 0h (EndTime đúng 07:00:00) bị bỏ. Mẻ thiếu/ngược Start-End bị bỏ.
-5. **Đếm mẻ (tử số)**: mẻ Normal dyeing theo ĐÚNG quy tắc Dyelot/SapLot/ReDye của báo cáo
-   "Batch Per Day by Machine" (`reports/cleaning_matrix.py::classify_batch_badge()`; điều kiện
-   ReDye = 0 bật/tắt qua checkbox "ReDye = 0" trên UI, mặc định BẬT) — KHÔNG phải CM ("WA"/"CL*"),
-   KHÔNG phải Sample ("DU"/"KN"/SapLot 4*), KHÔNG phải Rework. Mẻ chạy qua nhiều ngày CHỈ đếm
-   1 lần vào NGÀY KẾT THÚC (= Production Date của đoạn cuối cùng có giờ > 0).
-6. **Mẫu số**: Occupied Hours của TẤT CẢ mẻ (kể cả CM/Sample/Rework) cộng theo từng đoạn ngày.
-
-DAILY ROLLUP PATTERN (`batch_day_trend_daily_summary`, grain = 1 dòng/1 ĐOẠN của 1 mẻ trong 1
-production_date): `hours` = Occupied Hours của đoạn đó, `is_valid` = số mẻ Normal được ĐẾM
-tại đoạn đó (1 ở đoạn ngày kết thúc của mẻ Normal, 0 ở mọi đoạn khác), `is_valid_any_redye` =
-như `is_valid` nhưng BỎ điều kiện ReDye = 0 (checkbox TẮT). Cột `is_valid_any_redye` cần
-migration Postgres `supabase/migrate_batch_day_trend_redye.sql`; sau khi deploy PHẢI chạy
-`flask rebuild-summaries` để tính lại toàn bộ lịch sử.
-
-Fill-down Machine/fill-up FabricType phụ thuộc THỨ TỰ xuyên suốt lịch sử (không tách rời theo
-từng ngày) nên `recompute_all()` đọc TOÀN BỘ `batch_details` 1 LẦN (1 round-trip, chỉ các cột
-cần dùng), chạy thuật toán ở Python rồi CHỈ lưu các đoạn thuộc tập ngày được yêu cầu.
-`recompute_daily(D)` = `recompute_all([D])`.
-
-Bộ lọc: Capacity (Kg) — `machines.capacity_kg` đã cấu hình qua UI Batch Per Day by Machine
-(máy CHƯA cấu hình bị ẩn khi lọc Capacity cụ thể). Brand - Program — suy từ `greige_code`.
-Tank Type (2026-09-29) — tra `machines.tank_type` tại read time (xem `_machine_tank_labels()`).
-"""
 from __future__ import annotations
 
 import io
@@ -50,32 +7,24 @@ from typing import Any, Iterable
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
-from core.batch_source import INVALID_FABRIC_TYPES, load_resolved_batches, parse_batch_datetime, split_production_days
+from core.batch_source import load_resolved_batches, parse_batch_datetime, split_production_days
 from core.brand_program_importer import ensure_brand_program_table
 from core.database import DatabaseError, execute_query, get_db, get_dialect
 from modules.dyeing.engines.reports.cleaning_matrix import (
     CANONICAL_TANK_ORDER,
     UNCLASSIFIED_TANK_LABEL,
     _normalize_tank_label,
+    badge_group,
     classify_batch_badge,
 )
 
-# Báo cáo "Batch/Day Trend" LUÔN thể hiện ĐÚNG 3 loại vải chính này (theo yêu cầu người
-# dùng — 1 đường/1 dòng cố định mỗi loại, không phụ thuộc filter hay dữ liệu thực tế đang
-# có). Mọi `fabric_type` KHÁC 3 loại này (VD Nylon, Spandex...) bị loại khỏi báo cáo Trend
-# hoàn toàn — khác các báo cáo khác trong `batch_matrix`/`downtime`/`rft` vốn hiển thị ĐỘNG
-# theo `available_fabric_types` tìm thấy trong dữ liệu. So khớp không phân biệt hoa/thường
-# (xem `_normalize_main_fabric_type()`) — CHƯA xác nhận dữ liệu thật có biến thể viết khác
-# (VD viết tắt "PES" cho Polyester) hay không, nếu có sẽ cần bổ sung alias sau.
 MAIN_FABRIC_TYPES: tuple[str, ...] = ("Cotton", "CVC", "Polyester")
-TOTAL_ROW_LABEL = "Total"  # dòng cuối bảng Trend: cộng MỌI Fabric Type (kể cả ngoài 3 loại chính)
+TOTAL_ROW_LABEL = "Total"
 OTHER_FABRIC_LABEL = "Other"
 _MAIN_FABRIC_TYPE_BY_NORM: dict[str, str] = {name.lower(): name for name in MAIN_FABRIC_TYPES}
 
 
 def _normalize_main_fabric_type(value: str | None) -> str | None:
-    """Khớp `fabric_type` thô (bất kỳ hoa/thường) với ĐÚNG 1 trong `MAIN_FABRIC_TYPES` —
-    trả `None` nếu không khớp loại nào (loại đó bị loại khỏi báo cáo Trend)."""
     return _MAIN_FABRIC_TYPE_BY_NORM.get(str(value or "").strip().lower())
 def _parse_brand_programs(brand_programs: str | list[str] | None) -> list[str]:
     if not brand_programs:
@@ -111,20 +60,10 @@ def _period(day: date, group_by: str) -> tuple[str, str]:
     return day.isoformat(), day.strftime("%d %b %Y")
 
 
-# ---------------------------------------------------------------------------
-# Daily Rollup: recompute_daily()
-# ---------------------------------------------------------------------------
-
-
 def _ensure_summary_table(conn: Any) -> None:
-    """CHỈ chạy CREATE TABLE ở SQLite — ở Postgres bảng đã có sẵn qua `supabase/schema.sql`
-    (DB production đã có dữ liệu thì áp `supabase/migrate_batch_day_trend_brand_program.sql`
-    + `supabase/migrate_batch_day_trend_redye.sql` rồi chạy lại `flask rebuild-summaries`)."""
     if get_dialect() == "sqlite":
         existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(batch_day_trend_daily_summary)")}
-        if existing_columns and not {"brand_program", "is_valid_any_redye"} <= existing_columns:
-            # An toàn xoá/tạo lại (giống `batch_matrix/service.py::_ensure_summary_table()`)
-            # vì bảng luôn tái tạo được 100% từ raw data qua `recompute_daily()`.
+        if existing_columns and "brand_program" not in existing_columns:
             conn.execute("DROP TABLE batch_day_trend_daily_summary")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS batch_day_trend_daily_summary (
@@ -136,7 +75,6 @@ def _ensure_summary_table(conn: Any) -> None:
                 brand_program TEXT NOT NULL DEFAULT '',
                 hours REAL NOT NULL DEFAULT 0,
                 is_valid INTEGER NOT NULL DEFAULT 0,
-                is_valid_any_redye INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (production_date, machine, start_time)
             )
@@ -145,7 +83,6 @@ def _ensure_summary_table(conn: Any) -> None:
 
 
 def _machine_capacities(conn: Any) -> dict[str, float]:
-    """{mã máy (lower/trim): capacity_kg} — capacity cấu hình qua UI Batch Per Day by Machine."""
     capacities: dict[str, float] = {}
     for row in conn.execute("SELECT machine_code, machine_id, capacity_kg FROM machines").fetchall():
         code = str(row["machine_code"] or row["machine_id"] or "").strip().lower()
@@ -154,37 +91,24 @@ def _machine_capacities(conn: Any) -> dict[str, float]:
     return capacities
 
 
-def _is_normal_batch(row: dict[str, Any], require_redye_zero: bool) -> bool:
-    """Normal dyeing = KHÔNG phải CM/Sample/Rework theo `classify_batch_badge()` của báo cáo
-    "Batch Per Day by Machine" — `require_redye_zero` khớp checkbox "ReDye = 0" trên UI."""
-    badge = classify_batch_badge(
-        {"dyelot": row["dyelot"], "sap_lot": row["sap_lot"], "redye": row["redye"]},
-        require_redye_zero=require_redye_zero,
-    )
-    return badge not in ("CM", "S") and not badge.endswith("R")
+def _is_normal_batch(row: dict[str, Any]) -> bool:
+    return badge_group(classify_batch_badge(row)) == "NORMAL"
 
 
 def _brand_program_label(batch: dict[str, Any]) -> str:
-    """Nhãn "Brand - Program" (VD "UQ - Ht Fleece") — rỗng nếu greige_code chưa map được.
-    AN TOÀN lưu thẳng vào grain summary: mỗi dòng LÀ 1 mẻ cụ thể, lọc/gộp không cộng trùng giờ."""
     brand = str(batch["brand"] or "").strip()
     program = str(batch["brand_program"] or "").strip()
     return f"{brand} - {program}" if brand and program else ""
 
 
 def _build_segments(conn: Any) -> list[dict[str, Any]]:
-    """Tách từng mẻ ĐÃ CHUẨN HOÁ (`core/batch_source.py::load_resolved_batches()` — nguồn sự
-    thật chung với Batch Per Day by Machine: fill-down Machine, fill-up FabricType) thành các
-    đoạn theo Production Date, đếm mẻ Normal ở đoạn cuối (ngày kết thúc). Trả danh sách đoạn
-    (1 đoạn = 1 mẻ x 1 production_date) CHƯA gộp — xem docstring đầu file bước 4-6."""
     capacities = _machine_capacities(conn)
     segments: list[dict[str, Any]] = []
     for batch in load_resolved_batches(conn):
         parts = batch["_segments"]
         if not parts:
             continue
-        is_normal = _is_normal_batch(batch, require_redye_zero=True)
-        is_normal_any_redye = _is_normal_batch(batch, require_redye_zero=False)
+        is_normal = _is_normal_batch(batch)
         for index, (day, hours) in enumerate(parts):
             is_end_day = index == len(parts) - 1
             segments.append({
@@ -196,28 +120,21 @@ def _build_segments(conn: Any) -> list[dict[str, Any]]:
                 "brand_program": _brand_program_label(batch),
                 "hours": hours,
                 "is_valid": int(is_normal and is_end_day),
-                "is_valid_any_redye": int(is_normal_any_redye and is_end_day),
             })
     return segments
 
 
 def recompute_daily(production_date: date, conn: Any) -> None:
-    """Tính lại `batch_day_trend_daily_summary` cho ĐÚNG 1 production_date — idempotent."""
     recompute_all([production_date], conn)
 
 
 def recompute_all(dates: Iterable[date], conn: Any) -> None:
-    """Tính lại `batch_day_trend_daily_summary` cho tập `dates` — idempotent (DELETE rồi
-    INSERT lại đúng các ngày này). Đọc `batch_details` ĐÚNG 1 LẦN cho cả tập ngày (tránh bug
-    2026-09-18: gọi lặp từng ngày trên Postgres remote chậm tới mức bị coi là "treo")."""
     _ensure_summary_table(conn)
     ensure_brand_program_table(conn)
     date_strs = {d.isoformat() for d in dates}
     if not date_strs:
         return
 
-    # Gộp theo PRIMARY KEY (production_date, machine, start_time) phòng trường hợp 2 dòng
-    # batch_details trùng máy + StartTime (khác Dyelot) — cộng giờ/số mẻ, không lỗi trùng khoá.
     merged: dict[tuple[str, str, str], dict[str, Any]] = {}
     for segment in _build_segments(conn):
         if segment["production_date"] not in date_strs:
@@ -226,7 +143,6 @@ def recompute_all(dates: Iterable[date], conn: Any) -> None:
         if key in merged:
             merged[key]["hours"] += segment["hours"]
             merged[key]["is_valid"] += segment["is_valid"]
-            merged[key]["is_valid_any_redye"] += segment["is_valid_any_redye"]
         else:
             merged[key] = segment
 
@@ -238,29 +154,18 @@ def recompute_all(dates: Iterable[date], conn: Any) -> None:
             """
             INSERT INTO batch_day_trend_daily_summary
                 (production_date, machine, start_time, fabric_type, capacity_kg, brand_program, hours,
-                 is_valid, is_valid_any_redye, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 is_valid, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (s["production_date"], s["machine"], s["start_time"], s["fabric_type"], s["capacity_kg"],
-                 s["brand_program"], s["hours"], s["is_valid"], s["is_valid_any_redye"], now_str)
+                 s["brand_program"], s["hours"], s["is_valid"], now_str)
                 for s in merged.values()
             ],
         )
 
 
-# ---------------------------------------------------------------------------
-# Target — bảng cấu hình `batch_day_trend_targets`, khoá theo `fabric_type` (CHỈ 3 giá trị
-# `MAIN_FABRIC_TYPES`). Cùng pattern `downtime_targets`/`batch_matrix_targets` đã có sẵn
-# trong dự án — mỗi báo cáo 1 bảng riêng, khoá theo đúng "đơn vị hàng" của báo cáo đó.
-# KHÔNG tái dùng `batch_matrix_targets` (khoá `(fabric_type, color_group)`) — 2 bảng trả lời
-# 2 câu hỏi khác nhau ("target cho 1 ô fabric+color của Matrix" vs "target cho tổng
-# Batch/Day của 1 loại vải ở Trend"), đơn vị đo cũng khác quy mô nhau dù cùng công thức gốc.
-# ---------------------------------------------------------------------------
-
-
 def _ensure_trend_targets_table(conn: Any) -> None:
-    """CHỈ chạy CREATE TABLE ở SQLite — Postgres tạo qua `supabase/schema.sql`."""
     if get_dialect() == "sqlite":
         conn.execute("""
             CREATE TABLE IF NOT EXISTS batch_day_trend_targets (
@@ -273,8 +178,6 @@ def _ensure_trend_targets_table(conn: Any) -> None:
 
 
 def get_trend_targets() -> dict[str, float | None]:
-    """{fabric_type: target_value} cho ĐÚNG 3 loại `MAIN_FABRIC_TYPES` — loại CHƯA từng
-    được cấu hình trả `None` (hiển thị "-" trên UI, phân biệt với target THẬT SỰ = 0)."""
     conn = get_db()
     _ensure_trend_targets_table(conn)
     rows = execute_query("SELECT fabric_type, target_value FROM batch_day_trend_targets")
@@ -299,20 +202,10 @@ def set_trend_target(fabric_type: str, target_value: float) -> dict[str, Any]:
     return {"fabric_type": fabric_type, "target_value": target_value, "updated_at": now_str}
 
 
-# ---------------------------------------------------------------------------
-# Đọc báo cáo — CHỈ SELECT từ `batch_day_trend_daily_summary`, lọc/gộp ở Python.
-# ---------------------------------------------------------------------------
-
-
-# Tank Type — tra `machines.tank_type` (Machine Master) NGAY TẠI READ TIME (không lưu vào
-# bảng summary: không cần migration/rebuild, đổi Tank Type trên Machine Master có hiệu lực
-# ngay). Chuẩn hoá giống tab Summary của Batch Per Day by Machine: "J tank"/"O tank", mọi giá
-# trị khác (rỗng/lạ/máy chưa khai báo) -> "Unclassified".
 _TANK_ORDER: tuple[str, ...] = (*CANONICAL_TANK_ORDER, UNCLASSIFIED_TANK_LABEL)
 
 
 def _machine_tank_labels(conn: Any) -> dict[str, str]:
-    """{mã máy (lower/trim): nhãn Tank đã chuẩn hoá}."""
     labels: dict[str, str] = {}
     for row in conn.execute("SELECT machine_code, machine_id, tank_type FROM machines").fetchall():
         code = str(row["machine_code"] or row["machine_id"] or "").strip().lower()
@@ -352,19 +245,11 @@ def _load_filtered_rows(
     tank_types: str | list[str] | None,
     from_date: str | None, to_date: str | None,
     group_by: str,
-    require_redye_zero: bool,
 ) -> dict[str, Any] | None:
-    """Đọc `batch_day_trend_daily_summary` + áp bộ lọc — dùng CHUNG cho bảng Trend, drill-down
-    danh sách mẻ và Excel export để cả 3 LUÔN cùng 1 tập đoạn (mẻ x ngày). Trả `None` khi bảng
-    chưa có/không có dữ liệu. Mỗi phần tử `rows` = 1 đoạn đã qua filter, kèm loại vải chính,
-    kỳ (`period_key`/`period_label`) và nhãn Tank."""
     conn = get_db()
-    # Checkbox "ReDye = 0": BẬT -> `is_valid` (Normal có ReDye = 0), TẮT -> `is_valid_any_redye`
-    # (bỏ điều kiện ReDye). Cả 2 cột đã tính sẵn lúc rollup — không cần recompute khi đổi.
-    count_column = "is_valid" if require_redye_zero else "is_valid_any_redye"
     sql = (
         "SELECT production_date, machine, start_time, fabric_type, capacity_kg, brand_program, hours, "
-        f"{count_column} AS batch_count FROM batch_day_trend_daily_summary WHERE 1=1"
+        "is_valid AS batch_count FROM batch_day_trend_daily_summary WHERE 1=1"
     )
     params: list[Any] = []
     if from_date:
@@ -377,9 +262,6 @@ def _load_filtered_rows(
         _ensure_summary_table(conn)
         rows = execute_query(sql, params)
     except DatabaseError:
-        # Bảng `batch_day_trend_daily_summary` chưa tồn tại trên Postgres (chưa áp
-        # `supabase/migrate_batch_day_trend.sql`) hoặc lỗi tương tự — trả kết quả rỗng
-        # thay vì crash cả trang, giống cách `rft`/`tank_loading` xử lý.
         return None
     if not rows:
         return None
@@ -397,9 +279,6 @@ def _load_filtered_rows(
     selected_tank_types = [value for value in _parse_brand_programs(tank_types) if value in _TANK_ORDER]
     tank_filter = set(selected_tank_types) if selected_tank_types else None
 
-    # Loại KHÁC 3 loại chính (`_normalize_main_fabric_type()` trả None) KHÔNG có dòng riêng trong
-    # báo cáo Trend, nhưng được giữ ở `other_rows` để dòng "Total" (không quan tâm Fabric Type)
-    # cộng đủ mọi mẻ (2026-10-26).
     filtered: list[dict[str, Any]] = []
     other_filtered: list[dict[str, Any]] = []
     for row in rows:
@@ -436,11 +315,10 @@ def get_batch_day_trend(
     tank_types: str | list[str] | None = None,
     from_date: str | None = None, to_date: str | None = None,
     group_by: str = "date",
-    require_redye_zero: bool = True,
 ) -> dict[str, Any]:
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
     trend_targets = get_trend_targets()
-    loaded = _load_filtered_rows(capacities, brand_programs, tank_types, from_date, to_date, group_by, require_redye_zero)
+    loaded = _load_filtered_rows(capacities, brand_programs, tank_types, from_date, to_date, group_by)
     if loaded is None:
         return _empty_trend(group_by, trend_targets)
     available_capacities = loaded["available_capacities"]
@@ -450,9 +328,6 @@ def get_batch_day_trend(
     selected_brand_programs = loaded["selected_brand_programs"]
     selected_tank_types = loaded["selected_tank_types"]
 
-    # Mỗi loại vải chính (Cotton/CVC/Polyester) có tử số/mẫu số RIÊNG — tính ĐỘC LẬP theo
-    # ĐÚNG công thức gốc (đếm mẻ Normal * 24 / tổng Occupied Hours TẤT CẢ mẻ), không dùng chung mẫu
-    # số như bản 1-đường-gộp cũ.
     period_counts: dict[str, dict[str, int]] = {name: {} for name in MAIN_FABRIC_TYPES}
     period_hours: dict[str, dict[str, float]] = {name: {} for name in MAIN_FABRIC_TYPES}
     period_labels: dict[str, str] = {}
@@ -470,7 +345,7 @@ def get_batch_day_trend(
             period_hours[fabric_type][key] = period_hours[fabric_type].get(key, 0.0) + float(row["hours"] or 0)
             if row["batch_count"]:
                 period_counts[fabric_type][key] = period_counts[fabric_type].get(key, 0) + int(row["batch_count"])
-        else:  # loại vải ngoài 3 loại chính (Unknown, ...): gom riêng để Fabric/Color Matrix dùng lại
+        else:
             other_hours.setdefault(fabric_type, {})[key] = other_hours.get(fabric_type, {}).get(key, 0.0) + float(row["hours"] or 0)
             other_counts.setdefault(fabric_type, {})
             if row["batch_count"]:
@@ -496,17 +371,14 @@ def get_batch_day_trend(
         total_value = round(total_count * 24 / total_hours, 2) if total_hours else 0.0
         rows_out.append({
             "fabric_type": name, "target": trend_targets.get(name), "values": values, "total": total_value,
-            # Tử số/mẫu số từng kỳ — Excel export dùng để đối chiếu lại từng ô.
             "counts": [counts.get(key, 0) for key in ordered_keys],
             "hours": [round(hours.get(key, 0.0), 2) for key in ordered_keys],
             "total_count": total_count, "total_hours": round(total_hours, 2),
         })
 
-    # Dòng Total: không phân biệt Fabric Type (cả loại ngoài Cotton/CVC/Polyester).
     total_count_all = sum(all_counts.values())
     total_hours_all = sum(all_hours.values())
     overall_value = round(total_count_all * 24 / total_hours_all, 2) if total_hours_all else 0.0
-    # Loại vải ngoài 3 loại chính: cùng công thức (mẻ * 24 / giờ chiếm máy của riêng loại đó).
     other_fabrics = {}
     for name, hours in other_hours.items():
         counts = other_counts.get(name, {})
@@ -531,7 +403,6 @@ def get_batch_day_trend(
             "capacities": selected_capacities or "all",
             "brand_programs": selected_brand_programs or "all",
             "tank_types": selected_tank_types or "all",
-            "require_redye_zero": require_redye_zero,
             "from_date": from_date, "to_date": to_date, "group_by": group_by,
         },
         "periods": labels, "period_keys": ordered_keys,
@@ -548,16 +419,6 @@ def get_batch_day_trend(
     }
 
 
-# ---------------------------------------------------------------------------
-# Drill-down danh sách mẻ + Excel export (2026-10-06, yêu cầu người dùng): bấm 1 ô (loại vải x
-# kỳ) hoặc ô Total -> liệt kê TẤT CẢ đoạn (mẻ x ngày) góp giờ vào mẫu số, cờ "Counted" = mẻ được
-# đếm vào tử số. Grain = 1 dòng/1 đoạn của summary (mẻ chạy qua nhiều ngày hiện nhiều dòng, chỉ
-# dòng ngày kết thúc có Counted = Yes) nên tổng giờ/số mẻ Counted khớp ĐÚNG con số trên web.
-# Dyelot/SapLot/ReDye/End không lưu trong summary -> tra ngược `batch_details` theo StartTime
-# (+ Machine; dòng Machine trống ở raw được fill-down nên khớp theo StartTime).
-# ---------------------------------------------------------------------------
-
-_DETAIL_QUERY_CHUNK = 500
 _EXCEL_HEADER_FONT = Font(bold=True, color="FFFFFF")
 _EXCEL_HEADER_FILL = PatternFill(start_color="24292F", end_color="24292F", fill_type="solid")
 _EXCEL_BOLD = Font(bold=True)
@@ -570,46 +431,32 @@ BATCH_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _classification_label(batch: dict[str, Any], require_redye_zero: bool) -> str:
-    """Nhãn phân loại theo `classify_batch_badge()` (cùng quy tắc với cột Counted)."""
-    badge = classify_batch_badge(
-        {"dyelot": batch["dyelot"], "sap_lot": batch["sap_lot"], "redye": batch["redye"]},
-        require_redye_zero=require_redye_zero,
-    )
-    if badge == "CM":
-        return "CM"
-    if badge == "S":
-        return "Sample"
-    return "Rework" if badge.endswith("R") else "Normal"
+_CLASSIFICATION_LABELS = {
+    "CM": "CM", "S": "Sample", "SC": "Scouring", "RD": "Redye", "PENDING": "Pending", "REWORK": "Rework", "NORMAL": "Normal",
+}
+
+
+def _classification_label(batch: dict[str, Any]) -> str:
+    return _CLASSIFICATION_LABELS[badge_group(classify_batch_badge(batch))]
 
 
 def _load_batch_details_by_start(start_times: set[str]) -> dict[str, list[dict[str, Any]]]:
-    """{start_time: [dòng batch_details]} — truy vấn theo lô để không vượt giới hạn tham số."""
+    wanted = {str(value) for value in start_times}
     result: dict[str, list[dict[str, Any]]] = {}
-    values = sorted(start_times)
-    for index in range(0, len(values), _DETAIL_QUERY_CHUNK):
-        chunk = values[index:index + _DETAIL_QUERY_CHUNK]
-        placeholders = ", ".join("?" for _ in chunk)
-        rows = execute_query(
-            "SELECT id, dyelot, sap_lot, redye, machine, fabric_type, start_time, end_time "
-            f"FROM batch_details WHERE start_time IN ({placeholders}) ORDER BY id",
-            chunk,
-        )
-        for row in rows:
-            result.setdefault(str(row["start_time"]), []).append(dict(row))
+    for batch in load_resolved_batches(get_db()):
+        key = str(batch["start_time"])
+        if key in wanted:
+            result.setdefault(key, []).append(batch)
     return result
 
 
 def _match_details(machine: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Dòng raw cùng Machine; không có thì lấy dòng Machine trống (đã được fill-down lúc rollup)."""
     key = str(machine or "").strip().lower()
     exact = [batch for batch in candidates if str(batch["machine"] or "").strip().lower() == key]
     return exact or [batch for batch in candidates if not str(batch["machine"] or "").strip()]
 
 
 def _own_segment(batch: dict[str, Any], production_date: str, is_normal: bool) -> tuple[float, bool]:
-    """Giờ + cờ Counted của RIÊNG 1 mẻ trong `production_date` — chỉ dùng khi 2 mẻ trùng
-    (machine, start_time) bị gộp chung 1 dòng summary."""
     start, end = parse_batch_datetime(batch["start_time"]), parse_batch_datetime(batch["end_time"])
     segments = split_production_days(start, end) if start and end else []
     hours = sum(value for day, value in segments if day.isoformat() == production_date)
@@ -618,7 +465,7 @@ def _own_segment(batch: dict[str, Any], production_date: str, is_normal: bool) -
 
 
 def _collect_records(
-    loaded: dict[str, Any], require_redye_zero: bool,
+    loaded: dict[str, Any],
     fabric_type: str | None = None, period_key: str | None = None,
 ) -> list[dict[str, Any]]:
     items = [
@@ -638,7 +485,6 @@ def _collect_records(
         }
         matched = _match_details(row["machine"], details.get(str(row["start_time"]), []))
         if not matched:
-            # Summary cũ hơn raw (chưa rebuild) — vẫn hiện để tổng giờ/số mẻ khớp web.
             records.append({
                 **base, "dyelot": None, "sap_lot": None, "redye": None, "fabric_filled": False,
                 "end_time": None, "hours": float(row["hours"] or 0), "classification": "Not found in Batch",
@@ -646,14 +492,14 @@ def _collect_records(
             })
             continue
         for batch in matched:
-            classification = _classification_label(batch, require_redye_zero)
+            classification = _classification_label(batch)
             if len(matched) == 1:
                 hours, counted = float(row["hours"] or 0), bool(row["batch_count"])
             else:
                 hours, counted = _own_segment(batch, row["production_date"], classification == "Normal")
             records.append({
                 **base, "dyelot": batch["dyelot"], "sap_lot": batch["sap_lot"], "redye": batch["redye"],
-                "fabric_filled": str(batch["fabric_type"] or "").strip().lower() in INVALID_FABRIC_TYPES,
+                "fabric_filled": bool(batch["_fabric_filled"]),
                 "end_time": batch["end_time"], "hours": hours, "classification": classification,
                 "counted": counted,
             })
@@ -662,7 +508,6 @@ def _collect_records(
 
 
 def _summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Tổng giờ, số mẻ Normal được đếm, Batch/Day tính lại — để đối chiếu với ô trên web."""
     hours = sum(record["hours"] for record in records)
     counted = sum(1 for record in records if record["counted"])
     return {
@@ -681,17 +526,14 @@ def get_trend_batches(
     tank_types: str | list[str] | None = None,
     from_date: str | None = None, to_date: str | None = None,
     group_by: str = "date",
-    require_redye_zero: bool = True,
 ) -> dict[str, Any]:
-    """Danh sách đoạn (mẻ x ngày) của 1 ô Trend (`period_key`) hoặc ô Total (`period_key`
-    = None), theo ĐÚNG bộ lọc đang chọn trên UI."""
     is_total = fabric_type == TOTAL_ROW_LABEL
     fabric = None if is_total else _normalize_main_fabric_type(fabric_type)
     if fabric is None and not is_total:
         raise ValueError(f"Fabric type không hợp lệ: {fabric_type}")
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
-    loaded = _load_filtered_rows(capacities, brand_programs, tank_types, from_date, to_date, group_by, require_redye_zero)
-    records = _collect_records(loaded, require_redye_zero, fabric, period_key) if loaded else []
+    loaded = _load_filtered_rows(capacities, brand_programs, tank_types, from_date, to_date, group_by)
+    records = _collect_records(loaded, fabric, period_key) if loaded else []
     return {
         "fabric_type": fabric or TOTAL_ROW_LABEL,
         "period_key": period_key,
@@ -708,8 +550,6 @@ def _write_header(sheet: Any, row_idx: int, headers: list[str]) -> None:
 
 
 def _write_batches_sheet(sheet: Any, records: list[dict[str, Any]]) -> None:
-    """Sheet "Batches": 1 dòng/1 đoạn + khối "Check" (tổng giờ, số mẻ Normal, Batch/Day tính
-    lại theo từng loại vải) ở cuối."""
     _write_header(sheet, 1, [label for _, label in BATCH_COLUMNS])
     for col in range(1, len(BATCH_COLUMNS) + 1):
         sheet.column_dimensions[sheet.cell(row=1, column=col).column_letter].width = 16
@@ -749,13 +589,9 @@ def export_batch_day_trend_excel(
     tank_types: str | list[str] | None = None,
     from_date: str | None = None, to_date: str | None = None,
     group_by: str = "date",
-    require_redye_zero: bool = True,
     fabric_type: str | None = None,
     period_key: str | None = None,
 ) -> bytes:
-    """`fabric_type` rỗng -> cả báo cáo: sheet "Trend" (Batch/Day + số mẻ Normal + giờ theo kỳ)
-    + "Batches" (mọi đoạn trong khoảng lọc). Có `fabric_type` -> chỉ danh sách mẻ của ô đang
-    mở trên web (`period_key` rỗng = ô Total). Luôn kèm sheet "Filters" ghi bộ lọc đã dùng."""
     group_by = group_by if group_by in {"date", "week", "month"} else "date"
     fabric = None
     is_total = fabric_type == TOTAL_ROW_LABEL
@@ -763,12 +599,12 @@ def export_batch_day_trend_excel(
         fabric = _normalize_main_fabric_type(fabric_type)
         if fabric is None:
             raise ValueError(f"Fabric type không hợp lệ: {fabric_type}")
-    loaded = _load_filtered_rows(capacities, brand_programs, tank_types, from_date, to_date, group_by, require_redye_zero)
-    records = _collect_records(loaded, require_redye_zero, fabric, period_key) if loaded else []
+    loaded = _load_filtered_rows(capacities, brand_programs, tank_types, from_date, to_date, group_by)
+    records = _collect_records(loaded, fabric, period_key) if loaded else []
 
     workbook = Workbook()
     if fabric is None and not is_total:
-        trend = get_batch_day_trend(capacities, brand_programs, tank_types, from_date, to_date, group_by, require_redye_zero)
+        trend = get_batch_day_trend(capacities, brand_programs, tank_types, from_date, to_date, group_by)
         sheet = workbook.active
         sheet.title = "Trend"
         periods = trend["periods"]
@@ -809,7 +645,6 @@ def export_batch_day_trend_excel(
         ("Capacity (Kg)", ", ".join(str(value) for value in _parse_capacities(capacities)) or "All"),
         ("Brand Program", ", ".join(_parse_brand_programs(brand_programs)) or "All"),
         ("Tank Type", ", ".join(_parse_brand_programs(tank_types)) or "All"),
-        ("ReDye = 0", "Yes" if require_redye_zero else "No"),
         ("Fabric Type", fabric or "All"),
         ("Period", period_label if (fabric or is_total) else "All"),
     ]
