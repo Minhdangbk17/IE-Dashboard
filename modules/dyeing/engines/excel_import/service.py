@@ -1,10 +1,3 @@
-"""
-modules/dyeing/engines/excel_import/service.py
---------------------------------------------------
-Service layer của Engine "excel_import": định nghĩa Schema cho từng loại
-import (Telemetry, Downtime), điều phối `core.excel_importer.run_import()`,
-và ghi lại lịch sử vào bảng `import_logs`.
-"""
 from __future__ import annotations
 
 import os
@@ -26,9 +19,6 @@ from core.production_time import get_production_date, normalize_production_date,
 from core.rollup import trigger_recompute
 from models.dyeing import BATCH_DETAIL_FIELDS
 
-# ---------------------------------------------------------------------------
-# Schema Definitions
-# ---------------------------------------------------------------------------
 
 TELEMETRY_SCHEMA = ImportSchema(
     key="telemetry",
@@ -86,8 +76,6 @@ SAMPLE_ROWS: dict[str, list[tuple[Any, ...]]] = {
 
 
 def _parse_flexible_datetime(value: Any) -> datetime | None:
-    """Parse mốc thời gian đọc lại từ DB (có thể là chuỗi ISO với/không mili-giây tuỳ
-    driver sqlite3 lưu) — dùng khi tính affected_dates cho Daily Rollup, không raise."""
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -113,15 +101,6 @@ def get_schema(schema_key: str) -> ImportSchema:
 def do_import(
     schema_key: str, filename: str, file_bytes: bytes, imported_by: str, strict_mode: bool
 ) -> ImportResult:
-    """
-    Orchestrator chính cho API `/api/import/<schema_key>`:
-
-      1. Ghi một dòng `import_logs` trạng thái 'processing' TRƯỚC để lấy `id`
-         (dùng làm khoá ngoại `import_log_id` gắn vào từng dòng dữ liệu import).
-      2. Gọi `run_import()` (parse + validate + bulk insert trong 1 transaction).
-      3. Cập nhật lại dòng `import_logs` với kết quả cuối cùng (tổng dòng,
-         số dòng thành công/lỗi, trạng thái, chi tiết lỗi).
-    """
     schema = get_schema(schema_key)
     conn = get_db()
 
@@ -156,11 +135,6 @@ def do_import(
     conn.commit()
 
     if result.committed and result.inserted_rows:
-        # Daily Rollup Pattern: schema Telemetry/Downtime hiện không Engine rollup nào phụ
-        # thuộc trực tiếp (downtime/batch_matrix nguồn từ availability_logs), nhưng vẫn gọi
-        # trigger_recompute() đầy đủ ở mọi điểm commit import theo đúng thiết kế chung —
-        # vô hại (no-op với Engine không liên quan) và nhất quán nếu sau này có Engine mới
-        # dùng machine_telemetry/downtime_logs.
         rows = conn.execute(f"SELECT timestamp FROM {schema.table_name} WHERE import_log_id = ?", (log_id,)).fetchall()
         affected_dates = set()
         for row in rows:
@@ -173,7 +147,6 @@ def do_import(
 
 
 def get_history(limit: int = 20) -> list[dict[str, Any]]:
-    """Lấy N lần import gần nhất — dùng cho tab "Lịch sử Import" trên UI."""
     rows = execute_query(
         "SELECT id, file_name, import_type, imported_by, total_rows, success_rows, "
         "error_rows, status, imported_at FROM import_logs ORDER BY imported_at DESC LIMIT ?",
@@ -183,7 +156,6 @@ def get_history(limit: int = 20) -> list[dict[str, Any]]:
 
 
 def import_raw_file(filename: str, file_bytes: bytes, imported_by: str) -> dict[str, Any]:
-    """Nhận diện, làm sạch, UPSERT file Availability/Performance và ghi log."""
     suffix = Path(filename).suffix.lower()
     if suffix not in {".xlsx", ".xls", ".csv"}:
         raise ValueError("Chỉ hỗ trợ file .xlsx, .xls hoặc .csv.")
@@ -229,10 +201,6 @@ def import_raw_file(filename: str, file_bytes: bytes, imported_by: str) -> dict[
             (imported_rows, imported_rows, status, error_detail, now_str, log_id),
         )
         conn.commit()
-        # Daily Rollup Pattern: chỉ recompute đúng các production_date bị ảnh hưởng bởi
-        # batch dữ liệu vừa import (lấy từ end_time/start_time đã parse, không query lại
-        # DB) — downtime/batch_matrix đều nguồn từ availability_logs, Performance thì không
-        # Engine nào phụ thuộc nên bỏ qua để giữ import Performance nhanh.
         if file_type == "AVAILABILITY":
             affected_dates = set()
             for row in parsed["rows"]:
@@ -253,7 +221,6 @@ def import_raw_file(filename: str, file_bytes: bytes, imported_by: str) -> dict[
 
 
 def preview_raw_file(filename: str, file_bytes: bytes) -> dict[str, Any]:
-    """Parse raw file không ghi dữ liệu, phục vụ preview 5 dòng đầu."""
     suffix = Path(filename).suffix.lower()
     if suffix not in {".xlsx", ".xls", ".csv"}:
         raise ValueError("Chỉ hỗ trợ file .xlsx, .xls hoặc .csv.")
@@ -280,7 +247,6 @@ def preview_raw_file(filename: str, file_bytes: bytes) -> dict[str, Any]:
                 pass
 
 
-# 2 nguồn tra cứu của báo cáo RFT (giá trị `data_type` trên modal Import -> file_type).
 _RFT_SOURCE_TYPES: dict[str, str] = {"dye_production": DYE_PRODUCTION_FILE_TYPE, "nc_report": NC_REPORT_FILE_TYPE}
 
 
@@ -291,7 +257,6 @@ def _sync_rft_source(file_type: str, file_bytes: bytes, imported_by: str, filena
 
 
 def preview_import_file(filename: str, file_bytes: bytes, requested_type: str = "auto") -> dict[str, Any]:
-    """Preview Availability/Performance/Batch/Brand Program Mapping/RFT sources with explicit type mismatch feedback."""
     if requested_type == "batch":
         parsed = parse_batch_file(file_bytes)
         return {"status": "preview", "file_type": "BATCH", "columns": list(parsed["rows"][0]) if parsed["rows"] else [], "preview": parsed["rows"][:5], "valid_rows": len(parsed["rows"]), "total_rows": parsed["total_records"], "errors": parsed["errors"]}
@@ -330,17 +295,7 @@ def import_selected_file(filename: str, file_bytes: bytes, imported_by: str, req
     return result
 
 
-# ---------------------------------------------------------------------------
-# Export Data: xuất lại Availability/Performance/Batch đã import, lọc theo
-# khoảng ngày — chiều ngược lại của Import, dùng CHUNG tên cột Excel gốc
-# (AVAILABILITY_COLUMNS/PERFORMANCE_COLUMNS/BATCH_EXPORT_HEADERS) để file xuất
-# ra giữ đúng định dạng người dùng đã quen, xem lại được bằng Excel bình
-# thường (không nhằm để re-import lại, dù cấu trúc cột tương thích).
-# ---------------------------------------------------------------------------
 
-# Chọn 1 tên cột "đẹp" duy nhất cho mỗi field batch_details (BATCH_HEADER_MAP ở
-# core/batch_importer.py có nhiều alias/field để IMPORT linh hoạt — export thì chỉ cần
-# đúng 1 tên/cột, chọn alias tự nhiên nhất, giữ đúng thứ tự BATCH_DETAIL_FIELDS).
 BATCH_EXPORT_HEADERS: dict[str, str] = {
     "dyelot": "Dyelot", "customer": "Customer", "color": "Color", "order_no": "OrderNo",
     "greige_code": "GreigeCode", "recipe_no": "RecipeNo", "colour_no": "ColourNo", "shade": "Shade",
@@ -364,10 +319,6 @@ BATCH_EXPORT_HEADERS: dict[str, str] = {
     "note1": "Note1", "note2": "Note2", "note3": "Note3", "note4": "Note4", "note5": "Note5",
 }
 
-# field -> header, chuẩn hoá CÙNG 1 chiều cho cả 3 loại (AVAILABILITY_COLUMNS/
-# PERFORMANCE_COLUMNS ở core/excel_importer.py khai báo ngược lại — header -> field —
-# vì đó là chiều IMPORT cần; `setdefault` giữ đúng header ĐẦU TIÊN gặp cho field nào bị
-# khai 2 header (VD field _hour và field _kgh KHÔNG trùng nên không mất dữ liệu ở đây).
 def _invert_to_field_header(header_to_field: dict[str, str]) -> dict[str, str]:
     field_to_header: dict[str, str] = {}
     for header, field in header_to_field.items():
@@ -383,16 +334,6 @@ _EXPORT_CONFIG: dict[str, tuple[str, dict[str, str]]] = {
 
 
 def export_data(data_type: str, from_date: str | None, to_date: str | None) -> tuple[bytes, str]:
-    """Xuất dữ liệu Availability/Performance/Batch đã import trong DB ra `.xlsx`, lọc theo
-    khoảng `production_date` (cùng quy ước ca 07:00 dùng cho MỌI bộ lọc ngày khác trong dự
-    án — xem `core/production_time.py::production_bounds()` — để nhất quán với các báo cáo
-    Downtime/Batch Matrix/Cleaning MC, KHÔNG dùng ranh giới ngày dương lịch 00:00 riêng).
-
-    Mỗi dòng xuất ra kèm thêm cột đầu tiên "Production Day" — tính TRỰC TIẾP bằng
-    `production_date_sql_expr()` từ `COALESCE(end_time, start_time)` (KHÔNG đọc lại cột
-    `production_date` đã lưu sẵn của `availability_logs`, vì `performance_logs`/
-    `batch_details` không có cột này — tính thống nhất 1 cách cho CẢ 3 loại để cùng ý
-    nghĩa/công thức, tránh lệch nhau giữa dữ liệu cũ chưa backfill và dữ liệu mới)."""
     config = _EXPORT_CONFIG.get(data_type)
     if config is None:
         raise ValueError(f"data_type không hợp lệ: {data_type!r}. Phải là 1 trong {list(_EXPORT_CONFIG)}.")
@@ -414,6 +355,9 @@ def export_data(data_type: str, from_date: str | None, to_date: str | None) -> t
     rows = [dict(row) for row in execute_query(sql, (start_ts, end_ts))]
     for row in rows:
         row["export_production_date"] = normalize_production_date(row.get("export_production_date"))
+        for field in str(row.get("blank_fields") or "").split(","):
+            if field:
+                row[field] = None
 
     headers = ["Production Day", *headers]
     fields = ["export_production_date", *fields]

@@ -1,4 +1,3 @@
-"""Batch detail Excel importer and transactional SQLite upsert."""
 from __future__ import annotations
 
 import io
@@ -58,9 +57,6 @@ BATCH_HEADER_MAP = {
     "FuyangRequest": "fuyang_request", "Fuyang Request": "fuyang_request",
     "Note1": "note1", "Note2": "note2", "Note3": "note3", "Note4": "note4", "Note5": "note5",
 }
-# wo_qty và order_no giữ nguyên dạng CHUỖI: trong thực tế các cột này có thể chứa mã lệnh/mã đơn
-# hàng lẫn chữ cái (VD: "9V2607712", "9VS263114") chứ không phải số thuần túy — ép kiểu numeric
-# ở đây từng khiến parse_safe_float/​_number() raise và làm rớt nguyên dòng dữ liệu.
 NUMERIC_FIELDS = {field for field in BATCH_DETAIL_FIELDS if field in {
     "weight", "redye", "liquor_ratio", "liquor_quantity", "soft_water", "hot_water", "hard_water", "mix_water",
     "sum_water", "water_per_kg", "power", "power_per_kg", "heating_energy", "steam_per_kg", "dye_cost",
@@ -71,18 +67,10 @@ NUMERIC_FIELDS = {field for field in BATCH_DETAIL_FIELDS if field in {
 }}
 SHADE_VALUES = {"LIGHT": "Light", "MEDIUM": "Medium", "DARK": "Dark", "BLACK": "Black", "WHITE": "White"}
 BATCH_DATETIME_FIELDS = {"schedule_time", "start_time", "end_time"}
-# Epoch chuẩn Excel/openpyxl cho số serial ngày (1899-12-30, đã bù lỗi năm nhuận 1900 của Excel).
 _EXCEL_SERIAL_EPOCH = datetime(1899, 12, 30)
 
 
 def _parse_batch_datetime(value: Any) -> str:
-    """Ép kiểu 1 cell ScheduleTime/StartTime/EndTime sang chuỗi 'YYYY-MM-DD HH:MM:SS'.
-
-    Một số file Batch thật lưu các cột này dưới dạng số serial Excel thô (cell không có
-    number_format kiểu ngày) khiến openpyxl trả về float thay vì `datetime` (VD:
-    46273.52385416667 thay vì 2026-09-06 10:24:38) — không có fallback này, dữ liệu ngày
-    giờ bị lưu sai hàng loạt và `production_date` sẽ không tính được cho bất kỳ dòng nào.
-    """
     value = _clean(value)
     if value is None:
         return ""
@@ -92,7 +80,7 @@ def _parse_batch_datetime(value: Any) -> str:
         serial = float(str(value).strip())
     except (TypeError, ValueError):
         return str(value).strip()
-    if not (1.0 <= serial <= 100000.0):  # phạm vi hợp lý cho ngày Excel (~1900-2173)
+    if not (1.0 <= serial <= 100000.0):
         return str(value).strip()
     try:
         return (_EXCEL_SERIAL_EPOCH + timedelta(days=serial)).strftime("%Y-%m-%d %H:%M:%S")
@@ -123,7 +111,6 @@ def _clean(value: Any) -> Any:
 
 
 def _clean_identifier(value: Any) -> str | None:
-    """Normalize Excel identifiers without allowing NaN/float artifacts."""
     value = _clean(value)
     if value is None:
         return None
@@ -138,12 +125,6 @@ def _is_wash_batch(value: Any) -> bool:
 
 
 def normalize_batch_production_dataframe(dataframe: Any) -> Any:
-    """Normalize a Batch Production Report DataFrame for DB insertion.
-
-    Identifier columns are kept as strings, empty/NaN values become None and
-    datetime columns are coerced with invalid values becoming None. ``-WA``
-    rows remain valid and their optional order fields stay SQL NULL.
-    """
     if pd is None:
         raise RuntimeError("Pandas chưa được cài đặt. Chạy: pip install -r requirements.txt")
     frame = dataframe.copy()
@@ -168,7 +149,6 @@ def normalize_batch_production_dataframe(dataframe: Any) -> Any:
 
 
 def read_batch_production_excel(source: str | Path | bytes) -> Any:
-    """Read an Excel Batch Production Report with string-safe identifier columns."""
     if pd is None:
         raise RuntimeError("Pandas chưa được cài đặt. Chạy: pip install -r requirements.txt")
     string_columns = {column: "string" for column in IDENTIFIER_COLUMNS | set(BATCH_PRODUCTION_MAP)}
@@ -180,7 +160,6 @@ def read_batch_production_excel(source: str | Path | bytes) -> Any:
 
 
 def batch_production_records(dataframe: Any) -> list[dict[str, Any]]:
-    """Map normalized Excel headers to nullable DB records."""
     if pd is None:
         raise RuntimeError("Pandas chưa được cài đặt.")
     frame = normalize_batch_production_dataframe(dataframe)
@@ -201,11 +180,6 @@ def batch_production_records(dataframe: Any) -> list[dict[str, Any]]:
 
 
 def upsert_batch_production_sqlalchemy(session: Any, dataframe: Any) -> int:
-    """Dialect-aware SQLAlchemy Core UPSERT for PostgreSQL/MySQL/SQLite.
-
-    ``session`` may be a SQLAlchemy Session or Connection. The target table
-    must expose a unique/primary key on ``dyelot``.
-    """
     try:
         from sqlalchemy import MetaData, Table, insert
     except ImportError as exc:  # pragma: no cover - dependency is declared
@@ -234,12 +208,6 @@ def upsert_batch_production_sqlalchemy(session: Any, dataframe: Any) -> int:
 
 
 def parse_safe_float(value: Any, default: float = 0.0) -> float:
-    """Parse an toàn sang float — KHÔNG BAO GIỜ raise Exception.
-
-    Trước đây một cell không parse được sang số (VD: mã lệnh lẫn chữ "9V2607712") sẽ làm
-    raise ValueError và khiến CẢ DÒNG dữ liệu bị loại bỏ. Hàm này luôn trả về `default` khi
-    không parse được, để một cell lỗi không còn làm mất toàn bộ dòng.
-    """
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return default
     try:
@@ -261,31 +229,27 @@ def _read_xlsx(file_bytes: bytes) -> tuple[list[str], list[list[Any]]]:
 
 
 def _build_batch_raw_row(indexes: dict[str, int], values: list[Any]) -> dict[str, str]:
-    """Trích xuất {field: raw_value_str} từ 1 dòng sheet Batch — snapshot lưu vào
-    `import_log_rows` để Raw Data Viewer hiển thị/sửa, độc lập với việc parse sau đó
-    thành công hay không."""
     raw: dict[str, str] = {}
     for field in BATCH_DETAIL_FIELDS:
+        if field == "blank_fields":
+            continue
         index = indexes.get(field)
         value = values[index] if index is not None and index < len(values) else None
         if field in BATCH_DATETIME_FIELDS:
             raw[field] = _parse_batch_datetime(value)
         else:
-            raw[field] = str(_clean(value) or "").strip()
+            cleaned = _clean(value)
+            raw[field] = "" if cleaned is None else str(cleaned).strip()
     return raw
 
 
 def _parse_batch_row(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    """Ép kiểu + áp business rule cho 1 dòng Batch Detail ở dạng raw dict.
-
-    Dùng chung cho vòng lặp import hàng loạt (`parse_batch_file`) VÀ cho
-    `revalidate_batch_row()` khi người dùng sửa 1 dòng lỗi trong Raw Data Viewer.
-    """
     record: dict[str, Any] = {}
     try:
         for field in BATCH_DETAIL_FIELDS:
             value = raw.get(field)
             record[field] = parse_safe_float(value) if field in NUMERIC_FIELDS else str(_clean(value) or "").strip()
+        record["blank_fields"] = ",".join(sorted(field for field in NUMERIC_FIELDS if _clean(raw.get(field)) is None))
         if not record["dyelot"]:
             return None, "Thiếu giá trị bắt buộc: dyelot."
         record["shade"] = SHADE_VALUES.get(record["shade"].upper(), record["shade"].title())
@@ -298,7 +262,6 @@ def _parse_batch_row(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | 
 
 
 def revalidate_batch_row(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    """Re-validate 1 dòng Batch Detail đã được sửa qua Inline Edit (Raw Data Viewer)."""
     return _parse_batch_row(raw)
 
 
@@ -326,9 +289,6 @@ def parse_batch_file(file_bytes: bytes) -> dict[str, Any]:
 
 
 def _ensure_import_logs_table(conn: Any) -> None:
-    """Tạo/migrate bảng import_logs — cùng schema với luồng import Availability/Performance
-    (xem `modules/dyeing/engines/excel_import/service.py::import_raw_file`) để lịch sử import
-    Batch Detail dùng chung một bảng và hiện chung trên tab "Lịch sử Import"."""
     if get_dialect() == "sqlite":
         conn.execute("""
             CREATE TABLE IF NOT EXISTS import_logs (
@@ -348,14 +308,6 @@ def _ensure_import_logs_table(conn: Any) -> None:
 
 
 def _migrate_batch_details_primary_key(conn: Any) -> None:
-    """Đổi PRIMARY KEY của `batch_details` từ `dyelot` đơn sang `id` surrogate +
-    UNIQUE(dyelot, machine, start_time) — cho phép 1 Dyelot có NHIỀU dòng (mẻ gốc + mẻ redye
-    chạy lại), thay vì dòng sau ghi đè mất dòng trước như thiết kế cũ (xem
-    memory-bank/activeContext.md, điều tra mẻ C260659920). SQLite không ALTER được PRIMARY KEY
-    tại chỗ nên phải dựng lại bảng — cùng pattern `downtime/service.py::
-    _migrate_case_notes_context_column()` (RENAME -> CREATE mới -> INSERT copy -> DROP ->
-    commit tường minh; bài học đã ghi trong systemPatterns.md: thiếu commit ở bước này từng
-    làm dữ liệu "biến mất" tạm thời với các connection khác)."""
     old_columns = {row["name"] for row in conn.execute("PRAGMA table_info(batch_details)")}
     if not old_columns or "id" in old_columns:
         return
@@ -378,13 +330,6 @@ def _migrate_batch_details_primary_key(conn: Any) -> None:
 
 
 def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filename: str = "batch_detail.xlsx") -> dict[str, Any]:
-    """Parse file Batch Detail và UPSERT vào batch_details.
-
-    Viết lại theo đúng pattern của `import_raw_file()` (luồng import Availability/Performance):
-    ghi một dòng `import_logs` trạng thái 'processing' TRƯỚC khi ghi dữ liệu, rồi cập nhật kết
-    quả cuối cùng SAU — để mọi lần import, kể cả khi lỗi giữa chừng hoặc 0 dòng được lưu, đều
-    để lại dấu vết tra cứu được thay vì âm thầm biến mất như trước.
-    """
     result = parse_batch_file(file_bytes)
     total_rows = len(result["rows"]) + len(result["errors"])
 
@@ -444,15 +389,6 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
                 f"INSERT INTO batch_details ({','.join(columns_with_log)}) VALUES ({placeholders}) "
                 f"ON CONFLICT({','.join(key_fields)}) DO UPDATE SET {updates}"
             )
-            # Postgres bó TOÀN BỘ dòng của executemany() vào 1 câu INSERT...VALUES duy nhất
-            # (xem `_PostgresConnCompat.executemany()`) — nếu file Excel có 2 dòng trùng
-            # key_fields, câu lệnh ON CONFLICT DO UPDATE đó sẽ update trùng key 2 lần trong CÙNG 1
-            # statement và Postgres từ chối thẳng (`CardinalityViolation`). SQLite không dính lỗi
-            # này vì executemany() ở đó chạy tuần tự từng dòng một. Khử trùng theo
-            # (dyelot, machine, start_time) — KHÔNG còn khử theo dyelot đơn, vì 1 dyelot giờ có
-            # thể có nhiều lần chạy thật (mẻ gốc + mẻ redye) cần giữ RIÊNG, chỉ dòng trùng thật
-            # 100% (cùng cả 3 khoá) mới coi là duplicate cần khử (giữ dòng CUỐI xuất hiện trong
-            # file, giống hành vi "ghi đè" cũ khi đúng là cùng 1 lần chạy).
             deduped_rows = {tuple(row[field] for field in key_fields): row for row in result["rows"]}
             conn.execute("BEGIN")
             conn.executemany(sql, [tuple(row[field] for field in BATCH_DETAIL_FIELDS) + (log_id,) for row in deduped_rows.values()])
@@ -475,10 +411,6 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
     conn.commit()
 
     if imported_rows:
-        # Daily Rollup Pattern — affected dates gồm 2 phần:
-        # (1) production_date của các dòng availability_logs khớp dyelot vừa upsert (các báo
-        #     cáo VẪN lấy Availability làm nguồn chính, VD Batch Matrix/Downtime, dùng Batch để
-        #     bổ sung Shade/ColourNo/Brand...);
         shifted_date = production_date_sql_expr("a.end_time")
         affected_rows = conn.execute(
             f"""
@@ -489,9 +421,6 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
             """,
             (log_id,),
         ).fetchall()
-        # (2) production_date của CHÍNH các dòng batch_details vừa import — Batch/Day Trend và
-        #     Batch Per Day by Machine lấy batch_details làm NGUỒN SỰ THẬT DUY NHẤT
-        #     (`core/batch_source.py`), nên ngày chưa có availability_logs vẫn phải tính lại.
         batch_date_expr = production_date_sql_expr("COALESCE(end_time, start_time)")
         batch_date_rows = conn.execute(
             f"""
@@ -506,8 +435,6 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
             for row in [*affected_rows, *batch_date_rows] if row["production_date"]
         }
         if affected_dates:
-            # FabricType trống của Trend lấy theo mẻ KẾ TIẾP cùng máy -> mẻ cuối ngay trước
-            # khoảng vừa import có thể đổi loại vải; tính lại thêm 1 ngày liền trước.
             affected_dates.add(min(affected_dates) - timedelta(days=1))
         trigger_recompute(affected_dates)
 
@@ -526,16 +453,6 @@ def sync_batch_details(file_bytes: bytes, imported_by: str | None = None, filena
 
 
 def init_app(app: Flask) -> None:
-    """Đảm bảo `batch_details` đã ở schema MỚI (id surrogate PK + UNIQUE(dyelot, machine,
-    start_time)) NGAY LÚC APP KHỞI ĐỘNG — không chờ tới lần import Batch kế tiếp mới migrate
-    lazy trong `sync_batch_details()`. Cần thiết vì NHIỀU Engine đọc `batch_details` qua
-    `core/batch_details_match.py::batch_details_join_sql()` (tham chiếu cột `id`/`end_time`)
-    mà KHÔNG bao giờ gọi `sync_batch_details()` trước — nếu chỉ migrate lazy trong đó, 1 DB cũ
-    chưa từng import lại Batch sau bản cập nhật này sẽ lỗi "no such column: b.id" ngay khi mở
-    báo cáo, thay vì chỉ khi import. CHỈ áp dụng SQLite — Postgres dùng migration thủ công
-    riêng qua `supabase/migrate_batch_details_primary_key.sql` (app KHÔNG tự ALTER TABLE trên
-    Postgres, xem CLAUDE.md/`systemPatterns.md` mục 5.1), cùng pattern `core/auth.py::
-    init_app()` (bảng `user_permissions`)."""
     if app.config.get("DATABASE_URL"):
         return
     from core.database import get_raw_connection_for_app

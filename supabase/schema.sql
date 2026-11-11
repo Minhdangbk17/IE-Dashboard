@@ -117,6 +117,7 @@ create index if not exists idx_downtime_machine_time on downtime_logs (machine_i
 
 create table if not exists availability_logs (
     id bigint generated always as identity primary key,
+    blank_fields text,
     batch text not null,
     batch_ref_no text not null,
     entry_type text not null default 'IMPORT',
@@ -202,6 +203,7 @@ create index if not exists idx_availability_batch_ref_norm on availability_logs 
 -- KHÔNG chạy lại CREATE TABLE này (cùng quy ước đã áp dụng cho downtime_case_notes).
 create table if not exists batch_details (
     id bigint generated always as identity primary key,
+    blank_fields text,
     dyelot text not null,
     customer text, color text, order_no text, greige_code text, recipe_no text, colour_no text,
     shade text, customer_color text, is_rework integer not null default 0, machine text, machine_group text,
@@ -281,6 +283,7 @@ create table if not exists rft_targets (
 
 create table if not exists performance_logs (
     id bigint generated always as identity primary key,
+    blank_fields text,
     dyelot text not null,
     brand_name text,
     machine text not null,

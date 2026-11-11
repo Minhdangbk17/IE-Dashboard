@@ -1,21 +1,3 @@
-"""
-core/excel_importer.py
------------------------
-Core Utility dùng chung cho toàn bộ Excel Import Pipeline của mọi Engine.
-
-Chức năng:
-  1. Định nghĩa Schema (tên cột, kiểu dữ liệu, bắt buộc hay không) bằng
-     `ColumnSpec` + `ImportSchema`.
-  2. Đọc file `.xlsx` / `.xls` bằng `openpyxl`, hoặc `.csv` bằng module `csv`
-     built-in — KHÔNG dùng pandas để giữ dependency tối giản cho Phase 1.
-  3. Validate từng dòng: bỏ qua dòng trống, kiểm tra field bắt buộc, ép kiểu
-     (datetime / float / int / enum), thu thập lỗi chi tiết theo số dòng.
-  4. Bulk insert bằng `executemany` trong MỘT transaction duy nhất.
-  5. Sinh file Excel mẫu (`export_template`) để người dùng tải về điền dữ liệu.
-
-Kết quả trả về luôn là `ImportResult` — dataclass JSON-serializable, phù hợp
-để các route Flask trả thẳng ra `jsonify(result.to_dict())`.
-"""
 from __future__ import annotations
 
 import csv
@@ -36,7 +18,6 @@ from core.database import execute_query, get_db, get_dialect
 from core.production_time import get_production_date
 
 
-# Header và schema của hai file raw dữ liệu từ xưởng.
 AVAILABILITY_COLUMNS: dict[str, str] = {
     "Batch": "batch", "Batch Ref No": "batch_ref_no", "Fabric Type": "fabric_type",
     "Brand Name": "brand_name", "Machine": "machine", "Capacity (Kg)": "capacity_kg",
@@ -55,17 +36,11 @@ AVAILABILITY_COLUMNS: dict[str, str] = {
     "Cleaning (hour)": "cleaning_hour", "Maintenance (hour)": "maintenance_hour",
     "Others (hour)": "others_hour",
 }
-# Sinh cột Kg-H bằng cách thay đúng hậu tố " (hour)" -> " (Kg-H)" trên chính header (hour) đã
-# khai báo ở trên — giữ nguyên chữ gốc (VD: "Total operation time (cal)") thay vì suy luận lại
-# từ snake_case field name (dễ sai như "Total Op Time Cal" != "Total operation time (cal)").
 for _hour_header, _hour_field in list(AVAILABILITY_COLUMNS.items()):
     if _hour_header.endswith(" (hour)") and _hour_field.endswith("_hour"):
         _kgh_header = _hour_header[: -len(" (hour)")] + " (Kg-H)"
         _kgh_field = _hour_field[: -len("_hour")] + "_kgh"
         AVAILABILITY_COLUMNS[_kgh_header] = _kgh_field
-# Ngoại lệ đã xác minh trên file mẫu thật (Availability_20260908to09.xlsx): 2 cột Kg-H này
-# KHÔNG theo đúng quy tắc thay hậu tố ở trên — đổi hẳn chữ "Testing" -> "Test Production -".
-# Khai báo thêm alias đúng chữ thật để không mất dữ liệu 2 cột này khi import.
 AVAILABILITY_COLUMNS["Test Production - Sample order (Kg-H)"] = "testing_sample_order_kgh"
 AVAILABILITY_COLUMNS["Test Production - Bulk order (Kg-H)"] = "testing_bulk_order_kgh"
 
@@ -96,7 +71,6 @@ def _normalized_headers(headers: list[str]) -> set[str]:
 
 
 def detect_file_type_from_headers(headers: list[str]) -> str:
-    """Detect Availability, Performance or Batch from header signatures."""
     normalized = _normalized_headers(headers)
     compact = {header.replace(" ", "") for header in normalized}
     if BATCH_SIGNATURE <= compact:
@@ -129,37 +103,19 @@ STANDARD_HOURS = {
     "wait_color_load_hour": 0.50,
 }
 ACH_FIELDS = ("ach_load", "ach_unload", "ach_sample_check", "ach_ph", "ach_chemical", "ach_color")
-# "Stage" hiển thị trên UI (bảng "Standard Achievement Breakdown" của Engine downtime) ->
-# cột giờ thô nguồn trong `availability_logs` dùng để so sánh với Standard. Đây là bộ khoá
-# "stage" DUY NHẤT dùng chung cho: seed/đọc/sửa `downtime_achievement_standards` (hàm bên
-# dưới), lúc tính cờ ach_* khi import (`_add_availability_business_fields()`), VÀ
-# `modules/dyeing/engines/downtime/service.py::ACHIEVEMENT_COLUMNS` (map stage -> cột
-# ach_* để đọc báo cáo) — PHẢI cùng bộ khoá "stage" với dict đó, không định nghĩa lệch.
 ACHIEVEMENT_STAGES: dict[str, str] = {
     "Load": "load_hour", "Unload": "unload_hour", "Sample Check": "sample_checking_hour",
     "pH Check": "ph_checking_hour", "Chemical": "wait_chemical_load_hour", "Color": "wait_color_load_hour",
 }
-# stage -> cột ach_* tương ứng — dùng khi RECOMPUTE lại cờ ach_* cho TOÀN BỘ dữ liệu cũ mỗi
-# khi Standard của 1 stage đổi (xem `set_achievement_standard()`).
 ACHIEVEMENT_STAGE_ACH_FIELDS: dict[str, str] = {
     "Load": "ach_load", "Unload": "ach_unload", "Sample Check": "ach_sample_check",
     "pH Check": "ach_ph", "Chemical": "ach_chemical", "Color": "ach_color",
 }
-# dict.fromkeys(...) khử trùng lặp NHƯNG giữ thứ tự xuất hiện đầu tiên — cần thiết vì
-# AVAILABILITY_COLUMNS có nhiều header (key) khác nhau cùng map vào 1 field DB (value) — VD
-# "Testing Sample order (Kg-H)" (tự sinh) và "Test Production - Sample order (Kg-H)" (alias
-# thủ công dòng trên) đều map vào field "testing_sample_order_kgh". Nếu không khử trùng lặp,
-# field đó xuất hiện 2 lần trong danh sách cột INSERT ở save_to_db() — SQLite bỏ qua lỗi này
-# (cột trùng, giá trị sau ghi đè) nhưng Postgres từ chối thẳng: "column ... specified more
-# than once" (phát hiện khi deploy Vercel/Supabase, đã pass SQLite regression trước đó).
 AVAILABILITY_DB_FIELDS = tuple(dict.fromkeys(AVAILABILITY_COLUMNS.values())) + (
     "production_date", "week_label", "month_label", *ACH_FIELDS,
-    "ach_evaluated", "ach_passed", "ach_all_items",
+    "ach_evaluated", "ach_passed", "ach_all_items", "blank_fields",
 )
 
-# ---------------------------------------------------------------------------
-# Kiểu dữ liệu hỗ trợ ép kiểu (Data Type Parsing)
-# ---------------------------------------------------------------------------
 
 DATE_FORMATS: tuple[str, ...] = (
     "%Y-%m-%d %H:%M:%S",
@@ -172,11 +128,6 @@ DATE_FORMATS: tuple[str, ...] = (
 
 
 def calculate_production_date(value: Any) -> date | None:
-    """Tính ngày sản xuất (production_date) — CHỈ ép kiểu giá trị đầu vào rồi delegate
-    sang `core/production_time.py::get_production_date()` (nguồn DUY NHẤT cho công thức
-    cắt ca 07:00). Trước đây hàm này tự viết lại công thức cắt ca riêng — cùng kết quả
-    nhưng là rủi ro lệch nhau nếu 1 trong 2 nơi bị sửa mà quên sửa nơi còn lại (xem
-    memory-bank/systemPatterns.md mục 6.2)."""
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -197,11 +148,6 @@ def _standard_result(value: Any, standard: float) -> int | None:
 
 
 def _add_availability_business_fields(record: dict[str, Any], standard_hours: dict[str, float] | None = None) -> None:
-    """`standard_hours` (khoá = cột giờ thô, VD "load_hour") — mặc định `None` dùng luôn
-    `STANDARD_HOURS` (hằng số). Caller nên truyền kết quả của
-    `get_achievement_standard_hours_by_field()` (đọc từ DB, phản ánh Standard admin đã sửa
-    qua UI) — fetch 1 LẦN trước vòng lặp import hàng loạt rồi truyền vào đây cho TỪNG dòng,
-    KHÔNG query DB lại mỗi dòng (xem `detect_and_parse_file()`)."""
     standards = standard_hours or STANDARD_HOURS
     reference_time = record.get("end_time") or record.get("start_time")
     production = calculate_production_date(reference_time)
@@ -226,20 +172,9 @@ def _add_availability_business_fields(record: dict[str, Any], standard_hours: di
     record["ach_all_items"] = int(bool(evaluated) and record["ach_passed"] == record["ach_evaluated"])
 
 
-# ---------------------------------------------------------------------------
-# Standard Achievement — bảng cấu hình `downtime_achievement_standards`, cho phép người
-# dùng có quyền edit Engine downtime sửa ngưỡng giờ (Standard) của từng stage qua UI
-# (`modules/dyeing/engines/downtime/service.py::get_downtime_pivot_data()` đọc
-# `get_achievement_standards()` để hiển thị, route ghi gọi `set_achievement_standard()`).
-# Đặt ở ĐÂY (không phải trong Engine downtime) vì cùng nhóm với STANDARD_HOURS/ACH_FIELDS/
-# `_add_availability_business_fields()` đã có sẵn — Engine downtime import từ đây.
-# ---------------------------------------------------------------------------
 
 
 def _ensure_achievement_standards_table(conn: Any) -> None:
-    """Tự tạo bảng (CHỈ SQLite — Postgres tạo qua `supabase/schema.sql`) + seed giá trị mặc
-    định (`STANDARD_HOURS`) cho stage nào CHƯA có dòng cấu hình (idempotent, an toàn gọi
-    lại nhiều lần)."""
     if get_dialect() == "sqlite":
         conn.execute("""
             CREATE TABLE IF NOT EXISTS downtime_achievement_standards (
@@ -262,9 +197,6 @@ def _ensure_achievement_standards_table(conn: Any) -> None:
 
 
 def get_achievement_standards() -> dict[str, float]:
-    """{stage: standard_hours} cho MỌI stage (Load/Unload/Sample Check/pH Check/Chemical/
-    Color) — dùng để hiển thị cột Standard trên UI. Luôn trả đủ 6 stage (fallback
-    `STANDARD_HOURS` nếu vì lý do gì đó thiếu dòng trong bảng)."""
     conn = get_db()
     _ensure_achievement_standards_table(conn)
     rows = execute_query("SELECT stage, standard_hours FROM downtime_achievement_standards")
@@ -275,16 +207,11 @@ def get_achievement_standards() -> dict[str, float]:
 
 
 def get_achievement_standard_hours_by_field() -> dict[str, float]:
-    """Như `get_achievement_standards()` nhưng khoá theo CỘT GIỜ THÔ (VD "load_hour") thay
-    vì tên stage — đúng hình dạng mà `_add_availability_business_fields()` cần lúc import."""
     by_stage = get_achievement_standards()
     return {ACHIEVEMENT_STAGES[stage]: value for stage, value in by_stage.items()}
 
 
 def _recompute_achievement_aggregates(conn: Any) -> None:
-    """Tính lại `ach_evaluated`/`ach_passed`/`ach_all_items` cho TOÀN BỘ `availability_logs`
-    từ giá trị HIỆN TẠI của 6 cột `ach_*` — PHẢI gọi sau khi đổi BẤT KỲ Standard nào (dù chỉ
-    1 stage), vì 3 cột này là tổng hợp CỦA CẢ 6 cờ `ach_*` cộng lại, không phải riêng 1 cột."""
     ach_fields = list(ACHIEVEMENT_STAGE_ACH_FIELDS.values())
     evaluated_expr = " + ".join(f"(CASE WHEN {field} IS NOT NULL THEN 1 ELSE 0 END)" for field in ach_fields)
     passed_expr = " + ".join(f"COALESCE({field}, 0)" for field in ach_fields)
@@ -293,14 +220,6 @@ def _recompute_achievement_aggregates(conn: Any) -> None:
 
 
 def set_achievement_standard(stage: str, standard_hours: float, user_id: int) -> dict[str, Any]:
-    """Cập nhật Standard (đơn vị: giờ) của 1 stage + RECOMPUTE lại cờ `ach_*` cho TOÀN BỘ
-    dữ liệu THẬT đã import từ trước — vì `ach_*`/`ach_evaluated`/`ach_passed`/`ach_all_items`
-    được tính SẴN 1 LẦN lúc import (`_add_availability_business_fields()`), Engine downtime
-    đọc thẳng các cột này khi tổng hợp báo cáo (KHÔNG tính lại mỗi lần đọc, xem
-    `downtime/service.py::_daily_planned_and_achievement()`). Đổi Standard mà không
-    recompute sẽ khiến dữ liệu lịch sử VẪN dùng ngưỡng CŨ, sai lệch với Standard mới hiển
-    thị trên UI — KHÁC với Target (Downtime by Category), Target chỉ đổi ngưỡng tô màu
-    hiển thị, không đổi số liệu gốc nên không cần recompute gì."""
     if stage not in ACHIEVEMENT_STAGES:
         raise ValueError(f"Stage không hợp lệ: {stage}")
     if not standard_hours or standard_hours <= 0:
@@ -348,11 +267,6 @@ def set_achievement_standard(stage: str, standard_hours: float, user_id: int) ->
 
 
 def _parse_datetime(value: Any) -> datetime:
-    """Ép kiểu giá trị (str hoặc datetime từ openpyxl) sang `datetime`.
-
-    Ném `ValueError` với thông báo tiếng Việt rõ ràng nếu không parse được —
-    dùng trực tiếp làm nội dung lỗi trả về cho người dùng.
-    """
     if isinstance(value, datetime):
         return value
     text = str(value).strip()
@@ -404,17 +318,13 @@ TYPE_PARSERS: dict[str, Callable[[Any], Any]] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Schema definition
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ColumnSpec:
-    """Đặc tả một cột trong schema import."""
 
-    name: str  # tên cột trong file Excel/CSV (không phân biệt hoa/thường)
-    dtype: str  # "str" | "int" | "float" | "datetime" | "enum"
+    name: str
+    dtype: str
     required: bool = True
     enum_values: tuple[str, ...] = ()
     description: str = ""
@@ -427,12 +337,11 @@ class ColumnSpec:
 
 @dataclass(frozen=True)
 class ImportSchema:
-    """Schema đầy đủ cho một loại import (vd: Telemetry, Downtime)."""
 
-    key: str  # định danh, vd "telemetry"
-    table_name: str  # bảng SQLite đích
+    key: str
+    table_name: str
     columns: tuple[ColumnSpec, ...]
-    insert_sql: str  # câu SQL INSERT dùng cho executemany
+    insert_sql: str
 
     @property
     def required_columns(self) -> list[str]:
@@ -443,14 +352,11 @@ class ImportSchema:
         return [c.name for c in self.columns]
 
 
-# ---------------------------------------------------------------------------
-# Kết quả Import
-# ---------------------------------------------------------------------------
 
 
 @dataclass
 class RowError:
-    row: int  # số dòng trong file gốc (tính cả header, 1-indexed, dễ đối chiếu Excel)
+    row: int
     error: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -485,19 +391,15 @@ class ImportResult:
         }
 
 
-# ---------------------------------------------------------------------------
-# Đọc file nguồn (xlsx / xls / csv) -> list[dict] thô (chưa ép kiểu)
-# ---------------------------------------------------------------------------
 
 
 def _read_rows_from_xlsx(file_stream: io.BytesIO) -> tuple[list[str], list[tuple[int, list[Any]]]]:
-    """Đọc sheet đầu tiên của workbook. Trả về (header, [(row_index, values), ...])."""
     workbook = load_workbook(filename=file_stream, data_only=True, read_only=True)
     sheet: Worksheet = workbook.worksheets[0]
     rows_iter = sheet.iter_rows(values_only=True)
     header = [str(h).strip() if h is not None else "" for h in next(rows_iter, [])]
     raw_rows: list[tuple[int, list[Any]]] = []
-    for idx, row in enumerate(rows_iter, start=2):  # dòng 1 là header
+    for idx, row in enumerate(rows_iter, start=2):
         raw_rows.append((idx, list(row)))
     workbook.close()
     return header, raw_rows
@@ -515,25 +417,14 @@ def _read_rows_from_csv(file_stream: io.BytesIO) -> tuple[list[str], list[tuple[
 
 
 def _is_blank_row(values: Sequence[Any]) -> bool:
-    """Một dòng được coi là trống nếu toàn bộ ô đều None hoặc chuỗi rỗng."""
     return all(v is None or str(v).strip() == "" for v in values)
 
 
-# ---------------------------------------------------------------------------
-# API chính: validate_and_parse + bulk_insert
-# ---------------------------------------------------------------------------
 
 
 def parse_file(
     filename: str, file_bytes: bytes, schema: ImportSchema
 ) -> tuple[list[dict[str, Any]], list[RowError]]:
-    """
-    Đọc + validate + ép kiểu dữ liệu theo `schema`.
-
-    Trả về (parsed_rows, errors):
-      - parsed_rows: danh sách dict đã ép kiểu đúng, sẵn sàng insert.
-      - errors: danh sách RowError chi tiết theo số dòng, KHÔNG làm crash ứng dụng.
-    """
     ext = filename.rsplit(".", 1)[-1].lower()
     stream = io.BytesIO(file_bytes)
 
@@ -552,7 +443,6 @@ def parse_file(
             f"Cột hiện có: {', '.join(header) or '(rỗng)'}"
         )
 
-    # map: tên cột (lowercase) -> vị trí trong hàng
     col_index: dict[str, int] = {name: header_lower.index(name.lower()) for name in schema.column_names if name.lower() in header_lower}
 
     parsed_rows: list[dict[str, Any]] = []
@@ -560,7 +450,7 @@ def parse_file(
 
     for row_number, values in raw_rows:
         if _is_blank_row(values):
-            continue  # tự động bỏ qua dòng trống
+            continue
 
         parsed: dict[str, Any] = {}
         row_has_error = False
@@ -597,12 +487,6 @@ def bulk_insert(
     parsed_rows: list[dict[str, Any]],
     extra_params: Sequence[Any] = (),
 ) -> int:
-    """
-    Chèn hàng loạt bằng `executemany` trong MỘT transaction duy nhất.
-
-    `extra_params` cho phép truyền thêm giá trị cố định vào cuối mỗi dòng
-    (vd: `import_log_id`) — các cột này phải khớp thứ tự với `insert_sql`.
-    """
     if not parsed_rows:
         return 0
     values = [tuple(row[col.name] for col in schema.columns) + tuple(extra_params) for row in parsed_rows]
@@ -621,12 +505,6 @@ def run_import(
     strict_mode: bool = False,
     extra_params: Sequence[Any] = (),
 ) -> ImportResult:
-    """
-    Orchestrator: parse -> (strict check) -> bulk insert -> trả ImportResult.
-
-    - `strict_mode=True`: nếu có BẤT KỲ dòng lỗi nào -> KHÔNG commit, trả lỗi.
-    - `strict_mode=False`: bỏ qua dòng lỗi, commit các dòng hợp lệ còn lại.
-    """
     parsed_rows, errors = parse_file(filename, file_bytes, schema)
     result = ImportResult(
         schema_key=schema.key,
@@ -647,7 +525,6 @@ def run_import(
 
 
 def preview_file(filename: str, file_bytes: bytes, schema: ImportSchema, limit: int = 5) -> dict[str, Any]:
-    """Xem trước (Preview) N dòng đầu tiên + lỗi phát hiện được, KHÔNG ghi DB."""
     parsed_rows, errors = parse_file(filename, file_bytes, schema)
     return {
         "columns": schema.column_names,
@@ -658,18 +535,9 @@ def preview_file(filename: str, file_bytes: bytes, schema: ImportSchema, limit: 
     }
 
 
-# ---------------------------------------------------------------------------
-# Sinh file Excel mẫu (Template Export)
-# ---------------------------------------------------------------------------
 
 
 def export_template(schema: ImportSchema, sample_rows: list[tuple[Any, ...]] | None = None) -> bytes:
-    """
-    Sinh file `.xlsx` mẫu cho một schema: header in đậm + vài dòng dữ liệu mẫu
-    (nếu có) để người dùng biết định dạng cần điền.
-
-    Trả về bytes của file — route chỉ cần gói vào `send_file(io.BytesIO(...))`.
-    """
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = schema.key[:31]
@@ -688,7 +556,6 @@ def export_template(schema: ImportSchema, sample_rows: list[tuple[Any, ...]] | N
             for col_idx, value in enumerate(sample, start=1):
                 sheet.cell(row=row_idx, column=col_idx, value=value)
 
-    # Thêm sheet hướng dẫn cột bắt buộc / kiểu dữ liệu
     guide_sheet = workbook.create_sheet("Huong_Dan")
     guide_sheet.append(["Cột", "Kiểu dữ liệu", "Bắt buộc", "Mô tả"])
     for cell in guide_sheet[1]:
@@ -708,10 +575,6 @@ def export_template(schema: ImportSchema, sample_rows: list[tuple[Any, ...]] | N
 
 
 def export_rows_to_excel(headers: list[str], fields: list[str], rows: list[dict[str, Any]], sheet_title: str) -> bytes:
-    """Xuất `rows` (list dict, đọc thẳng từ DB) ra file `.xlsx` — header in đậm giống
-    `export_template()`, nhưng dùng cho dữ liệu THẬT đã import (Availability/Performance/
-    Batch), không phải file mẫu rỗng. `headers`/`fields` cùng thứ tự — `fields[i]` là key
-    đọc từ mỗi dict trong `rows` để điền vào cột `headers[i]`."""
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = sheet_title[:31]
@@ -735,16 +598,11 @@ def export_rows_to_excel(headers: list[str], fields: list[str], rows: list[dict[
 
 
 def allowed_file(filename: str, allowed_extensions: set[str]) -> bool:
-    """Kiểm tra phần mở rộng file có nằm trong danh sách cho phép hay không."""
     return "." in filename and filename.rsplit(".", 1)[-1].lower() in allowed_extensions
 
 
-# ---------------------------------------------------------------------------
-# Raw Availability / Performance importer
-# ---------------------------------------------------------------------------
 
 def _raw_cell(value: Any) -> Any:
-    """Chuẩn hóa giá trị rỗng của Excel/CSV mà không làm mất số 0 hợp lệ."""
     if value is None:
         return None
     if isinstance(value, float) and math.isnan(value):
@@ -777,13 +635,6 @@ _THOUSANDS_COMMA = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
 
 
 def _coerce_number_text(text: str) -> float:
-    """Ép chuỗi số (ô Excel định dạng Text, CSV) sang float.
-
-    Từ 2026-10 hệ thống xuất file Availability ghi Load/Unload (hour) dạng TEXT ("0.11",
-    ô trống thay cho 0) — phải ép về số như cũ. Chấp nhận thêm các biến thể text hay gặp:
-    dấu ' ở đầu (Excel force-text), NBSP/khoảng trắng, "1,234.5" (dấu phẩy hàng nghìn) và
-    "0,11" (dấu phẩy thập phân). Trước đây `replace(",", "")` biến "0,11" thành 11 — sai.
-    """
     cleaned = text.replace("\u00a0", "").replace(" ", "").lstrip("'")
     if "," in cleaned:
         if "." in cleaned or _THOUSANDS_COMMA.match(cleaned):
@@ -825,8 +676,6 @@ def _raw_mapping(headers: list[str], mapping: dict[str, str]) -> dict[str, int]:
 
 
 def _build_raw_row_dict(fields: list[str], indexes: dict[str, int], values: list[Any]) -> dict[str, str]:
-    """Trích xuất {field: raw_value_str} từ 1 dòng sheet — snapshot lưu vào `import_log_rows`
-    để Raw Data Viewer hiển thị/sửa, độc lập với việc ép kiểu sau đó thành công hay không."""
     raw: dict[str, str] = {}
     for field in fields:
         idx = indexes.get(field)
@@ -840,13 +689,6 @@ def _parse_raw_row(
     file_type: str, fields: list[str], required: set[str], raw: dict[str, Any],
     standard_hours: dict[str, float] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Ép kiểu + áp business rule cho 1 dòng Availability/Performance ở dạng raw dict.
-
-    Dùng chung cho vòng lặp import hàng loạt (`detect_and_parse_file`) VÀ cho
-    `revalidate_raw_row()` khi người dùng sửa 1 dòng lỗi trong Raw Data Viewer — đảm bảo
-    cùng một luật ép kiểu, không lặp code hai nơi. `standard_hours` (nếu có) truyền thẳng
-    sang `_add_availability_business_fields()` — xem ghi chú ở đó.
-    """
     record: dict[str, Any] = {}
     try:
         for field in fields:
@@ -857,11 +699,11 @@ def _parse_raw_row(
                 record[field] = _raw_float(raw_value)
             else:
                 record[field] = str(_raw_cell(raw_value) or "").strip()
+        record["blank_fields"] = ",".join(sorted(
+            field for field in fields if field in _NUMERIC_FIELDS and _raw_cell(raw.get(field)) is None
+        ))
         if file_type == "AVAILABILITY" and not record.get("batch_ref_no"):
             record["batch_ref_no"] = record.get("batch", "")
-        # Dòng Tổng Kết (Summary Row) ở cuối file Availability/Performance: Batch/Dyelot hoặc
-        # Machine = 'All', Start Time/Program rỗng — kiểm tra TRƯỚC missing-required để báo
-        # đúng lý do "dòng tổng kết" thay vì lẫn với thông báo thiếu field chung chung.
         summary_key = "dyelot" if file_type == "PERFORMANCE" else "batch"
         if record.get(summary_key, "").strip().lower() == "all" or record.get("machine", "").strip().lower() == "all":
             return None, "Dòng tổng hợp 'All' — bị bỏ qua khi import (không phải dòng dữ liệu thật)."
@@ -876,32 +718,18 @@ def _parse_raw_row(
 
 
 def revalidate_raw_row(file_type: str, raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    """Re-validate 1 dòng Availability/Performance đã được sửa qua Inline Edit."""
     if file_type == "AVAILABILITY":
         fields, required = list(AVAILABILITY_COLUMNS.values()), _AVAILABILITY_REQUIRED
     elif file_type == "PERFORMANCE":
         fields, required = list(PERFORMANCE_COLUMNS.values()), _PERFORMANCE_REQUIRED
     else:
         raise ValueError(f"file_type '{file_type}' không hỗ trợ revalidate.")
-    # Chỉ 1 dòng/lần (sửa tay trong Raw Data Viewer) nên query DB lấy Standard hiện tại ở
-    # đây KHÔNG đáng kể — khác vòng lặp hàng loạt của `detect_and_parse_file()` phải fetch
-    # 1 LẦN trước loop để tránh N query.
     standard_hours = get_achievement_standard_hours_by_field() if file_type == "AVAILABILITY" else None
     return _parse_raw_row(file_type, fields, required, raw, standard_hours)
 
 
 def detect_and_parse_file(file_path: str) -> dict[str, Any]:
-    """Tự nhận diện và làm sạch một file Availability hoặc Performance.
-
-    Kết quả có dạng ``{"file_type": ..., "columns": ..., "rows": ..., "errors": ...}``.
-    ``rows`` là danh sách record chuẩn hóa, dùng được như DataFrame records mà
-    không bắt buộc cài thêm pandas vào hệ thống offline.
-    """
     headers, raw_rows = _read_raw_file(file_path)
-    # Chỉ dùng signature-match để nhận diện sớm BATCH (đã xác minh khớp đúng file thật: Dyelot +
-    # TreatmentProgram + Shade + RecipeNo). KHÔNG được raise ở đây cho Availability/Performance —
-    # file thật của 2 loại này không có cột Dyelot/Availability/Reason hay MC/Shift/RunTime như
-    # signature cũ giả định; để logic required-field mạnh mẽ hơn bên dưới tự nhận diện.
     try:
         detected_type = detect_file_type_from_headers(headers)
     except ValueError:
@@ -939,9 +767,6 @@ def detect_and_parse_file(file_path: str) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     row_details: list[dict[str, Any]] = []
-    # Fetch Standard 1 LẦN trước vòng lặp (không phải mỗi dòng) — file Availability có thể
-    # có hàng nghìn dòng, query DB lặp lại theo dòng sẽ chậm không cần thiết (đúng bài học
-    # đã rút ra ở `executemany()`/Postgres round-trip, xem systemPatterns.md mục 5.1).
     standard_hours = get_achievement_standard_hours_by_field() if file_type == "AVAILABILITY" else None
     for row_number, values in raw_rows:
         if _is_blank_row(values):
@@ -957,9 +782,6 @@ def detect_and_parse_file(file_path: str) -> dict[str, Any]:
     return {"file_type": file_type, "columns": fields, "rows": rows, "errors": errors, "row_details": row_details}
 
 
-# Tên cột cũ (Phase trước khi chuẩn hoá mapping "_hour"/"_kgh") -> tên cột chuẩn mới, dùng để
-# migrate DB cũ bằng `ALTER TABLE ... RENAME COLUMN` (giữ nguyên dữ liệu đã import trước đó,
-# KHÔNG cần xoá/tạo lại bảng hay yêu cầu người dùng import lại từ đầu).
 _AVAILABILITY_COLUMN_RENAMES: dict[str, str] = {
     "planned_prd_time": "planned_prd_time_hour", "running_time": "running_time_hour",
     "total_downtime": "total_downtime_hour", "rework": "rework_hour", "adjust_color": "adjust_color_hour",
@@ -973,11 +795,6 @@ _AVAILABILITY_COLUMN_RENAMES: dict[str, str] = {
 
 
 def _ensure_raw_tables(conn: Any) -> None:
-    """Tạo bảng raw khi app đang chạy trên DB cũ chưa chạy init_db lại — đồng thời migrate
-    `availability_logs` sang chuẩn cột `_hour`/`_kgh` mới (đổi tên cột cũ nếu có, thêm cột mới
-    còn thiếu) mà KHÔNG làm mất dữ liệu đã import trước đó. CHỈ chạy DDL/`executescript` này ở
-    SQLite — `executescript()` là API riêng của `sqlite3.Connection`, không tồn tại ở
-    psycopg2; ở Postgres 2 bảng này đã được tạo trước qua `supabase/schema.sql`."""
     if get_dialect() == "sqlite":
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS availability_logs (
@@ -1014,7 +831,7 @@ def _ensure_raw_tables(conn: Any) -> None:
         "ach_load": "INTEGER", "ach_unload": "INTEGER", "ach_sample_check": "INTEGER",
         "ach_ph": "INTEGER", "ach_chemical": "INTEGER", "ach_color": "INTEGER",
         "ach_evaluated": "INTEGER NOT NULL DEFAULT 0", "ach_passed": "INTEGER NOT NULL DEFAULT 0",
-        "ach_all_items": "INTEGER NOT NULL DEFAULT 0",
+        "ach_all_items": "INTEGER NOT NULL DEFAULT 0", "blank_fields": "TEXT",
     }
     for column, definition in additions.items():
         if column not in existing:
@@ -1026,6 +843,7 @@ def _ensure_raw_tables(conn: Any) -> None:
     performance_additions = {
         "max_capacity_pct": "REAL NOT NULL DEFAULT 0", "pth": "REAL NOT NULL DEFAULT 0",
         "output_max_load_kgh": "REAL NOT NULL DEFAULT 0", "running_time_kgh": "REAL NOT NULL DEFAULT 0",
+        "blank_fields": "TEXT",
     }
     for column, definition in performance_additions.items():
         if column not in performance_existing:
@@ -1034,14 +852,13 @@ def _ensure_raw_tables(conn: Any) -> None:
 
 
 def save_to_db(df: Any, file_type: str, db_connection: Any, import_log_id: int | None = None) -> int:
-    """Bulk UPSERT normalized records in one SQLite transaction."""
     if file_type not in {"AVAILABILITY", "PERFORMANCE"}:
         raise ValueError("file_type phải là AVAILABILITY hoặc PERFORMANCE.")
     rows = df.get("rows", []) if isinstance(df, dict) else list(df)
     if not rows:
         return 0
     _ensure_raw_tables(db_connection)
-    fields = list(AVAILABILITY_DB_FIELDS) if file_type == "AVAILABILITY" else list(PERFORMANCE_COLUMNS.values())
+    fields = list(AVAILABILITY_DB_FIELDS) if file_type == "AVAILABILITY" else [*PERFORMANCE_COLUMNS.values(), "blank_fields"]
     table = "availability_logs" if file_type == "AVAILABILITY" else "performance_logs"
     key_fields = ("batch_ref_no", "machine", "start_time") if file_type == "AVAILABILITY" else ("dyelot", "machine", "start_time")
     fields_with_log = fields + ["import_log_id"]
@@ -1055,11 +872,6 @@ def save_to_db(df: Any, file_type: str, db_connection: Any, import_log_id: int |
     ]
     if invalid_rows:
         raise ValueError(f"Dữ liệu có khóa bắt buộc rỗng tại dòng: {invalid_rows[:10]}")
-    # Postgres bó TOÀN BỘ dòng của executemany() vào 1 câu INSERT...VALUES duy nhất (xem
-    # `_PostgresConnCompat.executemany()`) — nếu file Excel có 2 dòng trùng key_fields, câu
-    # ON CONFLICT DO UPDATE đó update trùng key 2 lần trong CÙNG 1 statement và Postgres từ
-    # chối thẳng (`CardinalityViolation`). Khử trùng theo key_fields (giữ dòng CUỐI cùng xuất
-    # hiện trong file) để giữ đúng hành vi "ghi đè" như khi executemany chạy tuần tự (SQLite).
     deduped_rows = {tuple(row.get(field) for field in key_fields): row for row in rows}.values()
     values = [
         tuple(row.get(field, 0.0 if field in _NUMERIC_FIELDS else None) for field in fields)
@@ -1077,16 +889,9 @@ def save_to_db(df: Any, file_type: str, db_connection: Any, import_log_id: int |
         raise
 
 
-# ---------------------------------------------------------------------------
-# Raw Data Viewer: lưu snapshot raw data + trạng thái từng dòng của mọi lần
-# import (Availability/Performance/Batch) để xem lại/lọc/sửa mà không cần
-# upload lại file. Không có tầng lưu trữ này trước đây — mọi thứ bị huỷ ngay
-# sau khi response HTTP được gửi đi.
-# ---------------------------------------------------------------------------
 
 
 def _ensure_import_log_rows_table(conn: Any) -> None:
-    """CHỈ chạy CREATE TABLE ở SQLite — ở Postgres bảng đã có sẵn qua `supabase/schema.sql`."""
     if get_dialect() == "sqlite":
         conn.execute("""
             CREATE TABLE IF NOT EXISTS import_log_rows (
@@ -1103,7 +908,6 @@ def _ensure_import_log_rows_table(conn: Any) -> None:
 
 
 def record_import_rows(conn: Any, import_log_id: int, row_details: list[dict[str, Any]]) -> None:
-    """Ghi snapshot raw data + trạng thái từng dòng vào `import_log_rows` sau một lần import."""
     _ensure_import_log_rows_table(conn)
     if not row_details:
         conn.commit()

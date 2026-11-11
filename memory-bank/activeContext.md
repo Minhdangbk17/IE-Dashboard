@@ -1,5 +1,7 @@
 # Active Context — Trạng thái hiện tại
 
+**Cập nhật lần cuối:** 2026-11-11 — **Export dữ liệu thô giữ ô rỗng là rỗng (không đổi thành 0).** Cột số của `availability_logs`/`performance_logs`/`batch_details` vẫn lưu 0 (không đổi sang NULL để báo cáo không bị ảnh hưởng); thêm cột `blank_fields` (TEXT, danh sách field số mà ô gốc rỗng, phân tách dấu phẩy) do `_parse_raw_row()`/`_parse_batch_row()` ghi, `export_data()` đặt các field đó về None khi xuất. Số 0 thật vẫn xuất 0. Sửa kèm: `_build_batch_raw_row()` trước đây đổi số 0 thật thành "" trong snapshot Raw Data. **Deploy: chạy `supabase/migrate_raw_blank_fields.sql` rồi IMPORT LẠI dữ liệu cũ** (dòng đã import trước đó không có `blank_fields` nên vẫn xuất 0). Chưa làm: export báo cáo (Trend `0.0` cho kỳ không có giờ...). Test `tests/test_export_blank_fields.py`.
+
 **Cập nhật lần cuối:** 2026-11-08 — **Phân loại mẻ theo BatchType (Batch Per Day by Machine + Batch/Day Trend + Fabric/Color Matrix).**
 Chi tiết quy tắc và lý do: `design/BATCH_CLASSIFICATION.md`. Người dùng chốt sau khi đối chiếu 2 file mẫu (`batch_2026-11-01_to_2026-11-06.xlsx`,
 sheet Batch của `batch_2026-08-01_to_2026-08-31 (1).xlsx`) và Availability: `classify_batch_badge()` (`reports/cleaning_matrix.py`) xét theo thứ tự

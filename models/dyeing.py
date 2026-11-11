@@ -1,9 +1,3 @@
-"""Shared SQLite schema constants for Dyeing features.
-
-The application currently uses sqlite3 directly rather than SQLAlchemy. Keeping
-these field contracts in one module avoids duplicating the Batch Detail mapping
-between the importer, manual entry and reporting engines.
-"""
 from __future__ import annotations
 
 AVAILABILITY_TABLE = "availability_logs"
@@ -31,4 +25,5 @@ BATCH_DETAIL_FIELDS = (
     "schedule_time", "start_time", "end_time", "run_time", "set_time", "stop_time", "operator_time",
     "correction_time", "manual_time", "stop_alarm_time", "hold_alarm_time", "diff_time", "percent",
     "fuyang_request", "note1", "note2", "note3", "note4", "note5",
+    "blank_fields",
 )
