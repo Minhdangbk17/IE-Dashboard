@@ -197,6 +197,15 @@ def _scenario_stops(failures: list[str]) -> None:
 
     m2 = _rows(service.get_idle_matrix("2026-09-01", "2026-09-05"))["M2"]["cells"]
     _check("ô M2 01/09 + 02/09: toàn bộ idle đã có nguyên nhân", (m2["2026-09-01"]["explained"], m2["2026-09-02"]["explained"]), (13.0, 12.0), failures)
+    full = service.get_idle_matrix("2026-09-01", "2026-09-05")
+    by_reason = full["day_reason_hours"]
+    _check("biểu đồ Reason: tổng giờ theo Reason = giờ idle từng ngày",
+           {day: round(sum(by_reason[day].values()), 1) for day in full["days"]},
+           {day: round(totals["idle"], 1) for day, totals in full["day_totals"].items()}, failures)
+    _check("biểu đồ Reason: 'No reason' = idle - explained",
+           {day: round(by_reason[day].get("No reason", 0.0), 1) for day in full["days"]},
+           {day: round(totals["idle"] - totals["explained"], 1) for day, totals in full["day_totals"].items()}, failures)
+    _check("biểu đồ Reason: M2 01/09 Maintenance 13h", by_reason["2026-09-01"].get("Maintenance"), 13.0, failures)
 
     f = _add("M1", "2026-09-05 08:30", "2026-09-05 09:00", "No order", 8)
     _check("không có khoảng idle nào của máy trong dữ liệu -> unmatched", _status("2026-09-05", "2026-09-05")[f]["status"], "unmatched", failures)

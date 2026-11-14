@@ -1126,6 +1126,9 @@
       `supabase/migrate_rft_sources.sql`. Test `tests/test_rft_classification.py` (viết lại,
       57/57 dòng khớp Excel người dùng).
 
+- [x] 2026-11-14 — **Idle Time: 2 biểu đồ** — % Idle theo ngày cột chồng theo Reason + Total + Target; bar ngang % Idle
+      theo máy. API matrix thêm `day_reason_hours`. Không đổi schema. Test `tests/test_idle_time.py`.
+
 ## Backlog (Phase 2+)
 - [ ] RFT: `dye_production_ops` lưu MỌI công đoạn của Production Report (~950 dòng/ngày, ~350k
       dòng/năm) để đổi quy tắc lọc không phải import lại — theo dõi dung lượng Supabase; nếu cần,
@@ -1220,6 +1223,8 @@
       (`graph_view.html`) chỉ phù hợp quy mô nhỏ/vừa.
 
 ## Known Issues
+
+- [ ] (2026-11-14) Knitting Downtime `renderDowntimeChart`: đường Total và Target đều là line không `stack` trên trục y stacked → có thể Target vẽ thành Total + Target. Cần kiểm tra trên trình duyệt (cùng lỗi đã sửa ở Idle Time).
 - `batch_matrix_view.html` (JS): khi dataset hoàn toàn rỗng (VD DB mới seed
   chưa có `availability_logs`), một vài hàm render gọi `.map()` trên field
   mà backend không trả về khi không có dữ liệu -> `Cannot read properties of

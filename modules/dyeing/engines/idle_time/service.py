@@ -74,6 +74,7 @@ IDLE_REASONS = (
     "No order",
     "Waiting for previous process",
 )
+NO_REASON_LABEL = "No reason"  # nhóm giờ idle chưa có lần dừng nào gán (biểu đồ theo Reason)
 SOURCE_ENTRY = "entry"    # nhập tay ở trang Idle Entry
 SOURCE_REPORT = "report"  # bấm Save trong drawer báo cáo (giờ = đúng khoảng idle)
 TARGET_SETTING_KEY = "target_idle_pct"
@@ -552,6 +553,11 @@ def _build(from_date: str | None, to_date: str | None, tank_types: list[str] | N
         rows.append(row)
 
     grand = {key: sum(totals[key] for totals in day_totals.values()) for key in totals_keys}
+    # Giờ idle theo Reason của từng ngày (máy đã lọc) — các đoạn chia kín khoảng idle nên tổng = idle ngày.
+    day_reason_hours: dict[str, dict[str, float]] = {day: defaultdict(float) for day in days}
+    for segment in all_segments:
+        reason = segment["stop"]["reason"] if segment["stop"] else NO_REASON_LABEL
+        day_reason_hours[segment["production_date"]][reason] += _hours(segment["start"], segment["end"])
     windows = ctx["windows"]
     return {
         "days": days,
@@ -567,6 +573,8 @@ def _build(from_date: str | None, to_date: str | None, tank_types: list[str] | N
             "idle_pct": _pct(grand["idle"], grand["available"]),
             "explained_pct": _pct(grand["explained"], grand["idle"]),
         },
+        "day_reason_hours": {day: {reason: round(hours, 2) for reason, hours in reasons.items()} for day, reasons in day_reason_hours.items()},
+        "no_reason_label": NO_REASON_LABEL,
         "target_idle_pct": target,
         "available_tank_types": available_tank_types,
         "available_capacities": available_capacities,

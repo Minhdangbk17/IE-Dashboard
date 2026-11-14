@@ -12,6 +12,7 @@
     .idle-note-mark { margin-left: 4px; font-size: 10px; color: var(--text-secondary); }
     .ratio-warning { background: var(--danger-bg) !important; color: var(--danger) !important; }
     .idle-gap-table select, .idle-gap-table input { width: 100%; min-width: 140px; }
+    .idle-chart-wrap { position: relative; height: 340px; }
 </style>{% endblock %}
 {% block content %}
 <div class="d-flex flex-justify-between flex-items-center mb-3"><div><p class="f6 color-fg-muted text-uppercase text-bold mb-1">Dyeing / Reports</p><h2 class="mt-0">Idle Time</h2></div><div class="d-flex" style="gap:8px"><a class="btn btn-sm" href="{{ url_for('dyeing.idle_time.entry_view') }}">Idle Entry</a><a class="btn btn-sm" href="{{ url_for('dyeing.hub') }}">&larr; Back to Hub</a></div></div>
@@ -42,6 +43,19 @@
 
 <div class="d-flex flex-wrap mb-3" style="gap:12px" id="idle-kpis"></div>
 
+<div id="idle-charts">
+    <section class="Box p-3 mb-3">
+        <h3 class="Box-title mt-0 mb-1">% Idle by day and reason</h3>
+        <p class="f6 color-fg-muted mt-0">Each stack = idle hours of that reason ÷ available hours of the day. Line = total % Idle; dashed = target.</p>
+        <div class="idle-chart-wrap"><canvas id="idle-chart-trend" aria-label="Percent idle by day, stacked by reason"></canvas></div>
+    </section>
+    <section class="Box p-3 mb-3">
+        <h3 class="Box-title mt-0 mb-1">% Idle by machine</h3>
+        <p class="f6 color-fg-muted mt-0">Whole selected range. Red = above target; dashed = target.</p>
+        <div class="idle-chart-wrap" id="idle-chart-machine-wrap"><canvas id="idle-chart-machine" aria-label="Percent idle by machine, ranked"></canvas></div>
+    </section>
+</div>
+
 <div class="Box p-3" style="overflow-x:auto">
     <p class="f6 color-fg-muted mt-0">Idle = available hours − operating hours (batch End − Start, split 07:00→07:00, all batches). Days marked <strong>*</strong> are partial (data starts/ends mid-day) — only hours with data are counted. Red = % Idle above target. Click a cell to see idle gaps and record the reason.</p>
     <table class="preview-table matrix-table idle-table" id="idle-table"><thead><tr id="idle-head"></tr></thead><tbody></tbody></table>
@@ -62,6 +76,7 @@
 </div>
 {% endblock %}
 {% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 (function () {
     "use strict";
@@ -155,9 +170,10 @@
         const empty = !data.rows.length;
         document.getElementById("idle-empty").style.display = empty ? "block" : "none";
         document.getElementById("idle-table").style.display = empty ? "none" : "";
+        document.getElementById("idle-charts").style.display = empty ? "none" : "";
         if (empty) return;
+        renderCharts();
         const partial = new Set(data.partial_days);
-        const dayLabel = (day) => `${day.slice(8, 10)}/${day.slice(5, 7)}${partial.has(day) ? "*" : ""}`;
         document.getElementById("idle-head").innerHTML = "<th>Machine</th><th>Tank</th><th>Capacity (Kg)</th>" +
             data.days.map((day) => `<th title="${day}${partial.has(day) ? ` — partial day, ${data.day_available_hours[day]} h with data` : ""}">${dayLabel(day)}</th>`).join("") +
             `<th>Total (h)</th><th>% Idle</th><th>Target</th>`;
@@ -182,6 +198,134 @@
             footer("% Idle", (day) => data.day_totals[day].idle_pct, true) +
             footer("Available (h/machine)", (day) => data.day_available_hours[day], false);
     }
+
+    // ---------------- Biểu đồ (Chart.js) — luôn theo Idle, không đổi theo nút Idle/Operating ----------------
+    // vì Target chỉ có cho % Idle (người dùng chốt 2026-11-14).
+    const charts = {};
+    const token = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+    const dayLabel = (day) => `${day.slice(8, 10)}/${day.slice(5, 7)}${lastData.partial_days.includes(day) ? "*" : ""}`;
+    function drawChart(id, config) {
+        if (charts[id]) charts[id].destroy();
+        charts[id] = new Chart(document.getElementById(id), config);
+    }
+    // Màu theo THỰC THỂ: vị trí cố định của Reason trong IDLE_REASONS -> --chart-N; "No reason" -> --chart-other.
+    function reasonColor(reason) {
+        const index = lastData.reasons.indexOf(reason);
+        return index < 0 ? token("--chart-other", "#7c8296") : token(`--chart-${index + 1}`, "#3987e5");
+    }
+    const targetLine = (label, data) => ({
+        type: "line", label, data, borderColor: token("--danger", "#f85149"), borderDash: [6, 4], borderWidth: 1.5,
+        pointRadius: 0, pointHoverRadius: 0, fill: false, order: 0, isTargetLine: true, stack: "target",
+    });
+    // Nhãn % ở cuối mỗi cột ngang (1 số / máy nên không chồng chữ).
+    const barEndLabels = {
+        id: "idleBarEndLabels",
+        afterDatasetsDraw(chart) {
+            const { ctx } = chart;
+            ctx.save();
+            ctx.font = "11px sans-serif";
+            ctx.fillStyle = token("--text-secondary", "#666");
+            ctx.textBaseline = "middle";
+            chart.getDatasetMeta(0).data.forEach((bar, i) => {
+                const value = chart.data.datasets[0].data[i];
+                if (value !== null && value !== undefined) ctx.fillText(`${value.toFixed(1)}%`, bar.x + 4, bar.y);
+            });
+            ctx.restore();
+        },
+    };
+    function renderCharts() {
+        if (typeof Chart === "undefined") return;
+        const data = lastData;
+        const target = data.target_idle_pct;
+        const axis = token("--text-secondary", "#666");
+        const grid = token("--border-subtle", "#ddd");
+        const pctTick = (v) => `${v}%`;
+        const pctLabel = (value) => value === null || value === undefined ? "-" : `${value.toFixed(2)}%`;
+        const legend = { position: "bottom", labels: { color: axis, boxWidth: 12, usePointStyle: true } };
+
+        // 1. % Idle theo ngày: cột chồng theo Reason (chỉ Reason có giờ trong kỳ) + đường Total + Target.
+        const labels = data.days.map(dayLabel);
+        const reasons = [...data.reasons, data.no_reason_label]
+            .filter((reason) => data.days.some((day) => (data.day_reason_hours[day] || {})[reason] > 0));
+        const datasets = reasons.map((reason) => ({
+            type: "bar", label: reason, stack: "idle", order: 2, backgroundColor: reasonColor(reason),
+            borderColor: token("--bg-surface", "#fff"), borderWidth: { top: 1 }, borderSkipped: false,
+            data: data.days.map((day) => {
+                const available = data.day_totals[day].available;
+                return available > 0 ? ((data.day_reason_hours[day] || {})[reason] || 0) / available * 100 : null;
+            }),
+        }));
+        const totalColor = token("--text-primary", "#0b0c0e");
+        datasets.push({
+            // stack riêng: trục y đang stacked, line không có `stack` sẽ bị cộng dồn với đường Target.
+            type: "line", label: "Total % Idle", stack: "total", data: data.days.map((day) => data.day_totals[day].idle_pct),
+            borderColor: totalColor, backgroundColor: totalColor, borderWidth: 2, tension: 0.2, pointRadius: 3, spanGaps: true, order: 1,
+        });
+        if (target !== null) datasets.push(targetLine(`Target (${fmtPct(target)})`, data.days.map(() => target)));
+        drawChart("idle-chart-trend", {
+            type: "bar",
+            data: { labels, datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+                scales: {
+                    x: { stacked: true, ticks: { color: axis }, grid: { display: false } },
+                    y: { stacked: true, beginAtZero: true, grace: "10%", ticks: { color: axis, callback: pctTick }, grid: { color: grid }, title: { display: true, text: "Idle (%)", color: axis } },
+                },
+                plugins: {
+                    legend,
+                    tooltip: {
+                        filter: (item) => item.dataset.type === "line" || item.parsed.y > 0,
+                        callbacks: {
+                            title: (items) => items.length ? data.days[items[0].dataIndex] : "",
+                            label: (ctx) => {
+                                const day = data.days[ctx.dataIndex];
+                                const hours = ctx.dataset.type === "bar" ? ` · ${fmtHours((data.day_reason_hours[day] || {})[ctx.dataset.label])} h` : "";
+                                return `${ctx.dataset.label}: ${pctLabel(ctx.parsed.y)}${hours}`;
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        // 2. % Idle theo máy cả kỳ: bar ngang giảm dần, vượt Target tô đỏ, Target nét đứt dọc.
+        const ranked = [...data.rows].filter((row) => row.idle_pct !== null).sort((a, b) => b.idle_pct - a.idle_pct);
+        document.getElementById("idle-chart-machine-wrap").style.height = `${Math.max(200, ranked.length * 24 + 70)}px`;
+        const accent = token("--accent", "#2862d7");
+        const danger = token("--danger", "#f85149");
+        const machineSets = [{
+            type: "bar", label: "% Idle", data: ranked.map((row) => row.idle_pct), order: 1,
+            backgroundColor: ranked.map((row) => overTarget(row.idle_pct) ? danger : accent), barPercentage: 0.8,
+        }];
+        if (target !== null) machineSets.push(targetLine(`Target (${fmtPct(target)})`, ranked.map(() => target)));
+        drawChart("idle-chart-machine", {
+            type: "bar",
+            data: { labels: ranked.map((row) => row.machine), datasets: machineSets },
+            plugins: [barEndLabels],
+            options: {
+                indexAxis: "y", responsive: true, maintainAspectRatio: false, layout: { padding: { right: 48 } },
+                interaction: { mode: "index", intersect: false, axis: "y" },
+                scales: {
+                    x: { beginAtZero: true, grace: "5%", ticks: { color: axis, callback: pctTick }, grid: { color: grid }, title: { display: true, text: "Idle (%)", color: axis } },
+                    y: { ticks: { color: axis, autoSkip: false }, grid: { display: false } },
+                },
+                plugins: {
+                    // Chỉ chú giải Target: màu cột đổi theo từng máy nên ô màu "% Idle" sẽ gây hiểu sai.
+                    legend: { ...legend, display: target !== null, labels: { ...legend.labels, filter: (item) => item.datasetIndex > 0 } },
+                    tooltip: {
+                        filter: (item) => !item.dataset.isTargetLine,
+                        callbacks: {
+                            label: (ctx) => {
+                                const row = ranked[ctx.dataIndex];
+                                return `${pctLabel(row.idle_pct)} · Idle ${fmtHours(row.idle)} h of ${fmtHours(row.available)} h · ${row.tank}`;
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    }
+    document.addEventListener("colormodechange", () => { if (lastData && lastData.rows.length) renderCharts(); });
 
     // ---------------- Drawer: khoảng idle của 1 ô + Reason/Detail ----------------
     const drawer = document.getElementById("idle-drawer");

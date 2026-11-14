@@ -290,6 +290,7 @@ Các màu này mang **ý nghĩa nghiệp vụ**, người dùng đã quen nhận
 | Token chung `--chart-grid`, `--chart-axis` | Thay cho fallback hex trong JS | 🟡 D-11 |
 | Token categorical `--chart-1..12` + `--chart-other` (Dark/Light riêng) | Màu theo THỰC THỂ (vị trí cố định của hạng mục), không theo thứ tự đang hiện. 1–8 = bộ dataviz đã kiểm CVD theo cặp kề nhau; 9–12 chỉ khi tách > 8 hạng mục; `--chart-other` = nhóm gộp "Others". Dùng đầu tiên ở Knitting Downtime | ✅ D-19 |
 | Stacked bar + đường Total | Cột chồng = hạng mục người dùng chọn tự do; đường Total (`--text-primary`) luôn = tổng mọi hạng mục; CHỈ 1 đường Target Total nét đứt `--danger` — không vẽ Target từng hạng mục (bài học commit `e198720`) | ✅ D-19 |
+| Line trên trục stacked | Mỗi dataset `type: "line"` (Total, Target) phải có `stack` RIÊNG — không có `stack` thì Chart.js cộng dồn các line với nhau (Total vẽ thành Total + Target). Phát hiện ở Idle Time 2026-11-14 | ✅ |
 
 ### 7.2 Quy tắc chọn & trình bày biểu đồ (bắt buộc)
 
@@ -354,6 +355,7 @@ Các màu này mang **ý nghĩa nghiệp vụ**, người dùng đã quen nhận
 | D-16 | 2026-09-29 | Sửa K-01: thay `color:#fff` bằng `var(--text-primary)` (hoặc accent) cho mục active | Lỗi hiển thị Light mode | 💡 |
 | D-18 | 2026-09-29 | Đổi gradient chính từ xanh→tím (`90deg #305fbd→#625fff`) sang **xanh–cyan** `135deg`, token theo theme (Mục 3.2); thêm `--text-on-gradient` thay `#fff` cứng | Đã code rồi người dùng huỷ ngay trong ngày — giữ gradient xanh → tím. Không đề xuất lại trừ khi người dùng yêu cầu | ❌ (đã huỷ) |
 | D-19 | 2026-10-20 | Knitting Downtime: biểu đồ cột chồng các nhóm (chọn tuỳ ý) + đường Total + 1 đường Target Total; bộ lọc "Categories" gộp nhóm vào Others giống pivot; thêm token `--chart-1..12`, `--chart-other` | Người dùng yêu cầu; >8 màu là giới hạn dễ đọc — dùng gộp Others để giảm | ✅ |
+| D-20 | 2026-11-14 | Idle Time: 2 biểu đồ trên bảng — (1) % Idle theo ngày, cột chồng theo Reason (màu cố định theo vị trí trong `IDLE_REASONS` → `--chart-1..9`, "No reason" → `--chart-other`) + đường Total + Target nét đứt; (2) bar ngang % Idle theo máy, giảm dần, vượt Target tô `--danger`, còn lại `--accent`, data label cuối cột. Biểu đồ luôn theo Idle (không đổi theo nút Idle/Operating); chưa có bấm vào biểu đồ | Người dùng chốt; đúng mẫu D-19 + quy tắc 7.2 (> 12 hạng mục → bar ngang) | ✅ |
 | D-17 | 2026-09-29 | **Không** áp dụng từ template: card bo 26px, hover `scale()`, shell `100vh overflow:hidden`, topbar thay sidebar, `data-theme`, file `dashboard.css` | Xung đột mật độ dữ liệu / kiến trúc MPA / hook hiện có | ❌ (đã loại) |
 
 ---
@@ -392,6 +394,7 @@ Chỉ để **tham khảo**, KHÔNG link vào `base.html`, KHÔNG copy nguyên f
 
 | Ngày | Thay đổi |
 |---|---|
+| 2026-11-14 | **Idle Time — biểu đồ** (D-20): thêm 2 `Box` biểu đồ giữa hàng KPI và ma trận (Chart.js 4.4.4, vẽ lại khi `colormodechange`, ẩn khi không có dữ liệu). Bổ sung quy tắc 7.1 "Line trên trục stacked". Không thêm token/hex mới (chỉ `.idle-chart-wrap` chiều cao). |
 | 2026-10-27 | **Fabric/Color Matrix**: chỉ đổi dòng mô tả dưới bảng theo công thức ô mới (Normal × 24 / giờ của mọi mẻ cùng Fabric × Color, CM lấy màu mẻ kế tiếp). Bảng có thể hiện dòng màu chỉ có giờ (giá trị 0) — dùng lại `.col-color`, không thêm token/hex/component. |
 | 2026-10-20 | **Knitting Downtime**: biểu đồ Overview đổi từ line (Total + ≤ 3 nhóm) sang **cột chồng** các nhóm (dropdown chọn tuỳ ý, mặc định tất cả) + đường Total + đường Target Total nét đứt `[6,4]` màu `--danger`; data label chỉ ở đường Total khi ≤ 12 kỳ; tooltip bỏ nhóm = 0; bấm cột/điểm mở drawer. Filter bar thêm dropdown **Categories** (tick = dòng riêng, bỏ tick = gộp vào Others, nút Split all / Merge all, nhớ lựa chọn bằng `localStorage`) — áp cho pivot, Achievement, drill-down, Excel; dòng gộp hiện "Others (+n)", title liệt kê nhóm, Target của dòng gộp không sửa trực tiếp. **Token mới** `--chart-1..12`, `--chart-other` (cả Dark và Light) trong `app.css`. |
 | 2026-10-09 | Trang mới **Knitting Incentive**: filter Month (`input type=month`) / As of / Machine Group; 3 `.page-tab`; 4 `.widget-card` KPI (%Achieve đỏ/xanh theo ngưỡng bậc có thưởng, dòng phụ "+x% tới bậc kế"); line chart MTD %Achieve Xưởng + ≤ 3 nhóm, đường ngưỡng 82% nét đứt `[6,4]` màu `--danger` (đóng vai Target); bảng nhóm + bảng ngày (dòng bấm được -> drawer máy + cuộn), ô dưới ngưỡng `.ratio-warning`; tab Bands: bảng sửa trực tiếp cho admin, bậc hiện tại nền `--accent-wash-bg`, nút xoá bậc `.btn-danger` có `aria-label`. Không thêm token/hex. |
